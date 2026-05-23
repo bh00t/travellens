@@ -70,6 +70,13 @@ follow-up. Items here span both phases by design.
 - Schema: new `sentiment` column on `reviews_raw` (via migration, append-only). Backfill the existing ~30k reviews.
 - Query integration (Phase 4): `detect_filters` learns sentiment words (complaints/negative/bad → `sentiment='negative'`); the hybrid path adds the filter so "complaints about X" = topic(X) AND `sentiment='negative'`.
 
+**Locked decisions (from design discussion):**
+- Output: 3-class label (`positive` / `negative` / `neutral`) PLUS a confidence score (store both — label drives filtering/display, score enables "strongly negative" later without a re-backfill). Two columns: `sentiment_label`, `sentiment_score`.
+- Model: a pre-trained transformer — CardiffNLP 3-class RoBERTa (`twitter-roberta-base-sentiment-latest`), which outputs exactly pos/neutral/neg + scores and is robust on informal review text. NOT rating (L-012), NOT Ollama-LLM (slow/non-deterministic), NOT VADER (lexicon too crude for the mixed-sentiment cases).
+- Prototype FIRST: before the migration + 30K backfill, run the model on a ~200-review sample (including the known-hard 3★ cobwebs cases) and eyeball accuracy vs the rating proxy. Only proceed to full build if it clearly beats rating on our data.
+- Network: the HuggingFace model downloads from `huggingface.co` — NOT currently in the repo's allowlist. Add `huggingface.co` + `*.huggingface.co` before the prototype, or download weights manually.
+- Caveat: trained on general/Twitter English; expect some misses on Indian-English-idiomatic or code-mixed text — still far better than rating-as-proxy. Verify on hard cases before trusting counts.
+
 **Scope:** spans Phase 3 (ingest/embeddings) and Phase 4 (query layer) — migration + pipeline classify step + backfill + `detect_filters` extension + verification. A feature, not a quick fix.
 
 **Known residual:** a single sentiment label still flattens mixed-sentiment reviews ("nice pool BUT cobwebs"). Big improvement over topic-only, not perfect. True solution is aspect-based sentiment (per-topic polarity) — research-grade, out of scope.
@@ -362,7 +369,73 @@ nvidia-smi
 
 ---
 
-## Known Limitations (acknowledged, not scheduled)
+### B-028 — `run.py` dev launcher
+**Priority:** Medium — built this session, NOT yet committed/verified  
+**Problem:** Bringing the stack up means several manual commands (docker compose up, then
+consumer, simulator, dashboard in separate terminals). Tedious every dev session.  
+**What it does:** single `python run.py` at repo root → preflight-checks the Docker daemon,
+runs `docker compose -f docker/docker-compose.yml --env-file .env up -d` (infra + Airflow,
+whose scheduler then runs DAGs on its own — run.py does NOT schedule/track Airflow), waits
+for health, then starts the 3 host Python processes (consumer, simulator, dashboard) with
+tagged combined logs. Ctrl-C stops the Python processes and tears Docker down ONLY if the
+script started it (least-surprise). Idempotent: `up -d` is safe if containers already run,
+and it skips a duplicate dashboard if the port is already bound.  
+**Flags:** `--no-sim`, `--sim-rate N`, `--no-docker`, `--down`.  
+**Open before commit:**
+- Verify the CONFIG block at the top against the real repo — the three start commands
+  (`python -m scripts.stream_consumer`, `python -m scripts.kafka_event_producer`,
+  `python -m render.server`), the simulator's rate-flag name, the dashboard port, and the
+  `HEALTH_WAIT_SERVICES` service names must match the actual compose file.
+- Add a `--chaos` (or `--malformed-pct`/`--late-pct`) passthrough to the simulator so the
+  monitor's quarantine cards (B-027) can be populated for testing in one command.
+**File:** `run.py` (repo root, new).  
+**Acceptance:** `python run.py --no-docker` starts all 3 processes against an already-up
+stack; full `python run.py` brings everything up and Ctrl-C tears it down cleanly with no
+orphaned processes.
+
+---
+
+## Phase 7 — Monitoring
+
+> See `docs/phase-7-monitor.md` (executable runbook) and
+> `monitor_implementation_context.md` (full design rationale + data constraints).
+
+---
+
+### B-027 — Pipeline monitor dashboard (`/monitor`)
+**Priority:** Medium  
+**Problem:** No operational view of the pipeline. The Explorer answers business questions
+but nothing shows "is the solution processing data correctly?" — stream throughput,
+embedding coverage, quarantine, scheduler health.  
+**Design (locked):** new `/monitor` route in `render/server.py` + `monitor.html` extending
+the existing base. One filter bar (date + city — the only dimensions present in BOTH the
+stream agg and the warehouse). Three sections:
+1. Stream activity (date+city filtered, from `agg_hourly_city_stats`): bookings /
+   cancellations / revenue processed. Revenue is real — the stream event carries
+   `revenue_inr`.
+2. Review embeddings (NOT filtered — reviews are static): received / embedded
+   (`embedding IS NOT NULL`) / unprocessed / coverage %.
+3. Pipeline health (current state, NOT filtered): Airflow scheduler (HTTP `:8080/health`),
+   malformed + late quarantine counts (MinIO `travellens-data`), stream freshness (latest
+   `window_start`, doubling as the consumer-alive signal).
+
+**Principle:** pipeline-processing metrics only — no business content (ratings, sentiment,
+revenue trends, top cities). Those stay in the Explorer.  
+**Honesty:** most meaningful while the stream runs (via run.py / B-028). Cold system shows
+zeros/stale (correct, not broken). Every external call (Airflow, MinIO) guarded so the page
+renders even when a monitored dependency is down. Default range = all stream data, NOT
+"today" (synthetic data may have nothing dated today).  
+**Cut from the original ask, with reason:** check-in/check-out counts (Gate-3 silently
+filtered → L-014); reviews "received today" / daily ingest (reviews static, no stream);
+positive/negative sentiment (no sentiment data → B-026).  
+**Files:** `render/server.py` (+route), `render/templates/monitor.html` (new), nav link.  
+**Acceptance:** 5 tests in `docs/phase-7-monitor.md` — cold load (no crash), warm load via
+run.py (live numbers), chaos (quarantine populates), filters narrow stream section,
+Airflow-down still renders.
+
+---
+
+
 |---|---|---|---|
 | L-001 | `agg_daily_hotel_kpi` empty until Phase 6 Airflow DAGs | Phase 4 | B-013 |
 | L-002 | ~~Hybrid queries (SQL filter + semantic content) degrade silently~~ — RESOLVED by B-004 (Phase 5) | Phase 4 | RESOLVED |
@@ -377,6 +450,8 @@ nvidia-smi
 | L-011 | 7B model omits DISTINCT on plain entity-list queries — "5 customers named R" returns the same person repeated (one row per booking). Adding "unique" to the query fixes it. Capability limit, not a prompt bug; further prompt tuning regresses other query types. | Phase 4 | B-017 (bigger model) |
 | L-012 | Sentiment-topic conflation in semantic review search. Embeddings match TOPIC not POLARITY — "cleanliness complaints" returns cleanliness praise and complaints alike, since both are about cleanliness. A `reviews_raw.rating` filter is NOT a reliable proxy: confirmed via testing that complaints (e.g. "foul smell", "cobwebs") appear in mixed-sentiment 3★ reviews with positive openers, and identical review texts exist across 1–5★. Proper fix requires sentiment scoring at embed time (store a sentiment score per review, filter on it) — a feature, not a filter. Current behaviour: semantic search surfaces topically-relevant reviews; summary should describe results as "reviews mentioning X" not "X complaints". Discovered during B-004 manual testing. | Phase 4 | Planned: **B-026** (sentiment-at-embed-time). Copy fix on the summary line is a smaller separate item still open. |
 | L-013 | Bare grouped aggregations over `fact_bookings` (shapes like "total revenue by city", "bookings by month", "revenue by customer segment", "average nights stayed by season") intermittently drop the `WHERE NOT b.is_cancelled` filter on Qwen-7B. Stronger cues — `LIMIT`, explicit `WHERE` filters on star_category / city / etc. — usually keep the filter (Tests 6 and 7 in the verification suite). Bare grouped shapes do not. **Confirmed not promptable** at this model size: two prompt rewrites attempted — a single-bullet "applies ONLY when fact_bookings is in FROM/JOIN" version (the current text) and a two-bullet universal-rule-plus-illustrations version. Neither resolves the bare-grouped cases. The two-bullet version improved "by month" and "by segment" to 3/3 but degraded an unnamed-shape generalisation ("average nights stayed by season") and added marginal noise on the LIMIT-bearing cases. Root cause: Qwen 7B underweights universal/conditional rules in the system prompt relative to attention pull from concrete examples in the same prompt — a small-model attention budget limit, not a prompt-wording bug. Same family as L-010 and L-011 (capability ceiling, not prompt tuning). **Safeguard:** B-022 freezes generated SQL at pin time, so a missing cancellation filter is a one-time review failure at pin, not a per-refresh data integrity bug — the read path never runs unverified SQL. **Fix path:** B-017 (model tiering — Gemma 12B or similar holds rule discipline better in early testing) is the real remediation. | Phase 4 | B-017 (larger model for SQL) — B-022 pin-time review is the meanwhile safeguard |
+| L-014 | CHECKIN / CHECKOUT (and PRICE_CHANGE) events are silently filtered at the consumer's Gate 3 — not aggregated, not counted, not stored. So the monitor (B-027) cannot show "customers checked in / out" counts; the data is never captured. Surfacing it would require instrumenting `stream_consumer.py` to count/persist these event types — a change to a FROZEN Phase-2 file. | Phase 7 | Deferred — needs consumer instrumentation (frozen file) |
+| L-015 | No live "events received / sec" throughput metric. The consumer's `run_metrics` counters (events_consumed, malformed_dropped, late_dropped) live in memory and print only at shutdown — they are not written to a queryable table mid-run. The monitor (B-027) therefore infers activity from what landed (processed in `agg_hourly_city_stats` + quarantine objects in MinIO), not from a live rate. A true throughput gauge would need a metrics table the consumer writes to — a change to a FROZEN Phase-2 file. | Phase 7 | Deferred — needs a consumer-written metrics table |
 
 ---
 

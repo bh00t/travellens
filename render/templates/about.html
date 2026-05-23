@@ -1,0 +1,474 @@
+{% extends "base.html" %}
+{% set active_page = 'about' %}
+{% block title %}About{% endblock %}
+
+<!--
+  about.html — TravelLens Product About Page (redesigned)
+  =========================================================
+  Part of: TravelLens Phase 5 — Dashboard
+  File:    render/templates/about.html
+
+  Technical aesthetic to match the Grafana-style app: mono headers, green accent,
+  dark hero, clean inline SVG icons (no emoji), subtle scroll-reveal animations.
+
+  Sections: hero · capabilities · how it works · architecture · stack · data · footer
+-->
+
+{% block extra_styles %}
+<style>
+  /* ── Scroll reveal — elements fade up as they enter the viewport ──────────── */
+  .reveal {
+    opacity: 0;
+    transform: translateY(16px);
+    transition: opacity .6s ease, transform .6s ease;
+  }
+  .reveal.visible { opacity: 1; transform: translateY(0); }
+
+  /* ── Hero — dark, terminal-flavoured ──────────────────────────────────────── */
+  .hero {
+    background: var(--black);
+    color: var(--white);
+    padding: 5rem 2rem 4.5rem;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+  }
+  /* faint grid lines in the hero background */
+  .hero::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(0,177,64,.06) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,177,64,.06) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+  }
+  .hero-inner { position: relative; z-index: 1; }
+  .hero-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: .5rem;
+    font-family: var(--font-mono);
+    font-size: .65rem;
+    font-weight: 700;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--green);
+    border: 1px solid rgba(0,177,64,.4);
+    border-radius: 999px;
+    padding: .35rem 1rem;
+    margin-bottom: 1.75rem;
+  }
+  .hero-badge .dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--green);
+    animation: pulse 2s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .3; } }
+  .hero h1 {
+    font-family: var(--font-mono);
+    font-size: 2.6rem;
+    font-weight: 800;
+    letter-spacing: -.02em;
+    margin-bottom: 1rem;
+    line-height: 1.05;
+  }
+  .hero h1 .accent { color: var(--green); }
+  .hero p {
+    font-size: 1.05rem;
+    color: var(--gray-200);
+    max-width: 600px;
+    margin: 0 auto 2rem;
+    line-height: 1.7;
+  }
+  .hero-cta { display: flex; gap: .75rem; justify-content: center; flex-wrap: wrap; }
+  .hero-cta a {
+    display: inline-flex;
+    align-items: center;
+    gap: .5rem;
+    padding: .65rem 1.4rem;
+    border-radius: 6px;
+    font-size: .85rem;
+    font-weight: 700;
+    text-decoration: none;
+    transition: all .15s;
+  }
+  .hero-cta .primary { background: var(--green); color: var(--white); }
+  .hero-cta .primary:hover { background: #00d04c; transform: translateY(-1px); }
+  .hero-cta .secondary { color: var(--gray-200); border: 1px solid rgba(255,255,255,.2); }
+  .hero-cta .secondary:hover { border-color: var(--green); color: var(--green); }
+
+  /* ── Section scaffolding ──────────────────────────────────────────────────── */
+  .section { padding: 3.5rem 0; border-bottom: 1px solid var(--gray-200); }
+  .section:last-of-type { border-bottom: none; }
+  .section-eyebrow {
+    font-family: var(--font-mono);
+    font-size: .65rem;
+    font-weight: 800;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--green);
+    margin-bottom: .6rem;
+  }
+  .section-title {
+    font-family: var(--font-mono);
+    font-size: 1.4rem;
+    font-weight: 800;
+    color: var(--gray-900);
+    margin-bottom: 2rem;
+    letter-spacing: -.01em;
+  }
+
+  /* ── Capability cards ─────────────────────────────────────────────────────── */
+  .cap-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 1rem;
+  }
+  .cap-card {
+    background: var(--white);
+    border: 1px solid var(--gray-200);
+    border-radius: 10px;
+    padding: 1.5rem;
+    transition: transform .2s, box-shadow .2s, border-color .2s;
+  }
+  .cap-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 8px 24px rgba(0,0,0,.07);
+    border-color: var(--green);
+  }
+  .cap-icon {
+    width: 42px; height: 42px;
+    border-radius: 9px;
+    background: #f0fdf4;
+    display: flex; align-items: center; justify-content: center;
+    margin-bottom: 1rem;
+    color: #00913a;
+  }
+  .cap-icon svg { width: 22px; height: 22px; }
+  .cap-card h3 {
+    font-family: var(--font-mono);
+    font-size: .9rem;
+    font-weight: 800;
+    margin-bottom: .5rem;
+    color: var(--gray-900);
+  }
+  .cap-card p { font-size: .83rem; color: var(--gray-500); line-height: 1.65; }
+
+  /* ── How it works — numbered steps ────────────────────────────────────────── */
+  .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; }
+  .step {
+    position: relative;
+    padding: 1.5rem 1.25rem 1.25rem;
+    background: var(--white);
+    border: 1px solid var(--gray-200);
+    border-radius: 10px;
+  }
+  .step-num {
+    font-family: var(--font-mono);
+    font-size: 1.6rem;
+    font-weight: 800;
+    color: var(--green);
+    opacity: .25;
+    line-height: 1;
+    margin-bottom: .6rem;
+  }
+  .step h4 {
+    font-family: var(--font-mono);
+    font-size: .82rem;
+    font-weight: 800;
+    margin-bottom: .35rem;
+    color: var(--gray-900);
+  }
+  .step p { font-size: .78rem; color: var(--gray-500); line-height: 1.55; }
+
+  /* ── Architecture strip ───────────────────────────────────────────────────── */
+  .arch {
+    background: var(--gray-900);
+    border-radius: 12px;
+    padding: 2rem;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 1.25rem;
+  }
+  .arch-node { text-align: center; }
+  .arch-node .label {
+    font-family: var(--font-mono);
+    font-size: .68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: var(--green);
+    margin-bottom: .4rem;
+  }
+  .arch-node .val { font-size: .82rem; color: var(--gray-200); line-height: 1.5; }
+
+  /* ── Stack pills ──────────────────────────────────────────────────────────── */
+  .pills { display: flex; flex-wrap: wrap; gap: .5rem; }
+  .pill {
+    border-radius: 6px;
+    padding: .4rem .9rem;
+    font-family: var(--font-mono);
+    font-size: .72rem;
+    font-weight: 700;
+    transition: transform .15s;
+  }
+  .pill:hover { transform: translateY(-2px); }
+  .pill-green { background: #f0fdf4; border: 1px solid #86efac; color: #166534; }
+  .pill-grey  { background: var(--gray-100); border: 1px solid var(--gray-200); color: var(--gray-900); }
+
+  /* ── Data source cards ────────────────────────────────────────────────────── */
+  .data-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  .data-card {
+    background: var(--white);
+    border: 1px solid var(--gray-200);
+    border-radius: 10px;
+    padding: 1.5rem;
+  }
+  .data-stat {
+    font-family: var(--font-mono);
+    font-size: 1.8rem;
+    font-weight: 800;
+    color: var(--green);
+    line-height: 1;
+    margin-bottom: .5rem;
+  }
+  .data-card h3 {
+    font-family: var(--font-mono);
+    font-size: .82rem;
+    font-weight: 800;
+    margin-bottom: .5rem;
+    color: var(--gray-900);
+  }
+  .data-card p { font-size: .8rem; color: var(--gray-500); line-height: 1.65; }
+
+  /* ── Footer ───────────────────────────────────────────────────────────────── */
+  .about-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 1rem;
+    padding: 2rem 0 1rem;
+    font-size: .8rem;
+    color: var(--gray-500);
+  }
+  .about-footer a { color: var(--green); text-decoration: none; font-weight: 700; }
+  .about-footer a:hover { text-decoration: underline; }
+
+  .disclaimer {
+    background: #fffbeb;
+    border: 1px solid #fde68a;
+    border-radius: 8px;
+    padding: 1rem 1.25rem;
+    font-size: .8rem;
+    color: #92400e;
+    line-height: 1.65;
+    margin-top: 1.5rem;
+  }
+
+  @media (max-width: 640px) {
+    .hero h1 { font-size: 2rem; }
+    .data-grid { grid-template-columns: 1fr; }
+  }
+</style>
+{% endblock %}
+
+
+{% block content %}
+
+<!-- ── Hero ─────────────────────────────────────────────────────────────────── -->
+<div class="hero">
+  <div class="hero-inner">
+    <div class="hero-badge"><span class="dot"></span> v1.0 · Local Build</div>
+    <h1>TravelLens <span class="accent">India</span></h1>
+    <p>
+      A real-time hotel and tourism intelligence platform for the Indian hospitality
+      market. Ask questions in plain English — get charts, insights, and review
+      analysis instantly.
+    </p>
+    <div class="hero-cta">
+      <a href="/explore" class="primary">
+        <svg viewBox="0 0 24 24" fill="none" width="16" height="16"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Try the Explorer
+      </a>
+      <a href="/dashboard" class="secondary">View Dashboard</a>
+    </div>
+  </div>
+</div>
+
+<div class="page">
+
+  <!-- ── Capabilities ───────────────────────────────────────────────────────── -->
+  <div class="section reveal">
+    <div class="section-eyebrow">Capabilities</div>
+    <div class="section-title">What it does</div>
+    <div class="cap-grid">
+
+      <div class="cap-card">
+        <div class="cap-icon">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M8 10h8M8 14h5M21 12a9 9 0 11-3.5-7.1L21 4v5h-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>
+        <h3>Natural Language Queries</h3>
+        <p>Ask "top 5 cities by revenue" — no SQL required. A local LLM generates and runs the query against Postgres.</p>
+      </div>
+
+      <div class="cap-card">
+        <div class="cap-icon">
+          <svg viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/><path d="M21 21l-4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </div>
+        <h3>Semantic Review Search</h3>
+        <p>Find reviews by meaning, not keywords. "AC not working" surfaces "room too hot" — powered by pgvector embeddings.</p>
+      </div>
+
+      <div class="cap-card">
+        <div class="cap-icon">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M13 2L4 14h7l-1 8 9-12h-7l1-8z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+        </div>
+        <h3>Live Streaming Data</h3>
+        <p>Booking events flow through Kafka in real time. Hourly city aggregates keep dashboards showing current data.</p>
+      </div>
+
+      <div class="cap-card">
+        <div class="cap-icon">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M9 3v6l-4 2v3h14v-3l-4-2V3M12 17v4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>
+        <h3>Pinnable Dashboard</h3>
+        <p>Pin any result as a widget. Auto-refresh, resize, reorder. Build your own intelligence view — no fixed reports.</p>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ── How it works ───────────────────────────────────────────────────────── -->
+  <div class="section reveal">
+    <div class="section-eyebrow">Pipeline</div>
+    <div class="section-title">How it works</div>
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">01</div>
+        <h4>You ask</h4>
+        <p>Type a question in plain English in the Explorer.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">02</div>
+        <h4>Router classifies</h4>
+        <p>A keyword classifier picks the SQL path or the semantic path.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">03</div>
+        <h4>AI fetches</h4>
+        <p>Ollama generates SQL, or pgvector finds the most similar reviews.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">04</div>
+        <h4>Widget renders</h4>
+        <p>The result auto-detects its best form — chart, table, or stat card.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Architecture ───────────────────────────────────────────────────────── -->
+  <div class="section reveal">
+    <div class="section-eyebrow">Under the hood</div>
+    <div class="section-title">Architecture</div>
+    <div class="arch">
+      <div class="arch-node">
+        <div class="label">Storage</div>
+        <div class="val">Postgres 16<br>star schema + pgvector</div>
+      </div>
+      <div class="arch-node">
+        <div class="label">Streaming</div>
+        <div class="val">Kafka events<br>hourly aggregates</div>
+      </div>
+      <div class="arch-node">
+        <div class="label">AI Layer</div>
+        <div class="val">Ollama Qwen2.5<br>local inference</div>
+      </div>
+      <div class="arch-node">
+        <div class="label">Embeddings</div>
+        <div class="val">all-MiniLM-L6-v2<br>384-dim vectors</div>
+      </div>
+      <div class="arch-node">
+        <div class="label">Frontend</div>
+        <div class="val">Flask + Chart.js<br>server-rendered</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Tech stack ─────────────────────────────────────────────────────────── -->
+  <div class="section reveal">
+    <div class="section-eyebrow">Built with</div>
+    <div class="section-title">Tech stack</div>
+    <div class="pills">
+      <span class="pill pill-green">Postgres 16</span>
+      <span class="pill pill-green">pgvector</span>
+      <span class="pill pill-green">Apache Kafka</span>
+      <span class="pill pill-green">Ollama · Qwen2.5-Coder-7B</span>
+      <span class="pill pill-green">sentence-transformers</span>
+      <span class="pill pill-grey">Python 3.11</span>
+      <span class="pill pill-grey">Flask</span>
+      <span class="pill pill-grey">Chart.js</span>
+      <span class="pill pill-grey">MinIO (S3)</span>
+      <span class="pill pill-grey">Docker</span>
+      <span class="pill pill-grey">DuckDB</span>
+      <span class="pill pill-grey">Jinja2</span>
+    </div>
+  </div>
+
+  <!-- ── Data sources ───────────────────────────────────────────────────────── -->
+  <div class="section reveal">
+    <div class="section-eyebrow">Data</div>
+    <div class="section-title">Data sources</div>
+    <div class="data-grid">
+      <div class="data-card">
+        <div class="data-stat">30K</div>
+        <h3>Hotel Reviews</h3>
+        <p>Real reviews from MakeMyTrip and OYO (Kaggle), embedded into 384-dimensional vectors and indexed with pgvector IVFFlat for cosine similarity search.</p>
+      </div>
+      <div class="data-card">
+        <div class="data-stat">1M</div>
+        <h3>Booking Events</h3>
+        <p>Simulated booking records seeded from real Indian hotel IDs. A Kafka producer streams live events with configurable chaos injection for failure testing.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Footer ─────────────────────────────────────────────────────────────── -->
+  <div class="about-footer">
+    <span>Version <strong>1.0</strong> · Built by <strong>Rishabh</strong></span>
+    <span>
+      <a href="https://github.com/yourusername/travellens" target="_blank" rel="noopener">GitHub ↗</a>
+      &nbsp;·&nbsp;
+      <a href="/dashboard">Dashboard</a>
+      &nbsp;·&nbsp;
+      <a href="/explore">Explorer</a>
+    </span>
+  </div>
+
+  <div class="disclaimer">
+    <strong>Disclaimer:</strong> TravelLens is a learning and portfolio project.
+    Booking data is synthetic. Review data is real but used for educational purposes only.
+    This application runs locally and is not intended for production use.
+  </div>
+
+</div>
+{% endblock %}
+
+
+{% block extra_scripts %}
+<script>
+  // Scroll-reveal — reveal sections as they enter the viewport
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        entry.target.classList.add('visible');
+        observer.unobserve(entry.target);
+      }
+    });
+  }, { threshold: 0.12 });
+
+  document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
+</script>
+{% endblock %}

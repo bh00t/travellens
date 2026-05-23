@@ -1,0 +1,45 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.egg-info/
+
+# Environment
+.env
+.env.local
+
+# Data — do not commit large CSVs to git
+data/*.csv
+data/*.json
+!data/.gitkeep
+
+# Docker
+.docker/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Build artifacts
+*.parquet
+*.duckdb
+query_results/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Flink legacy artifacts (kept locally for history, not shipped)
+flink/
+!flink/.gitkeep
+
+# Test logs (regenerate on every run)
+consumer_*.log
+producer_*.log
+
+# Quarantine sample dumps (if you mc cat locally)
+*.quarantine.json

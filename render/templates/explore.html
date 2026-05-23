@@ -1,0 +1,609 @@
+{% extends "base.html" %}
+{% set active_page = 'explore' %}
+{% block title %}Explorer{% endblock %}
+
+<!--
+  explore.html — TravelLens Query Explorer
+  ==========================================
+  Part of: TravelLens Phase 5 — Dashboard
+  File:    render/templates/explore.html
+
+  What this page does:
+    Chat-like interface for creating dashboard widgets.
+    User types a prompt → POST /api/query → widget preview renders below.
+    User clicks "Pin to Dashboard" → POST /api/pin → widget saved to Postgres.
+
+  Layout:
+    Full-width prompt bar at top.
+    Below: 300px sidebar (query history) + main content (widget preview).
+
+  Widget rendering:
+    Same 5 types as dashboard.html but rendered inline (not via /api/refresh).
+    User can override the auto-detected type before pinning.
+
+  Query history:
+    Last 10 queries stored in JS array (session only — not persisted).
+    Click any history item to re-run it.
+-->
+
+{% block extra_styles %}
+<style>
+  /* ── Page header ─────────────────────────────────────────────────────────── */
+  .explore-page-header { margin-bottom: 1.25rem; }
+  .explore-page-header h1 {
+    font-family: var(--font-mono);
+    font-size: 1rem;
+    font-weight: 800;
+  }
+  .explore-page-header p {
+    font-size: .8rem;
+    color: var(--gray-500);
+    margin-top: .25rem;
+  }
+
+  /* ── Prompt bar ──────────────────────────────────────────────────────────── */
+  .prompt-bar {
+    display: flex;
+    gap: .75rem;
+    margin-bottom: 1.5rem;
+    background: var(--white);
+    border: 2px solid var(--gray-200);
+    border-radius: 8px;
+    padding: .75rem 1rem;
+    transition: border-color .15s;
+    align-items: center;
+  }
+  .prompt-bar:focus-within { border-color: var(--green); }
+  .prompt-input {
+    flex: 1;
+    border: none;
+    outline: none;
+    font-size: .9rem;
+    font-family: var(--font-sans);
+    background: transparent;
+    color: var(--gray-900);
+  }
+  .prompt-input::placeholder { color: var(--gray-500); }
+  .prompt-btn {
+    background: var(--green);
+    color: var(--white);
+    border: none;
+    border-radius: 4px;
+    padding: .45rem 1rem;
+    font-weight: 700;
+    font-size: .8rem;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background .15s;
+    font-family: var(--font-sans);
+  }
+  .prompt-btn:hover:not(:disabled) { background: #007A2C; }
+  .prompt-btn:disabled {
+    background: var(--gray-200);
+    color: var(--gray-500);
+    cursor: not-allowed;
+  }
+
+  /* ── Two-column layout ───────────────────────────────────────────────────── */
+  .explore-layout {
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    gap: 1.5rem;
+    align-items: start;
+  }
+  .explore-sidebar { position: sticky; top: 72px; }
+  .explore-main {}
+
+  /* ── Sidebar — history ───────────────────────────────────────────────────── */
+  .sidebar-card {
+    background: var(--white);
+    border: 1px solid var(--gray-200);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .sidebar-card-header {
+    padding: .65rem 1rem;
+    border-bottom: 1px solid var(--gray-200);
+    font-family: var(--font-mono);
+    font-size: .62rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    background: var(--gray-50);
+    color: var(--gray-500);
+  }
+  .history-item {
+    padding: .6rem 1rem;
+    border-bottom: 1px solid var(--gray-100);
+    font-size: .76rem;
+    color: var(--gray-500);
+    cursor: pointer;
+    transition: background .1s;
+    line-height: 1.4;
+  }
+  .history-item:last-child { border-bottom: none; }
+  .history-item:hover { background: var(--gray-50); color: var(--gray-900); }
+  .history-empty {
+    padding: 1.25rem 1rem;
+    font-size: .76rem;
+    color: var(--gray-500);
+    text-align: center;
+  }
+
+  /* ── Preview area ────────────────────────────────────────────────────────── */
+  .preview-area {
+    background: var(--white);
+    border: 1px solid var(--gray-200);
+    border-radius: 8px;
+    overflow: hidden;
+    min-height: 320px;
+  }
+
+  /* Placeholder — shown before any query is run */
+  .preview-placeholder {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 320px;
+    color: var(--gray-500);
+    font-size: .85rem;
+    text-align: center;
+    gap: .5rem;
+    padding: 2rem;
+  }
+  .preview-placeholder .ph-icon { font-size: 2.25rem; margin-bottom: .25rem; }
+  .preview-placeholder .ph-hint {
+    font-size: .72rem;
+    color: var(--gray-500);
+    font-family: var(--font-mono);
+    background: var(--gray-100);
+    padding: .3rem .75rem;
+    border-radius: 4px;
+    margin-top: .25rem;
+  }
+
+  /* Loading — shown while /api/query is running */
+  .preview-loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 320px;
+    gap: .75rem;
+    color: var(--gray-500);
+    font-size: .85rem;
+  }
+
+  /* Preview card — shown after a successful query */
+  .preview-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: .75rem 1rem;
+    border-bottom: 1px solid var(--gray-200);
+    background: var(--gray-50);
+    gap: .75rem;
+    flex-wrap: wrap;
+  }
+  .preview-title {
+    font-family: var(--font-mono);
+    font-size: .72rem;
+    font-weight: 800;
+    color: var(--gray-900);
+  }
+  .preview-controls { display: flex; align-items: center; gap: .5rem; }
+  .type-label {
+    font-size: .7rem;
+    color: var(--gray-500);
+    font-weight: 600;
+  }
+  .type-select {
+    border: 1px solid var(--gray-200);
+    border-radius: 4px;
+    padding: .3rem .6rem;
+    font-size: .75rem;
+    background: var(--white);
+    cursor: pointer;
+    outline: none;
+  }
+  .type-select:focus { border-color: var(--green); }
+  .preview-body { padding: 1rem; min-height: 200px; }
+
+  /* Pin bar — at bottom of preview card */
+  .pin-bar {
+    display: flex;
+    align-items: center;
+    gap: .75rem;
+    padding: .75rem 1rem;
+    border-top: 1px solid var(--gray-200);
+    background: var(--gray-50);
+    flex-wrap: wrap;
+  }
+  .pin-title-input {
+    flex: 1;
+    min-width: 160px;
+    border: 1px solid var(--gray-200);
+    border-radius: 4px;
+    padding: .4rem .75rem;
+    font-size: .8rem;
+    outline: none;
+    font-family: var(--font-sans);
+  }
+  .pin-title-input:focus { border-color: var(--green); }
+</style>
+{% endblock %}
+
+
+{% block content %}
+<div class="page">
+
+  <!-- ── Page header ──────────────────────────────────────────────────────── -->
+  <div class="explore-page-header">
+    <h1>Explorer</h1>
+    <p>Ask a question — pin the result to your dashboard.</p>
+  </div>
+
+  <!-- ── Prompt bar ───────────────────────────────────────────────────────── -->
+  <div class="prompt-bar">
+    <input
+      type="text"
+      class="prompt-input"
+      id="promptInput"
+      placeholder="e.g. top 5 cities by revenue, complaints about AC in Goa..."
+      autofocus
+    />
+    <button class="prompt-btn" id="runBtn" onclick="runQuery()">Run →</button>
+  </div>
+
+  <!-- ── Two-column layout ────────────────────────────────────────────────── -->
+  <div class="explore-layout">
+
+    <!-- Sidebar — query history -->
+    <div class="explore-sidebar">
+      <div class="sidebar-card">
+        <div class="sidebar-card-header">Recent queries</div>
+        <div id="historyList">
+          <div class="history-empty">No queries yet</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Main — preview area -->
+    <div class="explore-main">
+      <div class="preview-area" id="previewArea">
+
+        <!-- Default placeholder state -->
+        <div class="preview-placeholder" id="placeholder">
+          <div class="ph-icon">◎</div>
+          <div>Run a query to preview the widget</div>
+          <div class="ph-hint">Try: "top 5 cities by revenue"</div>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+</div>
+{% endblock %}
+
+
+{% block extra_scripts %}
+<script>
+  // ── State ──────────────────────────────────────────────────────────────────
+  let currentResult  = null;   // last result dict from /api/query
+  let currentConfig  = null;   // last widget config dict
+  let currentChart   = null;   // active Chart.js instance (destroyed on re-render)
+  let queryHistory   = [];     // last 10 prompts (session only)
+
+  // ── runQuery ───────────────────────────────────────────────────────────────
+  /**
+   * POST the prompt to /api/query.
+   * On success: store result, add to history, call renderPreview().
+   * On failure: show error in preview area.
+   */
+  async function runQuery() {
+    const prompt = document.getElementById('promptInput').value.trim();
+    if (!prompt) return;
+
+    // Disable button and show loading state
+    const btn = document.getElementById('runBtn');
+    btn.disabled = true;
+    btn.textContent = '...';
+
+    document.getElementById('previewArea').innerHTML = `
+      <div class="preview-loading">
+        <span class="spinner"></span>
+        Running query...
+      </div>`;
+
+    try {
+      const resp = await fetch('/api/query', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ prompt })
+      });
+      const data = await resp.json();
+
+      currentResult = data.result;
+      currentConfig = data.widget_config;
+
+      addToHistory(prompt);
+      renderPreview(currentConfig, prompt);
+
+    } catch (err) {
+      document.getElementById('previewArea').innerHTML = `
+        <div class="preview-placeholder">
+          <span style="color:#dc2626;font-size:1.25rem">⚠</span>
+          <span>Network error: ${err.message}</span>
+        </div>`;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Run →';
+    }
+  }
+
+  // ── renderPreview ──────────────────────────────────────────────────────────
+  /**
+   * Build the preview card HTML (header + body + pin bar) and inject into
+   * #previewArea. Then render the widget body via renderWidgetBody().
+   */
+  function renderPreview(config, prompt) {
+    const area = document.getElementById('previewArea');
+
+    if (config.type === 'error') {
+      area.innerHTML = `
+        <div class="preview-placeholder">
+          <span style="color:#dc2626;font-size:1.25rem">⚠</span>
+          <span style="color:#dc2626">${config.error}</span>
+        </div>`;
+      return;
+    }
+
+    // Build the type-override dropdown
+    const types = ['auto', 'bar_chart', 'line_chart', 'table', 'stat_card'];
+    const labels = {
+      auto: `Auto (${config.type})`,
+      bar_chart: 'Bar chart', line_chart: 'Line chart',
+      table: 'Table', stat_card: 'Stat card'
+    };
+    const options = types.map(t =>
+      `<option value="${t}" ${t === 'auto' ? 'selected' : ''}>${labels[t]}</option>`
+    ).join('');
+
+    // Readability warning banner (Option A) — shown when config.warning is set.
+    // Renders above the widget body. Two actions: switch to the suggested type
+    // (always 'table' for crowded categorical charts), or keep the current type.
+    const warningBanner = config.warning ? `
+      <div style="padding:12px 1rem;background:#fffbeb;border-bottom:1px solid #fde68a;
+                  display:flex;gap:10px;align-items:flex-start;">
+        <span style="font-size:16px;flex-shrink:0;">⚠</span>
+        <div style="font-size:13px;line-height:1.55;color:#92400e;">
+          ${config.warning.message}
+          <div style="margin-top:8px;display:flex;gap:8px;">
+            <button class="btn" style="font-size:12px;padding:4px 12px;"
+                    onclick="switchType('${config.warning.suggested}')">
+              Switch to ${config.warning.suggested}
+            </button>
+            <button class="btn btn-ghost" style="font-size:12px;padding:4px 12px;"
+                    onclick="dismissWarning()">
+              Keep ${config.type.replace('_', ' ')} anyway
+            </button>
+          </div>
+        </div>
+      </div>` : '';
+
+    area.innerHTML = `
+      <div class="preview-header">
+        <div class="preview-title">${prompt.substring(0, 65)}${prompt.length > 65 ? '...' : ''}</div>
+        <div class="preview-controls">
+          <span class="type-label">Type:</span>
+          <select class="type-select" id="typeOverride" onchange="overrideType()">
+            ${options}
+          </select>
+        </div>
+      </div>
+      ${warningBanner}
+      <div class="preview-body" id="previewBody"></div>
+      <div class="pin-bar">
+        <input
+          type="text"
+          class="pin-title-input"
+          id="pinTitle"
+          placeholder="Widget title (optional)"
+          value="${prompt.substring(0, 65)}"
+        />
+        <button class="btn btn-primary" onclick="pinWidget()">📌 Pin to Dashboard</button>
+      </div>`;
+
+    renderWidgetBody(document.getElementById('previewBody'), config);
+  }
+
+  // ── switchType ───────────────────────────────────────────────────────────
+  // Called by the warning banner's "Switch to table" button. Re-renders the
+  // preview with the suggested type and clears the warning.
+  function switchType(newType) {
+    if (!currentConfig) return;
+    currentConfig.type = newType;
+    currentConfig.warning = null;
+    // sync the dropdown to the new type
+    renderPreview(currentConfig, currentResult.query);
+    document.getElementById('typeOverride').value = newType;
+  }
+
+  // ── dismissWarning ─────────────────────────────────────────────────────────
+  // Called by "Keep bar chart anyway". Clears the warning, keeps the type.
+  function dismissWarning() {
+    if (!currentConfig) return;
+    currentConfig.warning = null;
+    renderPreview(currentConfig, currentResult.query);
+  }
+
+  // ── renderWidgetBody ───────────────────────────────────────────────────────
+  /**
+   * Render any widget type into a given DOM element.
+   * Destroys any existing Chart.js instance before creating a new one
+   * to prevent "canvas already in use" errors on type override.
+   *
+   * Handles: stat_card, semantic, table, bar_chart, line_chart
+   */
+  function renderWidgetBody(bodyEl, config) {
+    // Destroy existing chart before re-rendering
+    if (currentChart) {
+      currentChart.destroy();
+      currentChart = null;
+    }
+
+    if (config.type === 'stat_card') {
+      bodyEl.innerHTML = `
+        <div style="display:flex;flex-direction:column;align-items:center;
+                    justify-content:center;padding:2.5rem;text-align:center">
+          <div style="font-family:var(--font-mono);font-size:2.75rem;
+                      font-weight:800;color:var(--green)">${config.data.value}</div>
+          <div style="font-size:.72rem;color:var(--gray-500);margin-top:.6rem;
+                      text-transform:uppercase;letter-spacing:.06em">${config.data.label}</div>
+        </div>`;
+      return;
+    }
+
+    if (config.type === 'semantic') {
+      const reviews = (config.data.reviews || []).map(r => `
+        <div style="padding:.45rem 0;border-bottom:1px solid var(--gray-100);
+                    font-size:.76rem;color:var(--gray-500);line-height:1.5">
+          <span style="color:var(--green);font-weight:700">${r.rating}★</span>
+          ${r.review_text.substring(0, 150)}...
+        </div>`).join('');
+      bodyEl.innerHTML = `
+        <div style="font-size:.83rem;line-height:1.7;margin-bottom:.875rem">
+          ${config.data.summary.replace(/\n/g, '<br>')}
+        </div>
+        <div style="font-family:var(--font-mono);font-size:.62rem;font-weight:800;
+                    text-transform:uppercase;letter-spacing:.06em;color:var(--gray-500);
+                    margin-bottom:.5rem">Top reviews — ${config.data.city}</div>
+        <div style="max-height:240px;overflow-y:auto">${reviews}</div>`;
+      return;
+    }
+
+    if (config.type === 'table') {
+      const ths = config.data.columns.map(c =>
+        `<th style="background:var(--gray-50);padding:.45rem .75rem;text-align:left;
+                    font-family:var(--font-mono);font-size:.62rem;font-weight:800;
+                    text-transform:uppercase;border-bottom:2px solid var(--gray-200);
+                    position:sticky;top:0;z-index:1">${c}</th>`
+      ).join('');
+      const trs = config.data.rows.map(r =>
+        `<tr>${r.map(v =>
+          `<td style="padding:.45rem .75rem;border-bottom:1px solid var(--gray-100);
+                      font-size:.78rem">${v}</td>`
+        ).join('')}</tr>`).join('');
+      bodyEl.innerHTML = `
+        <div style="max-height:320px;overflow:auto">
+          <table style="width:100%;border-collapse:collapse">
+            <thead><tr>${ths}</tr></thead>
+            <tbody>${trs}</tbody>
+          </table>
+        </div>`;
+      return;
+    }
+
+    // bar_chart or line_chart
+    bodyEl.innerHTML = `<canvas id="previewChart" style="max-height:250px"></canvas>`;
+    const ctx = document.getElementById('previewChart').getContext('2d');
+    currentChart = new Chart(ctx, {
+      type: config.type === 'line_chart' ? 'line' : 'bar',
+      data: {
+        labels: config.data.labels,
+        datasets: [{
+          label:           config.data.y_label,
+          data:            config.data.values,
+          backgroundColor: config.type === 'line_chart'
+            ? 'rgba(0,177,64,.12)' : 'rgba(0,177,64,.85)',
+          borderColor:     '#00B140',
+          borderWidth:     2,
+          tension:         .35,
+          fill:            config.type === 'line_chart',
+          pointRadius:     config.type === 'line_chart' ? 3 : 0,
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: { y: { beginAtZero: true, grid: { color: '#f0f0f0' } } }
+      }
+    });
+  }
+
+  // ── overrideType ───────────────────────────────────────────────────────────
+  /**
+   * Re-render the preview body with a user-selected widget type.
+   * Does not call /api/query again — just re-renders existing data with
+   * a different config.type.
+   */
+  function overrideType() {
+    if (!currentConfig) return;
+    const selected = document.getElementById('typeOverride').value;
+    const overridden = { ...currentConfig };
+    if (selected !== 'auto') overridden.type = selected;
+    renderWidgetBody(document.getElementById('previewBody'), overridden);
+    currentConfig = overridden;
+  }
+
+  // ── pinWidget ──────────────────────────────────────────────────────────────
+  /**
+   * POST /api/pin with the current prompt, widget type, and title.
+   * Shows a success toast and keeps the preview visible (user can pin multiple
+   * times or change the title and pin again).
+   */
+  async function pinWidget() {
+    if (!currentConfig || !currentResult) return;
+
+    const title = document.getElementById('pinTitle').value.trim();
+    const resp  = await fetch('/api/pin', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({
+        prompt:      currentResult.query,
+        widget_type: currentConfig.type,
+        title:       title || currentResult.query.substring(0, 60)
+      })
+    });
+
+    if (resp.ok) {
+      showToast('✓ Pinned to dashboard', 'success');
+    } else {
+      const err = await resp.json();
+      showToast('Failed to pin: ' + (err.error || 'unknown error'), 'error');
+    }
+  }
+
+  // ── History management ─────────────────────────────────────────────────────
+  function addToHistory(prompt) {
+    // Deduplicate + keep most recent 10
+    queryHistory = [prompt, ...queryHistory.filter(p => p !== prompt)].slice(0, 10);
+    renderHistory();
+  }
+
+  function renderHistory() {
+    const list = document.getElementById('historyList');
+    if (queryHistory.length === 0) {
+      list.innerHTML = '<div class="history-empty">No queries yet</div>';
+      return;
+    }
+    list.innerHTML = queryHistory.map(p => `
+      <div class="history-item" onclick="rerunHistory(this.dataset.prompt)"
+           data-prompt="${p.replace(/"/g, '&quot;')}">
+        ${p.substring(0, 48)}${p.length > 48 ? '...' : ''}
+      </div>`).join('');
+  }
+
+  function rerunHistory(prompt) {
+    document.getElementById('promptInput').value = prompt;
+    runQuery();
+  }
+
+  // Enter key submits prompt
+  document.getElementById('promptInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') runQuery();
+  });
+</script>
+{% endblock %}

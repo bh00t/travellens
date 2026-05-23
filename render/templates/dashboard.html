@@ -1,0 +1,695 @@
+{% extends "base.html" %}
+{% set active_page = 'dashboard' %}
+{% block title %}Dashboard{% endblock %}
+
+<!--
+  dashboard.html — TravelLens Pinned Widgets Dashboard
+  ======================================================
+  Part of: TravelLens Phase 5 — Dashboard
+  File:    render/templates/dashboard.html
+
+  What this page does:
+    Shows all pinned widgets in a responsive grid. Each widget loads its data
+    on page load via /api/refresh/<id> — the page itself is just empty shells,
+    JavaScript fills them with live Chart.js renders.
+
+  Two states:
+    - Empty: no widgets pinned yet → prompt to go to Explorer
+    - Populated: widget grid with refresh/delete controls per widget
+
+  Auto-refresh:
+    Widgets with refresh_interval_minutes > 0 get a setInterval that re-calls
+    /api/refresh/<id> on schedule. Streaming widgets (hourly city stats) use
+    60-minute intervals matching the Kafka window size.
+
+  Widget types rendered by renderWidget():
+    stat_card  — large number + label
+    bar_chart  — horizontal bar, Chart.js
+    line_chart — line with fill, Chart.js
+    table      — HTML table with styled headers
+    semantic   — Ollama summary + top 5 review snippets
+    error      — red error box with message
+-->
+
+{% block extra_styles %}
+<style>
+  /* ── Dashboard header ─────────────────────────────────────────────────────── */
+  .dashboard-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1.5rem;
+  }
+  .dashboard-header h1 {
+    font-family: var(--font-mono);
+    font-size: 1rem;
+    font-weight: 800;
+  }
+  .widget-count {
+    font-size: .8rem;
+    color: var(--gray-500);
+    margin-top: .2rem;
+  }
+
+  /* ── Widget grid ──────────────────────────────────────────────────────────── */
+  /* auto-fill keeps layout responsive — on narrow screens cols collapse       */
+  .widget-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(480px, 1fr));
+    gap: 1.25rem;
+    align-items: start;
+  }
+
+  /* ── Widget card ──────────────────────────────────────────────────────────── */
+  .widget-card {
+    background: var(--white);
+    border: 1px solid var(--gray-200);
+    border-radius: 8px;
+    overflow: hidden;
+    transition: box-shadow .15s;
+  }
+  .widget-card:hover { box-shadow: 0 2px 12px rgba(0,0,0,.06); }
+
+  /* Widget header — title + timestamp + action buttons */
+  .widget-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    padding: .75rem 1rem;
+    border-bottom: 1px solid var(--gray-200);
+    background: var(--gray-50);
+    gap: .75rem;
+    cursor: grab;
+  }
+  .widget-header:active { cursor: grabbing; }
+
+  /* Drag-and-drop states (SortableJS) */
+  /* The card being held — lifts with a shadow */
+  .widget-chosen {
+    box-shadow: 0 8px 28px rgba(0,0,0,.18);
+    transform: scale(1.01);
+  }
+  /* The drop placeholder — shows where the card will land */
+  .widget-ghost {
+    opacity: .5;
+    background: var(--gray-50);
+    border: 2px dashed var(--green);
+  }
+  .widget-ghost > * { visibility: hidden; }
+  /* The floating clone that follows the cursor */
+  .widget-drag {
+    opacity: .95;
+    box-shadow: 0 12px 32px rgba(0,0,0,.22);
+  }
+  .widget-title {
+    font-family: var(--font-mono);
+    font-size: .72rem;
+    font-weight: 800;
+    color: var(--gray-900);
+    line-height: 1.4;
+  }
+  .widget-meta {
+    font-size: .65rem;
+    color: var(--gray-500);
+    margin-top: .2rem;
+  }
+  .widget-actions { display: flex; gap: .35rem; flex-shrink: 0; }
+
+  /* Full-row widget — spans the entire grid width */
+  .widget-card.full-width { grid-column: 1 / -1; }
+
+  /* Widget card needs relative positioning so the popover anchors to it */
+  .widget-card { position: relative; }
+
+  /* Settings popover — floats over the widget, does not resize it */
+  .widget-settings {
+    position: absolute;
+    top: 46px;
+    right: 12px;
+    z-index: 50;
+    width: 230px;
+    background: var(--white);
+    border: 1px solid var(--gray-200);
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0,0,0,.12);
+    padding: .5rem .75rem;
+  }
+  .settings-popover-title {
+    font-family: var(--font-mono);
+    font-size: .6rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: var(--gray-500);
+    padding: .25rem 0 .4rem;
+    border-bottom: 1px solid var(--gray-100);
+    margin-bottom: .35rem;
+  }
+  .settings-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: .4rem 0;
+  }
+  .settings-label {
+    font-size: .72rem;
+    font-weight: 600;
+    color: var(--gray-500);
+  }
+  .settings-select {
+    border: 1px solid var(--gray-200);
+    border-radius: 4px;
+    padding: .25rem .5rem;
+    font-size: .73rem;
+    background: var(--white);
+    cursor: pointer;
+    outline: none;
+  }
+  .settings-select:focus { border-color: var(--green); }
+
+  /* Widget body — minimum height so empty/loading states don't collapse card */
+  .widget-body { padding: 1rem; min-height: 140px; }
+
+  /* Loading state inside widget body */
+  .widget-loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 120px;
+    gap: .5rem;
+    color: var(--gray-500);
+    font-size: .8rem;
+  }
+
+  /* Error state inside widget body */
+  .widget-error {
+    padding: .875rem 1rem;
+    color: #dc2626;
+    font-size: .8rem;
+    background: #fef2f2;
+    border-radius: 4px;
+    line-height: 1.5;
+  }
+
+  /* ── Widget type: stat card ───────────────────────────────────────────────── */
+  .stat-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+    text-align: center;
+    min-height: 120px;
+  }
+  .stat-value {
+    font-family: var(--font-mono);
+    font-size: 2.5rem;
+    font-weight: 800;
+    color: var(--green);
+    line-height: 1;
+  }
+  .stat-label {
+    font-size: .72rem;
+    color: var(--gray-500);
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    margin-top: .6rem;
+  }
+
+  /* ── Widget type: semantic card ───────────────────────────────────────────── */
+  .semantic-summary {
+    font-size: .83rem;
+    line-height: 1.7;
+    color: var(--gray-900);
+    border-bottom: 1px solid var(--gray-200);
+    padding-bottom: .875rem;
+    margin-bottom: .875rem;
+  }
+  .semantic-reviews-label {
+    font-family: var(--font-mono);
+    font-size: .62rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: var(--gray-500);
+    margin-bottom: .5rem;
+  }
+  .review-item {
+    padding: .45rem 0;
+    border-bottom: 1px solid var(--gray-100);
+    font-size: .76rem;
+    color: var(--gray-500);
+    line-height: 1.5;
+  }
+  .review-item:last-child { border-bottom: none; }
+  .review-scroll { max-height: 240px; overflow-y: auto; }
+  .review-rating {
+    color: var(--green);
+    font-weight: 700;
+    margin-right: .35rem;
+  }
+
+  /* ── Widget type: table ───────────────────────────────────────────────────── */
+  /* Scrollable table container — fixed height, header stays pinned */
+  .table-scroll {
+    max-height: 320px;
+    overflow-y: auto;
+    overflow-x: auto;
+  }
+  .data-table { width: 100%; border-collapse: collapse; font-size: .78rem; }
+  .data-table th {
+    background: var(--gray-50);
+    padding: .45rem .75rem;
+    text-align: left;
+    font-family: var(--font-mono);
+    font-size: .62rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    border-bottom: 2px solid var(--gray-200);
+    white-space: nowrap;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+  }
+  .data-table td {
+    padding: .45rem .75rem;
+    border-bottom: 1px solid var(--gray-100);
+  }
+  .data-table tr:last-child td { border-bottom: none; }
+  .data-table tr:hover td { background: var(--gray-50); }
+
+  /* ── Empty state ──────────────────────────────────────────────────────────── */
+  .empty-state {
+    text-align: center;
+    padding: 5rem 2rem;
+    color: var(--gray-500);
+  }
+  .empty-icon { font-size: 2.5rem; margin-bottom: 1rem; }
+  .empty-state h2 {
+    font-family: var(--font-mono);
+    font-size: .9rem;
+    font-weight: 800;
+    color: var(--gray-900);
+    margin-bottom: .6rem;
+  }
+  .empty-state p {
+    font-size: .85rem;
+    margin-bottom: 1.5rem;
+    max-width: 340px;
+    margin-left: auto;
+    margin-right: auto;
+    line-height: 1.6;
+  }
+</style>
+{% endblock %}
+
+
+{% block content %}
+<div class="page">
+
+  <!-- ── Dashboard header ─────────────────────────────────────────────────── -->
+  <div class="dashboard-header">
+    <div>
+      <h1>Dashboard</h1>
+      <div class="widget-count">
+        {{ widgets|length }} widget{{ 's' if widgets|length != 1 else '' }} pinned
+      </div>
+    </div>
+    <div style="display:flex;gap:.5rem;align-items:center;">
+      {% if widgets %}
+      <button class="btn btn-ghost" onclick="refreshAll()" id="refreshAllBtn"
+              title="Refresh all widgets">↻ Refresh all</button>
+      {% endif %}
+      <a href="/explore" class="btn btn-primary">+ New Widget</a>
+    </div>
+  </div>
+
+  <!-- ── Widget grid (populated state) ───────────────────────────────────── -->
+  {% if widgets %}
+  <div class="widget-grid" id="widgetGrid">
+    {% for w in widgets %}
+    <!--
+      data-widget-id  — used by JS to call /api/refresh/<id> and /api/widget/<id>
+      data-refresh-interval — minutes between auto-refresh (0 = page load only)
+    -->
+    <div class="widget-card{% if w.width == 'full' %} full-width{% endif %}"
+         id="widget-{{ w.widget_id }}"
+         data-widget-id="{{ w.widget_id }}"
+         data-refresh-interval="{{ w.refresh_interval_minutes }}"
+         data-width="{{ w.width }}">
+
+      <div class="widget-header">
+        <div>
+          <div class="widget-title">{{ w.title or w.prompt[:55] }}</div>
+          <div class="widget-meta">
+            Refreshed: <span id="refreshed-{{ w.widget_id }}">{{ w.last_refreshed_at }}</span>
+            {% if w.refresh_interval_minutes > 0 %}
+            · auto {{ w.refresh_interval_minutes }}min
+            {% endif %}
+          </div>
+        </div>
+        <div class="widget-actions">
+          <button class="btn btn-ghost"
+                  onclick="refreshWidget({{ w.widget_id }})"
+                  title="Refresh widget">↻</button>
+          <button class="btn btn-ghost"
+                  onclick="toggleSettings(event, {{ w.widget_id }})"
+                  title="Widget settings">⚙</button>
+          <button class="btn btn-danger"
+                  onclick="deleteWidget({{ w.widget_id }})"
+                  title="Remove widget">×</button>
+        </div>
+      </div>
+
+      <!-- Settings popover — floats over the widget, hidden by default -->
+      <div class="widget-settings" id="settings-{{ w.widget_id }}"
+           style="display:none;" onclick="event.stopPropagation()">
+        <div class="settings-popover-title">Widget settings</div>
+        <div class="settings-row">
+          <span class="settings-label">Auto-refresh</span>
+          <select class="settings-select"
+                  onchange="updateSetting({{ w.widget_id }}, 'refresh_interval_minutes', this.value)">
+            <option value="0"   {% if w.refresh_interval_minutes == 0 %}selected{% endif %}>Off</option>
+            <option value="5"   {% if w.refresh_interval_minutes == 5 %}selected{% endif %}>Every 5 min</option>
+            <option value="15"  {% if w.refresh_interval_minutes == 15 %}selected{% endif %}>Every 15 min</option>
+            <option value="30"  {% if w.refresh_interval_minutes == 30 %}selected{% endif %}>Every 30 min</option>
+            <option value="60"  {% if w.refresh_interval_minutes == 60 %}selected{% endif %}>Every hour</option>
+            <option value="360" {% if w.refresh_interval_minutes == 360 %}selected{% endif %}>Every 6 hours</option>
+          </select>
+        </div>
+        <div class="settings-row">
+          <span class="settings-label">Width</span>
+          <select class="settings-select"
+                  onchange="updateSetting({{ w.widget_id }}, 'width', this.value)">
+            <option value="normal" {% if w.width == 'normal' %}selected{% endif %}>Normal</option>
+            <option value="full"   {% if w.width == 'full' %}selected{% endif %}>Full row</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Body starts as a spinner — JS fills it via /api/refresh -->
+      <div class="widget-body" id="body-{{ w.widget_id }}">
+        <div class="widget-loading">
+          <span class="spinner"></span> Loading...
+        </div>
+      </div>
+
+    </div>
+    {% endfor %}
+  </div>
+
+  <!-- ── Empty state ──────────────────────────────────────────────────────── -->
+  {% else %}
+  <div class="empty-state">
+    <div class="empty-icon">◎</div>
+    <h2>No widgets pinned yet</h2>
+    <p>Go to Explorer, run a query you like, and pin it to this dashboard.</p>
+    <a href="/explore" class="btn btn-primary">Open Explorer</a>
+  </div>
+  {% endif %}
+
+</div>
+{% endblock %}
+
+
+{% block extra_scripts %}
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
+<script>
+  /**
+   * renderWidget — inject widget HTML into a body element based on config type.
+   *
+   * config.type can be:
+   *   'stat_card'  — single big number with label
+   *   'bar_chart'  — Chart.js bar chart (green bars)
+   *   'line_chart' — Chart.js line chart with fill
+   *   'table'      — HTML table with styled headers
+   *   'semantic'   — Ollama summary + top 5 review snippets
+   *   'error'      — red error box
+   */
+  function renderWidget(bodyEl, config) {
+
+    if (config.type === 'error') {
+      bodyEl.innerHTML = `<div class="widget-error">⚠ ${config.error}</div>`;
+      return;
+    }
+
+    if (config.type === 'stat_card') {
+      bodyEl.innerHTML = `
+        <div class="stat-card">
+          <div class="stat-value">${config.data.value}</div>
+          <div class="stat-label">${config.data.label}</div>
+        </div>`;
+      return;
+    }
+
+    if (config.type === 'semantic') {
+      const reviews = (config.data.reviews || []).map(r => `
+        <div class="review-item">
+          <span class="review-rating">${r.rating}★</span>
+          ${r.review_text.substring(0, 120)}...
+        </div>`).join('');
+      bodyEl.innerHTML = `
+        <div class="semantic-summary">
+          ${config.data.summary.replace(/\n/g, '<br>')}
+        </div>
+        <div class="semantic-reviews-label">
+          Top reviews — ${config.data.city}
+        </div>
+        <div class="review-scroll">${reviews}</div>`;
+      return;
+    }
+
+    if (config.type === 'table') {
+      const headers = config.data.columns
+        .map(c => `<th>${c}</th>`).join('');
+      const rows = config.data.rows
+        .map(r => `<tr>${r.map(v => `<td>${v}</td>`).join('')}</tr>`).join('');
+      bodyEl.innerHTML = `
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead><tr>${headers}</tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>`;
+      return;
+    }
+
+    // bar_chart or line_chart — both use Chart.js
+    // Unique canvas ID prevents conflicts when multiple charts are on the page
+    const canvasId = 'chart-' + config.type + '-' + Date.now();
+    bodyEl.innerHTML = `<canvas id="${canvasId}" style="max-height:220px"></canvas>`;
+
+    const ctx = document.getElementById(canvasId).getContext('2d');
+    new Chart(ctx, {
+      type: config.type === 'line_chart' ? 'line' : 'bar',
+      data: {
+        labels: config.data.labels,
+        datasets: [{
+          label:           config.data.y_label,
+          data:            config.data.values,
+          backgroundColor: config.type === 'line_chart'
+            ? 'rgba(0,177,64,.12)'
+            : 'rgba(0,177,64,.85)',
+          borderColor:     '#00B140',
+          borderWidth:     2,
+          tension:         .35,
+          fill:            config.type === 'line_chart',
+          pointRadius:     config.type === 'line_chart' ? 3 : 0,
+        }]
+      },
+      options: {
+        responsive:          true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales:  { y: { beginAtZero: true, grid: { color: '#f0f0f0' } } }
+      }
+    });
+  }
+
+  /**
+   * refreshWidget — re-fetch data for one widget via POST /api/refresh/<id>.
+   * Shows spinner during fetch, then calls renderWidget with the result.
+   * Updates "Last refreshed" timestamp on success.
+   */
+  async function refreshWidget(widgetId) {
+    const bodyEl = document.getElementById('body-' + widgetId);
+    bodyEl.innerHTML = `
+      <div class="widget-loading">
+        <span class="spinner"></span> Refreshing...
+      </div>`;
+
+    try {
+      const resp = await fetch('/api/refresh/' + widgetId, { method: 'POST' });
+      const data = await resp.json();
+
+      if (data.error) {
+        bodyEl.innerHTML = `<div class="widget-error">⚠ ${data.error}</div>`;
+        return;
+      }
+
+      renderWidget(bodyEl, data.widget_config);
+
+      // Update timestamp label
+      const tsEl = document.getElementById('refreshed-' + widgetId);
+      if (tsEl) tsEl.textContent = 'Just now';
+
+    } catch (err) {
+      bodyEl.innerHTML = `<div class="widget-error">⚠ Network error: ${err.message}</div>`;
+    }
+  }
+
+  /**
+   * deleteWidget — remove a pinned widget permanently.
+   * Asks for confirmation, then DELETE /api/widget/<id>, removes card from DOM.
+   */
+  async function deleteWidget(widgetId) {
+    if (!confirm('Remove this widget from the dashboard?')) return;
+
+    try {
+      const resp = await fetch('/api/widget/' + widgetId, { method: 'DELETE' });
+      if (resp.ok) {
+        const card = document.getElementById('widget-' + widgetId);
+        if (card) card.remove();
+        showToast('Widget removed', 'success');
+      } else {
+        showToast('Failed to remove widget', 'error');
+      }
+    } catch (err) {
+      showToast('Network error: ' + err.message, 'error');
+    }
+  }
+
+  /**
+   * toggleSettings — show/hide the settings popover for a widget.
+   * Closes any other open popover first so only one is open at a time.
+   * Stops event propagation so the document click handler doesn't immediately
+   * close the popover we just opened.
+   */
+  function toggleSettings(event, widgetId) {
+    event.stopPropagation();
+    const panel = document.getElementById('settings-' + widgetId);
+    if (!panel) return;
+    const isOpen = panel.style.display === 'block';
+
+    // Close all open popovers
+    document.querySelectorAll('.widget-settings').forEach(p => p.style.display = 'none');
+
+    // Toggle this one
+    panel.style.display = isOpen ? 'none' : 'block';
+  }
+
+  // Click anywhere outside an open popover closes it
+  document.addEventListener('click', () => {
+    document.querySelectorAll('.widget-settings').forEach(p => p.style.display = 'none');
+  });
+
+  /**
+   * updateSetting — POST a single setting change to the server.
+   * For width changes, also applies the grid span live without a reload.
+   * For refresh interval changes, the new timer applies on next page load.
+   */
+  async function updateSetting(widgetId, key, value) {
+    const body = {};
+    body[key] = key === 'width' ? value : parseInt(value);
+
+    try {
+      const resp = await fetch('/api/widget/' + widgetId + '/settings', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(body)
+      });
+      if (!resp.ok) {
+        showToast('Failed to update setting', 'error');
+        return;
+      }
+
+      // Width change → apply the grid span immediately
+      if (key === 'width') {
+        const card = document.getElementById('widget-' + widgetId);
+        if (value === 'full') card.classList.add('full-width');
+        else card.classList.remove('full-width');
+      }
+
+      showToast('Setting saved', 'success');
+    } catch (err) {
+      showToast('Network error: ' + err.message, 'error');
+    }
+  }
+
+  /**
+   * refreshAll — refresh every widget on the dashboard in sequence.
+   * Disables the button and shows progress while running.
+   */
+  async function refreshAll() {
+    const btn = document.getElementById('refreshAllBtn');
+    const cards = document.querySelectorAll('.widget-card');
+    btn.disabled = true;
+    btn.textContent = '↻ Refreshing...';
+
+    for (const card of cards) {
+      const id = parseInt(card.dataset.widgetId);
+      await refreshWidget(id);
+    }
+
+    btn.disabled = false;
+    btn.textContent = '↻ Refresh all';
+    showToast('All widgets refreshed', 'success');
+  }
+
+  /**
+   * saveOrder — collect the current widget order from the DOM and POST it.
+   * Called after a drag-and-drop reorder completes.
+   */
+  async function saveOrder() {
+    const ids = [...document.querySelectorAll('.widget-card')]
+      .map(card => parseInt(card.dataset.widgetId));
+    try {
+      const resp = await fetch('/api/widgets/reorder', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ order: ids })
+      });
+      if (resp.ok) showToast('Layout saved', 'success');
+      else showToast('Failed to save layout', 'error');
+    } catch (err) {
+      showToast('Network error: ' + err.message, 'error');
+    }
+  }
+
+  /**
+   * On page load:
+   *   1. Refresh every widget card immediately
+   *   2. Set up setInterval for widgets with refresh_interval_minutes > 0
+   *   3. Make the grid sortable (drag-and-drop reordering)
+   */
+  document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('.widget-card').forEach(card => {
+      const id       = parseInt(card.dataset.widgetId);
+      const interval = parseInt(card.dataset.refreshInterval) || 0;
+
+      // Immediate refresh on page load
+      refreshWidget(id);
+
+      // Scheduled refresh for widgets with an interval set
+      if (interval > 0) {
+        setInterval(() => refreshWidget(id), interval * 60 * 1000);
+      }
+    });
+
+    // Enable drag-and-drop reordering on the widget grid
+    const grid = document.getElementById('widgetGrid');
+    if (grid && window.Sortable) {
+      Sortable.create(grid, {
+        animation: 180,
+        easing: 'cubic-bezier(0.2, 0, 0, 1)',
+        handle: '.widget-header',   // drag by the header, not the body
+        chosenClass: 'widget-chosen',
+        ghostClass:  'widget-ghost',
+        dragClass:   'widget-drag',
+        onEnd: saveOrder            // save the new order when a drag finishes
+      });
+    }
+  });
+</script>
+{% endblock %}

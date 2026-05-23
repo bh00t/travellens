@@ -386,12 +386,11 @@ and it skips a duplicate dashboard if the port is already bound.
   (`python -m scripts.stream_consumer`, `python -m scripts.kafka_event_producer`,
   `python -m render.server`), the simulator's rate-flag name, the dashboard port, and the
   `HEALTH_WAIT_SERVICES` service names must match the actual compose file.
-- Add a `--chaos` (or `--malformed-pct`/`--late-pct`) passthrough to the simulator so the
-  monitor's quarantine cards (B-027) can be populated for testing in one command.
 **File:** `run.py` (repo root, new).  
 **Acceptance:** `python run.py --no-docker` starts all 3 processes against an already-up
 stack; full `python run.py` brings everything up and Ctrl-C tears it down cleanly with no
-orphaned processes.
+orphaned processes.  
+**Update (Phase 7 session):** —chaos passthrough + stream_output UTF-8 fix added this session; CONFIG block still unverified.
 
 ---
 
@@ -402,38 +401,6 @@ orphaned processes.
 
 ---
 
-### B-027 — Pipeline monitor dashboard (`/monitor`)
-**Priority:** Medium  
-**Problem:** No operational view of the pipeline. The Explorer answers business questions
-but nothing shows "is the solution processing data correctly?" — stream throughput,
-embedding coverage, quarantine, scheduler health.  
-**Design (locked):** new `/monitor` route in `render/server.py` + `monitor.html` extending
-the existing base. One filter bar (date + city — the only dimensions present in BOTH the
-stream agg and the warehouse). Three sections:
-1. Stream activity (date+city filtered, from `agg_hourly_city_stats`): bookings /
-   cancellations / revenue processed. Revenue is real — the stream event carries
-   `revenue_inr`.
-2. Review embeddings (NOT filtered — reviews are static): received / embedded
-   (`embedding IS NOT NULL`) / unprocessed / coverage %.
-3. Pipeline health (current state, NOT filtered): Airflow scheduler (HTTP `:8080/health`),
-   malformed + late quarantine counts (MinIO `travellens-data`), stream freshness (latest
-   `window_start`, doubling as the consumer-alive signal).
-
-**Principle:** pipeline-processing metrics only — no business content (ratings, sentiment,
-revenue trends, top cities). Those stay in the Explorer.  
-**Honesty:** most meaningful while the stream runs (via run.py / B-028). Cold system shows
-zeros/stale (correct, not broken). Every external call (Airflow, MinIO) guarded so the page
-renders even when a monitored dependency is down. Default range = all stream data, NOT
-"today" (synthetic data may have nothing dated today).  
-**Cut from the original ask, with reason:** check-in/check-out counts (Gate-3 silently
-filtered → L-014); reviews "received today" / daily ingest (reviews static, no stream);
-positive/negative sentiment (no sentiment data → B-026).  
-**Files:** `render/server.py` (+route), `render/templates/monitor.html` (new), nav link.  
-**Acceptance:** 5 tests in `docs/phase-7-monitor.md` — cold load (no crash), warm load via
-run.py (live numbers), chaos (quarantine populates), filters narrow stream section,
-Airflow-down still renders.
-
----
 
 
 |---|---|---|---|
@@ -485,3 +452,4 @@ Airflow-down still renders.
 | ✓ | Bar-chart readability warning (>20 bars, Option A) | Phase 5 |
 | ✓ | B-018 — CLAUDE.md at repo root | Phase 5 |
 | ✓ | B-019 — File-tree + Claude Code instructions in all phase docs | Phase 5 |
+| ✓ | B-027 — Pipeline monitor dashboard (/monitor): 3 sections (stream activity / review embeddings / pipeline health), date+city filter, guarded Airflow+MinIO deps, honest empty-states | Phase 7 |

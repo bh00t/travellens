@@ -46,3 +46,4 @@ producer_*.log
 
 # Quarantine sample dumps (if you mc cat locally)
 *.quarantine.json
+.claude/

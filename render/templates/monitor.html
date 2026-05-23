@@ -1,0 +1,284 @@
+{% extends "base.html" %}
+{% set active_page = 'monitor' %}
+{% block title %}Monitor{% endblock %}
+
+{#
+  Pipeline monitor — "is the solution processing data correctly?"
+  Extends base.html, reuses its tokens (--green/--black/--gray-*/--font-mono)
+  and Chart.js include. Three sections, one date+city filter bar.
+  All numbers are server-rendered; no per-card JS, no /api calls.
+#}
+
+{% block extra_styles %}
+<style>
+  /* Status colours layered on top of base tokens (base ships only --green). */
+  :root { --amber: #B45309; --amber-bg: #FEF3C7; --red: #dc2626; --red-bg: #fef2f2; }
+
+  .mon-header { margin-bottom: 1.5rem; }
+  .mon-header h1 { font-family: var(--font-mono); font-size: 1.15rem; font-weight: 800; color: var(--gray-900); }
+  .mon-sub { font-size: .8rem; color: var(--gray-500); margin-top: .35rem; line-height: 1.5; max-width: 720px; }
+
+  /* ── Filter bar ─────────────────────────────────────────────────────────── */
+  .filter-bar {
+    display: flex; flex-wrap: wrap; gap: .9rem; align-items: flex-end;
+    background: var(--white); border: 2px solid var(--black);
+    box-shadow: 4px 4px 0 var(--black); padding: 1rem 1.25rem; margin-bottom: 2rem;
+  }
+  .filter-field { display: flex; flex-direction: column; gap: .3rem; }
+  .filter-field label {
+    font-family: var(--font-mono); font-size: .62rem; font-weight: 800;
+    text-transform: uppercase; letter-spacing: .06em; color: var(--gray-500);
+  }
+  .filter-field input, .filter-field select {
+    font-family: inherit; font-size: .82rem; padding: .45rem .6rem;
+    border: 1px solid var(--gray-200); border-radius: 4px; background: var(--white);
+    color: var(--gray-900); outline: none; transition: border-color .12s;
+  }
+  .filter-field input:focus, .filter-field select:focus { border-color: var(--green); }
+
+  /* ── Sections ───────────────────────────────────────────────────────────── */
+  .mon-section { margin-bottom: 2.25rem; }
+  .mon-section-head { display: flex; align-items: baseline; gap: .75rem; margin-bottom: .25rem; }
+  .mon-section-head h2 {
+    font-family: var(--font-mono); font-size: .9rem; font-weight: 800;
+    color: var(--gray-900); text-transform: uppercase; letter-spacing: .04em;
+  }
+  .mon-caption { font-size: .74rem; color: var(--gray-500); margin-bottom: 1rem; line-height: 1.5; }
+
+  /* ── Metric grid + cards ────────────────────────────────────────────────── */
+  .metric-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1.1rem; }
+  @media (max-width: 900px) { .metric-grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 520px) { .metric-grid { grid-template-columns: 1fr; } }
+
+  .metric {
+    background: var(--white); border: 2px solid var(--black);
+    box-shadow: 4px 4px 0 var(--black); padding: 1.25rem 1.25rem 1.1rem;
+    display: flex; flex-direction: column; gap: .55rem; min-height: 120px;
+    transition: transform .2s, box-shadow .2s;
+  }
+  .metric:hover { transform: translate(-2px, -2px); box-shadow: 6px 6px 0 var(--black); }
+  .metric-label {
+    font-family: var(--font-mono); font-size: .64rem; font-weight: 800;
+    text-transform: uppercase; letter-spacing: .06em; color: var(--gray-500);
+  }
+  .metric-value {
+    font-family: var(--font-mono); font-size: 1.9rem; font-weight: 800;
+    color: var(--green); line-height: 1; word-break: break-word;
+  }
+  .metric-note { font-size: .68rem; color: var(--gray-500); line-height: 1.4; margin-top: auto; }
+
+  /* Status colour modifiers on the value. */
+  .metric-value.ok   { color: var(--green); }
+  .metric-value.warn { color: var(--amber); }
+  .metric-value.bad  { color: var(--red); }
+  .metric-value.idle { color: var(--gray-900); }
+
+  /* Status pill (used for freshness / airflow text states). */
+  .pill {
+    display: inline-block; font-family: var(--font-mono); font-size: 1.05rem;
+    font-weight: 800; padding: .25rem .65rem; border: 2px solid; border-radius: 4px;
+  }
+  .pill.ok   { color: var(--green); border-color: var(--green); background: #ECFDF3; }
+  .pill.warn { color: var(--amber); border-color: var(--amber); background: var(--amber-bg); }
+  .pill.bad  { color: var(--red);   border-color: var(--red);   background: var(--red-bg); }
+
+  /* Section-level banner (e.g. "is the consumer running?"). */
+  .mon-banner {
+    border: 2px dashed var(--amber); background: var(--amber-bg); color: var(--amber);
+    font-size: .78rem; font-weight: 600; padding: .65rem .9rem; border-radius: 4px;
+    margin-bottom: 1rem; line-height: 1.5;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page">
+
+  <div class="mon-header">
+    <h1>Pipeline Monitor</h1>
+    <p class="mon-sub">
+      Operational view — is the pipeline processing data correctly? Stream throughput,
+      embedding coverage, quarantine, and scheduler health. Business analytics (revenue
+      trends, rankings, sentiment) live in the <a href="/explore" style="color:var(--green);">Explorer</a>.
+    </p>
+  </div>
+
+  <!-- ── Filter bar (GET) — date + city only ─────────────────────────────── -->
+  <form class="filter-bar" method="get" action="/monitor">
+    <div class="filter-field">
+      <label for="from">From</label>
+      <input type="date" id="from" name="from" value="{{ sel_from }}">
+    </div>
+    <div class="filter-field">
+      <label for="to">To</label>
+      <input type="date" id="to" name="to" value="{{ sel_to }}">
+    </div>
+    <div class="filter-field">
+      <label for="city">City</label>
+      <select id="city" name="city">
+        <option value="">All cities</option>
+        {% for c in cities %}
+        <option value="{{ c }}" {% if c == sel_city %}selected{% endif %}>{{ c }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <button type="submit" class="btn btn-primary">Apply</button>
+    {% if sel_from or sel_to or sel_city %}
+    <a href="/monitor" class="btn btn-ghost">Clear</a>
+    {% endif %}
+  </form>
+
+  <!-- ══ Section 1 — Stream activity (date + city filtered) ═══════════════ -->
+  <section class="mon-section">
+    <div class="mon-section-head"><h2>1 · Stream activity</h2></div>
+    <p class="mon-caption">
+      From <code>agg_hourly_city_stats</code> — what the Kafka consumer has flushed.
+      <strong>Filtered by the date range and city above.</strong>
+      Default shows all available stream data.
+    </p>
+
+    {% if stream.windows == 0 %}
+    <div class="mon-banner">
+      No stream data in this range — is the consumer running? Start the stack with
+      <code>python run.py</code>, or widen the filter. A cold system showing zero here is
+      correct, not broken.
+    </div>
+    {% endif %}
+
+    <div class="metric-grid">
+      <div class="metric">
+        <div class="metric-label">Bookings processed</div>
+        <div class="metric-value {{ 'ok' if stream.bookings else 'idle' }}">{{ "{:,}".format(stream.bookings) }}</div>
+        <div class="metric-note">BOOKING events aggregated into windows.</div>
+      </div>
+
+      <div class="metric">
+        <div class="metric-label">Cancellations (≈)</div>
+        {% if stream.cancellations is not none %}
+        <div class="metric-value {{ 'ok' if stream.cancellations else 'idle' }}">≈{{ "{:,}".format(stream.cancellations) }}</div>
+        <div class="metric-note">Derived from <code>cancellation_rate</code> × bookings.</div>
+        {% else %}
+        <div class="metric-value idle">—</div>
+        <div class="metric-note">No <code>cancellation_rate</code> column in the agg table.</div>
+        {% endif %}
+      </div>
+
+      <div class="metric">
+        <div class="metric-label">Revenue processed</div>
+        <div class="metric-value {{ 'ok' if stream.revenue else 'idle' }}">₹{{ "{:,.0f}".format(stream.revenue) }}</div>
+        <div class="metric-note">Sum of <code>total_revenue_inr</code> (real, from the event).</div>
+      </div>
+
+      <div class="metric">
+        <div class="metric-label">Windows processed</div>
+        <div class="metric-value {{ 'ok' if stream.windows else 'idle' }}">{{ "{:,}".format(stream.windows) }}</div>
+        <div class="metric-note">{{ stream.cities }} cit{{ 'y' if stream.cities == 1 else 'ies' }} · tumbling-window rows flushed.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ Section 2 — Review embeddings (NOT filtered) ════════════════════ -->
+  <section class="mon-section">
+    <div class="mon-section-head"><h2>2 · Review embeddings</h2></div>
+    <p class="mon-caption">
+      From <code>reviews_raw</code> — embedding processing status.
+      <strong>Not affected by the filters</strong> (reviews are static — no time or city axis).
+      Sentiment classification is pending (B-026); this section shows processing coverage only.
+    </p>
+
+    <div class="metric-grid">
+      <div class="metric">
+        <div class="metric-label">Reviews received</div>
+        <div class="metric-value idle">{{ "{:,}".format(embed.received) }}</div>
+        <div class="metric-note">Total rows loaded (Kaggle MakeMyTrip / OYO).</div>
+      </div>
+
+      <div class="metric">
+        <div class="metric-label">Embedded</div>
+        <div class="metric-value ok">{{ "{:,}".format(embed.embedded) }}</div>
+        <div class="metric-note">Rows with a non-null <code>embedding</code> vector.</div>
+      </div>
+
+      <div class="metric">
+        <div class="metric-label">Unprocessed</div>
+        <div class="metric-value {{ 'warn' if embed.unprocessed else 'ok' }}">{{ "{:,}".format(embed.unprocessed) }}</div>
+        <div class="metric-note">Awaiting embedding. Zero = full coverage.</div>
+      </div>
+
+      <div class="metric">
+        <div class="metric-label">Coverage</div>
+        <div class="metric-value {{ 'ok' if embed.coverage_pct >= 99.95 else 'warn' }}">{{ "%.1f"|format(embed.coverage_pct) }}%</div>
+        <div class="metric-note">Embedded ÷ received.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ Section 3 — Pipeline health (NOT filtered) ══════════════════════ -->
+  <section class="mon-section">
+    <div class="mon-section-head"><h2>3 · Pipeline health</h2></div>
+    <p class="mon-caption">
+      Current state — <strong>not affected by the filters.</strong>
+      Freshness doubles as the consumer-alive signal; quarantine + Airflow reflect the
+      moment you loaded this page.
+    </p>
+
+    <div class="metric-grid">
+      <!-- Freshness -->
+      <div class="metric">
+        <div class="metric-label">Stream freshness</div>
+        {% if freshness.status == 'fresh' %}
+        <div><span class="pill ok">Fresh</span></div>
+        <div class="metric-note">Latest window {{ freshness.latest.strftime('%d %b %H:%M') }} UTC · {{ "%.0f"|format(freshness.age_min) }} min ago. Consumer running.</div>
+        {% elif freshness.status == 'aging' %}
+        <div><span class="pill warn">Aging</span></div>
+        <div class="metric-note">Latest window {{ freshness.latest.strftime('%d %b %H:%M') }} UTC · {{ "%.0f"|format(freshness.age_min) }} min ago.</div>
+        {% elif freshness.status == 'stale' %}
+        <div><span class="pill bad">Stale</span></div>
+        <div class="metric-note">Latest window {{ freshness.latest.strftime('%d %b %H:%M') }} UTC · {{ "%.0f"|format(freshness.age_min) }} min ago. Is the consumer running?</div>
+        {% else %}
+        <div><span class="pill warn">No data</span></div>
+        <div class="metric-note">No windows flushed yet — is the consumer running?</div>
+        {% endif %}
+      </div>
+
+      <!-- Malformed quarantine -->
+      <div class="metric">
+        <div class="metric-label">Malformed quarantine</div>
+        {% if quarantine.reachable %}
+        <div class="metric-value {{ 'warn' if quarantine.malformed else 'ok' }}">{{ "{:,}".format(quarantine.malformed) }}</div>
+        <div class="metric-note">Objects under <code>{{ "malformed_events/" }}</code> in MinIO.</div>
+        {% else %}
+        <div class="metric-value warn">—</div>
+        <div class="metric-note">MinIO unreachable.</div>
+        {% endif %}
+      </div>
+
+      <!-- Late quarantine -->
+      <div class="metric">
+        <div class="metric-label">Late quarantine</div>
+        {% if quarantine.reachable %}
+        <div class="metric-value {{ 'warn' if quarantine.late else 'ok' }}">{{ "{:,}".format(quarantine.late) }}</div>
+        <div class="metric-note">Objects under <code>{{ "late_events/" }}</code> in MinIO.</div>
+        {% else %}
+        <div class="metric-value warn">—</div>
+        <div class="metric-note">MinIO unreachable.</div>
+        {% endif %}
+      </div>
+
+      <!-- Airflow scheduler -->
+      <div class="metric">
+        <div class="metric-label">Airflow scheduler</div>
+        {% if airflow.status == 'healthy' %}
+        <div><span class="pill ok">Healthy</span></div>
+        {% elif airflow.status == 'degraded' %}
+        <div><span class="pill warn">Degraded</span></div>
+        {% else %}
+        <div><span class="pill warn">Unreachable</span></div>
+        {% endif %}
+        <div class="metric-note">{{ airflow.detail }}</div>
+      </div>
+    </div>
+  </section>
+
+</div>
+{% endblock %}

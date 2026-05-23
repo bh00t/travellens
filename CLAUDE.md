@@ -40,9 +40,10 @@ Learning project — building data engineering skills by shipping real code, not
 | 3 | Embeddings + pgvector | ✓ Complete |
 | 4 | AI layer (Text-to-SQL + semantic) | ✓ Complete |
 | 5 | Flask dashboard | ✓ Complete |
-| 6 | Airflow DAGs | ⬜ In progress |
+| 6 | Airflow DAGs | ⬜ In progress — infra/containers up, 5 DAGs not built |
+| 7 | Pipeline monitor (/monitor) | ⬜ In progress — built, 9/10 acceptance tests pass; Test 2 pending window close |
 
-Current phase: **6** → read `docs/phase-6-airflow.md` before doing anything.
+Current phase: **7** (pipeline monitor, pending Test 2) — read `docs/phase-7-monitor.md`. Phase 6 DAGs (B-024/013/014/015/016) still open; infra is up.
 
 > Phase 4 and 5 are acceptance-complete but under ongoing hardening via backlog
 > items (B-003, B-004, B-006, B-022). "Complete" means the phase shipped — it does
@@ -86,7 +87,7 @@ Current phase: **6** → read `docs/phase-6-airflow.md` before doing anything.
 - **Never commit `.env`** — it is gitignored, keep it that way. Confirm with
   `git check-ignore .env` before any commit.
 - **Never modify `data/`** — source files are read-only.
-- **Migrations are append-only** — never edit an existing migration (003, 004, 005).
+- **Migrations are append-only** — never edit an existing migration (003, 004, 005, 006).
   Add a new numbered migration for any schema change.
 
 ---
@@ -97,6 +98,7 @@ Current phase: **6** → read `docs/phase-6-airflow.md` before doing anything.
 travellens/
 ├── CLAUDE.md                        ← this file
 ├── README.md                        ← portfolio front door (links to the blueprint)
+├── run.py                           ← dev launcher (B-028): up the stack + 3 host procs; --chaos
 ├── docs/
 │   ├── phase-0-setup.md             ← Phase 0 spec
 │   ├── phase-1-postgres.md          ← Phase 1 spec
@@ -125,12 +127,14 @@ travellens/
 ├── render/
 │   ├── __init__.py                  ← required
 │   ├── server.py                    ← Flask app: pages + API (pin freezes SQL,
-│   │                                  refresh serves cache or runs frozen SQL)
+│   │                                  refresh serves cache or runs frozen SQL;
+│   │                                  + /monitor route, Phase 7 B-027)
 │   ├── widget_renderer.py           ← result shape → Chart.js config
 │   └── templates/
 │       ├── base.html                ← shared nav + layout
 │       ├── dashboard.html           ← pinned widgets grid (+ Show SQL modal, rename)
 │       ├── explore.html             ← chat interface + widget preview
+│       ├── monitor.html             ← Phase 7: pipeline monitor (B-027)
 │       └── about.html               ← product page
 ├── scripts/
 │   ├── generate_embeddings.py       ← Phase 3: batch embed reviews_raw
@@ -146,7 +150,8 @@ travellens/
 │   └── migrations/
 │       ├── 003_dashboard_widgets.sql ← Phase 5: dashboard state table
 │       ├── 004_widget_settings.sql   ← Phase 5: width column
-│       └── 005_widget_cache.sql      ← B-022: generated_sql + last_result_json
+│       ├── 005_widget_cache.sql      ← B-022: generated_sql + last_result_json
+│       └── 006_opened_year.sql       ← hotel_master.opened_year (entity-count queries)
 ├── docker/
 │   ├── postgres.Dockerfile          ← Postgres 16 + pgvector
 │   └── docker-compose.yml           ← postgres + kafka + zookeeper + minio

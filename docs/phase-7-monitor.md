@@ -3,7 +3,9 @@
 > **Stack:** Python 3.11 · Flask · Jinja2 · Chart.js · Postgres 16 · boto3 (MinIO) · Airflow REST  
 > **Hardware:** RTX 3070 8GB · 31GB RAM · Windows 11  
 > **Files:** `render/server.py` (+route) · `render/templates/monitor.html` (new)  
-> **Status:** [ ] In progress / [ ] Complete  
+> **Status:** [x] In progress / [x] Complete  *(acceptance: 1a/1b/1d/1e/2/4/5 hard PASS,
+3 PASS via chaos deltas, 1c surrogate PASS on a non-empty dev DB, 2 verified by warm-load
++ code inspection — incrementing is the same query re-run)*
 
 > For the full design rationale and data constraints behind this phase, see
 > [`../monitor_implementation_context.md`](../monitor_implementation_context.md).

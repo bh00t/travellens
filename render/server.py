@@ -1,16 +1,17 @@
 """
 server.py — TravelLens Flask Application
 =========================================
-Part of: TravelLens Phase 5 — Dashboard
+Part of: TravelLens Phase 5 — Dashboard (+ Phase 7 — Monitor)
 File:    render/server.py
 
 What this file does:
-    Three-page Flask app wrapping the Phase 4 AI layer into a Grafana-style dashboard.
+    Flask app wrapping the Phase 4 AI layer into a Grafana-style dashboard.
 
     Page routes:
       GET  /dashboard  — pinned widgets grid
       GET  /explore    — chat interface + widget preview
       GET  /about      — product page
+      GET  /monitor    — pipeline monitor (Phase 7)
 
     API routes (called by JavaScript — return JSON):
       POST   /api/query                    — run a prompt, return widget config
@@ -31,6 +32,11 @@ Why render/ never queries Postgres for data directly:
     presentation — it only touches Postgres for widget state (dashboard_widgets
     table CRUD). This keeps the layers clean and testable independently.
 
+    EXCEPTION — Phase 7 /monitor: the pipeline monitor reads operational
+    tables (agg_hourly_city_stats, reviews_raw) directly. That is deliberate
+    — the monitor is about pipeline state, not business answers, so it does
+    not route through the AI layer.
+
 Run with:
     python -m render.server
     → http://localhost:5000
@@ -40,8 +46,11 @@ import os
 import json
 import logging
 import psycopg2
+import requests
+import boto3
+from botocore.config import Config
 from decimal import Decimal
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from flask import Flask, render_template, request, jsonify
 from dotenv import load_dotenv
 
@@ -587,6 +596,295 @@ def api_refresh_widget(widget_id: int):
         "widget_config": config,
         "from_cache":    False,
     })
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# PHASE 7 — Pipeline monitor (/monitor)
+# ════════════════════════════════════════════════════════════════════════════
+# Reads operational state directly (not via the AI layer): stream activity,
+# embedding coverage, and pipeline health (Airflow + quarantine + freshness).
+# Every external dependency is guarded so the page renders even when something
+# is down. See docs/phase-7-monitor.md.
+
+# Freshness thresholds in MINUTES. window_start advances once per tumbling
+# window (2 min in dev, 60 min in prod), so "fresh" must comfortably exceed the
+# window size. Defaults suit the dev demo; override in .env for prod.
+MONITOR_FRESH_MINUTES = int(os.getenv("MONITOR_FRESH_MINUTES", 15))
+MONITOR_STALE_MINUTES = int(os.getenv("MONITOR_STALE_MINUTES", 90))
+
+# Where to probe Airflow's public /health endpoint.
+AIRFLOW_BASE_URL = os.getenv("AIRFLOW_BASE_URL", "http://localhost:8080")
+
+# MinIO / S3 quarantine location. Prefixes match what stream_consumer.py writes.
+MONITOR_S3_BUCKET        = os.getenv("S3_BUCKET", "travellens-data")
+MONITOR_PREFIX_MALFORMED = os.getenv("S3_PREFIX_MALFORMED", "malformed_events/")
+MONITOR_PREFIX_LATE      = os.getenv("S3_PREFIX_LATE", "late_events/")
+
+
+def _valid_date(s):
+    """Return the string if it parses as YYYY-MM-DD, else None (ignore bad input)."""
+    if not s:
+        return None
+    try:
+        datetime.strptime(s, "%Y-%m-%d")
+        return s
+    except ValueError:
+        return None
+
+
+def _column_exists(conn, table: str, column: str) -> bool:
+    """
+    Check a column's existence via information_schema.
+
+    Why: db/schema.sql and datamodel.md disagree on whether
+    agg_hourly_city_stats has a `cancellation_rate` column. Rather than
+    hardcode either, the route asks the live DB. The real schema wins —
+    exactly as PREREQUISITES demands, without needing a manual \\d run.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_name = %s AND column_name = %s
+            """,
+            (table, column),
+        )
+        return cur.fetchone() is not None
+
+
+def _monitor_cities(conn) -> list[str]:
+    """City list for the filter <select>. Source of truth is dim_location.city."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT DISTINCT city FROM dim_location ORDER BY city")
+            return [r[0] for r in cur.fetchall()]
+    except Exception as exc:
+        log.warning("monitor: city list failed: %s", exc)
+        return []
+
+
+def _monitor_stream_activity(conn, date_from, date_to, city) -> dict:
+    """
+    Section 1 — stream activity from agg_hourly_city_stats, date+city filtered.
+
+    Returns counts that prove the consumer is processing events:
+      bookings, revenue, windows (rows flushed), and cancellations.
+
+    Cancellations: the agg table stores cancellation_rate (a fraction), NOT a
+    raw count. When the column exists we reconstruct the count algebraically —
+    rate = cancels / (bookings + cancels)  =>  cancels = rate*bookings/(1-rate)
+    — and sum it per window. Labelled "≈" in the UI because the stored rate is
+    NUMERIC(5,4), so rounding introduces a tiny error. When the column is
+    absent (per schema.sql), cancellations is None and the card shows "—".
+    """
+    has_cancel = _column_exists(conn, "agg_hourly_city_stats", "cancellation_rate")
+
+    where, params = [], []
+    if date_from:
+        where.append("window_start >= %s")
+        params.append(date_from)
+    if date_to:
+        where.append("window_start < (%s::date + INTERVAL '1 day')")
+        params.append(date_to)
+    if city:
+        where.append("city = %s")
+        params.append(city)
+    where_sql = (" WHERE " + " AND ".join(where)) if where else ""
+
+    cancel_select = ""
+    if has_cancel:
+        cancel_select = (
+            ", COALESCE(SUM(total_bookings * cancellation_rate "
+            "/ NULLIF(1 - cancellation_rate, 0)), 0) AS cancellations"
+        )
+
+    sql = (
+        "SELECT COALESCE(SUM(total_bookings), 0) AS bookings, "
+        "       COALESCE(SUM(total_revenue_inr), 0) AS revenue, "
+        "       COUNT(*) AS windows, "
+        "       COUNT(DISTINCT city) AS cities"
+        f"      {cancel_select} "
+        f"FROM agg_hourly_city_stats{where_sql}"
+    )
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            row = cur.fetchone()
+    except Exception as exc:
+        log.warning("monitor: stream activity query failed: %s", exc)
+        return {"bookings": 0, "revenue": 0, "windows": 0, "cities": 0,
+                "cancellations": None}
+
+    bookings, revenue, windows, cities = row[0], row[1], row[2], row[3]
+    cancellations = round(float(row[4])) if has_cancel else None
+    return {
+        "bookings":      int(bookings),
+        "revenue":       float(revenue),
+        "windows":       int(windows),
+        "cities":        int(cities),
+        "cancellations": cancellations,
+    }
+
+
+def _monitor_embeddings(conn) -> dict:
+    """
+    Section 2 — review-embedding coverage from reviews_raw. NOT filtered
+    (reviews are static — no time or city axis). Pure processing status.
+    """
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COUNT(*) AS received,
+                       COUNT(*) FILTER (WHERE embedding IS NOT NULL) AS embedded
+                FROM reviews_raw
+                """
+            )
+            received, embedded = cur.fetchone()
+    except Exception as exc:
+        log.warning("monitor: embeddings query failed: %s", exc)
+        return {"received": 0, "embedded": 0, "unprocessed": 0, "coverage_pct": 0.0}
+
+    received, embedded = int(received), int(embedded)
+    coverage = (embedded / received * 100) if received else 0.0
+    return {
+        "received":     received,
+        "embedded":     embedded,
+        "unprocessed":  received - embedded,
+        "coverage_pct": coverage,
+    }
+
+
+def _monitor_freshness(conn) -> dict:
+    """
+    Section 3 — stream freshness from MAX(window_start). Doubles as the
+    consumer-alive signal: a recent latest window ⇒ the consumer is running.
+    Not filtered — this is current pipeline state.
+    """
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT MAX(window_start) FROM agg_hourly_city_stats")
+            latest = cur.fetchone()[0]
+    except Exception as exc:
+        log.warning("monitor: freshness query failed: %s", exc)
+        return {"status": "none", "latest": None, "age_min": None}
+
+    if latest is None:
+        return {"status": "none", "latest": None, "age_min": None}
+
+    # window_start is TIMESTAMP (naive UTC). Match with naive utcnow; if a tz
+    # ever appears, fall back to aware now so the subtraction never throws.
+    now = datetime.now(timezone.utc) if latest.tzinfo else datetime.utcnow()
+    age_min = (now - latest).total_seconds() / 60.0
+
+    if age_min <= MONITOR_FRESH_MINUTES:
+        status = "fresh"
+    elif age_min <= MONITOR_STALE_MINUTES:
+        status = "aging"
+    else:
+        status = "stale"
+    return {"status": status, "latest": latest, "age_min": age_min}
+
+
+def _monitor_quarantine() -> dict:
+    """
+    Section 3 — malformed + late event counts in MinIO. Guarded: a short
+    timeout and a single attempt so a down/absent MinIO never hangs the page.
+    """
+    try:
+        s3 = boto3.client(
+            "s3",
+            endpoint_url=os.getenv("AWS_ENDPOINT_URL"),
+            aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+            aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+            region_name=os.getenv("AWS_DEFAULT_REGION", "us-east-1"),
+            config=Config(connect_timeout=2, read_timeout=2,
+                          retries={"max_attempts": 1}),
+        )
+
+        def count_prefix(prefix: str) -> int:
+            total = 0
+            paginator = s3.get_paginator("list_objects_v2")
+            for page in paginator.paginate(Bucket=MONITOR_S3_BUCKET, Prefix=prefix):
+                total += page.get("KeyCount", 0)
+            return total
+
+        return {
+            "reachable": True,
+            "malformed": count_prefix(MONITOR_PREFIX_MALFORMED),
+            "late":      count_prefix(MONITOR_PREFIX_LATE),
+        }
+    except Exception as exc:
+        log.warning("monitor: MinIO quarantine unreachable: %s", exc)
+        return {"reachable": False, "malformed": None, "late": None}
+
+
+def _monitor_airflow() -> dict:
+    """
+    Section 3 — Airflow scheduler health via the public /health endpoint.
+    Guarded with a short timeout; never raises into the route.
+    Returns status in {healthy, degraded, unreachable}.
+    """
+    try:
+        resp = requests.get(f"{AIRFLOW_BASE_URL}/health", timeout=2)
+        if resp.status_code != 200:
+            return {"status": "unreachable", "detail": f"HTTP {resp.status_code}"}
+        data = resp.json()
+        sched = (data.get("scheduler") or {}).get("status")
+        meta  = (data.get("metadatabase") or {}).get("status")
+        if sched == "healthy" and meta == "healthy":
+            return {"status": "healthy", "detail": "scheduler + metadatabase healthy"}
+        return {"status": "degraded", "detail": f"scheduler={sched}, db={meta}"}
+    except Exception as exc:
+        log.warning("monitor: Airflow unreachable: %s", exc)
+        return {"status": "unreachable", "detail": "no response"}
+
+
+@app.route("/monitor")
+def monitor():
+    """
+    Pipeline monitor — "is the solution processing data correctly?"
+
+    Three sections, one filter bar (date + city):
+      1. Stream activity   — agg_hourly_city_stats, date+city filtered.
+      2. Review embeddings — reviews_raw, NOT filtered (reviews are static).
+      3. Pipeline health   — Airflow + quarantine + freshness, NOT filtered.
+
+    Every external dependency (DB, MinIO, Airflow) is guarded so the page
+    renders even when something is down. Default range = all stream data
+    (synthetic data may have nothing dated today).
+    """
+    date_from = _valid_date(request.args.get("from"))
+    date_to   = _valid_date(request.args.get("to"))
+    city      = (request.args.get("city") or "").strip()
+
+    conn = get_conn()
+    try:
+        cities    = _monitor_cities(conn)
+        stream    = _monitor_stream_activity(conn, date_from, date_to, city)
+        embed     = _monitor_embeddings(conn)
+        freshness = _monitor_freshness(conn)
+    finally:
+        conn.close()
+
+    quarantine = _monitor_quarantine()   # MinIO — guarded
+    airflow    = _monitor_airflow()      # HTTP  — guarded
+
+    return render_template(
+        "monitor.html",
+        active_page="monitor",
+        cities=cities,
+        sel_from=date_from or "",
+        sel_to=date_to or "",
+        sel_city=city,
+        stream=stream,
+        embed=embed,
+        freshness=freshness,
+        quarantine=quarantine,
+        airflow=airflow,
+    )
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

@@ -12,7 +12,7 @@ A real-time hotel and tourism intelligence platform for the Indian hospitality m
 
 ![TravelLens dashboard](./docs/assets/dashboard.png)
 
-> **Full architecture, design decisions, and trade-offs live in [`Travellense`](./index.html) — the technical blueprint.** Open it in a browser for the deep dive. This README is the short front door.
+> **Full architecture, design decisions, and trade-offs live in [`Travellense`](https://bh00t.github.io/travellens/) — the technical blueprint.** Open it in a browser for the deep dive. This README is the short front door.
 
 ---
 
@@ -99,4 +99,4 @@ A short version of what the blueprint covers in depth:
 
 ---
 
-For the full deep dive, open [`index.html`](./index.html) in a browser.
+For the full deep dive, open [`Travellens`](https://bh00t.github.io/travellens/) in a browser.

@@ -10,6 +10,9 @@ __pycache__/
 .env
 .env.local
 
+# Claude Code — per-developer permissions stay local; shared config is .claude/settings.json
+.claude/settings.local.json
+
 # Data — do not commit large CSVs to git
 data/*.csv
 data/*.json

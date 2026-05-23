@@ -57,6 +57,28 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5-coder:7b")
 # Rule of thumb: enough to find patterns, not so many that Ollama slows down.
 TOP_K = 20
 
+# Dedup key length for DISTINCT ON in _search_reviews (B-006 follow-up).
+#
+# This is NOT a magic number — it's data-derived. The Kaggle dataset contains
+# clusters of review_text values that share a ~190-character opener and
+# diverge only in a short closing sentence (e.g. 24 distinct full texts all
+# start with "Honestly forgot we even booked this hotel until the bill came
+# through..."). Byte-exact DISTINCT ON (review_text) sees those as distinct
+# rows and lets them flood the top-K, producing visually duplicate results.
+#
+# Empirical sizing (against the live reviews_raw table):
+#     30,000 total rows
+#     27,608 distinct full review_text
+#     26,066 distinct LEFT(review_text, 200)  ← chosen length
+#     19,598 distinct LEFT(review_text, 150)  — too aggressive
+#     10,408 distinct LEFT(review_text, 120)  — collapses real reviews
+#
+# LEFT(200) collapses ~1,500 near-duplicate clusters across the whole dataset
+# while preserving 26,066 genuinely distinct reviews. Good balance: tight
+# enough to make the "Honestly forgot" opener show at most once or twice in
+# the top-K, loose enough not to merge unrelated reviews.
+DEDUP_PREFIX_LEN = 200
+
 DB_CONFIG = {
     "host":     os.getenv("POSTGRES_HOST", "localhost"),
     "port":     int(os.getenv("POSTGRES_PORT", 5432)),
@@ -114,7 +136,83 @@ def _detect_city(query: str) -> str | None:
     return None
 
 
-def _search_reviews(conn, query_vec: list, city: str | None) -> list[dict]:
+def _resolve_hotel_ids(filters: dict) -> list[str]:
+    """
+    B-004 helper: convert a detect_filters() dict into a list of hotel_ids.
+
+    Filters supported (all optional; ANDed together):
+        avg_rating_gte: float  →  hotel_master.avg_rating >= %s
+        avg_rating_lte: float  →  hotel_master.avg_rating <= %s
+        star_category:  int    →  hotel_master.star_category = %s
+        city:           str    →  dim_location.city = %s (lowercased)
+
+    Schema reference (verified against \\d hotel_master and \\d dim_location;
+    do NOT change these column names from memory):
+        hotel_master.avg_rating    numeric(3,2)
+        hotel_master.star_category smallint
+        hotel_master.location_id   uuid → dim_location.location_id
+        dim_location.city          varchar
+
+    Returns the list of hotel_ids matching ALL filters. Empty list when
+    filters select no hotels — the caller should short-circuit to a
+    friendly "no matching hotels" result instead of running an unscoped
+    semantic search (which would silently ignore the user's filter).
+
+    Returns [] without hitting Postgres when `filters` is empty or
+    contains no resolvable conditions.
+    """
+    if not filters:
+        return []
+
+    conditions: list[str] = []
+    params: list = []
+
+    if "avg_rating_gte" in filters:
+        conditions.append("h.avg_rating >= %s")
+        params.append(filters["avg_rating_gte"])
+
+    if "avg_rating_lte" in filters:
+        conditions.append("h.avg_rating <= %s")
+        params.append(filters["avg_rating_lte"])
+
+    if "star_category" in filters:
+        conditions.append("h.star_category = %s")
+        params.append(filters["star_category"])
+
+    needs_loc_join = "city" in filters
+    if needs_loc_join:
+        conditions.append("LOWER(l.city) = %s")
+        params.append(filters["city"])
+
+    if not conditions:
+        return []
+
+    join_clause = (
+        "JOIN dim_location l ON h.location_id = l.location_id"
+        if needs_loc_join else ""
+    )
+    sql = f"""
+        SELECT h.hotel_id
+        FROM hotel_master h
+        {join_clause}
+        WHERE {' AND '.join(conditions)}
+    """
+
+    conn = psycopg2.connect(**DB_CONFIG)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            return [row[0] for row in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def _search_reviews(
+    conn,
+    query_vec: list,
+    city: str | None,
+    hotel_ids: list[str] | None = None,
+) -> list[dict]:
     """
     Run pgvector cosine similarity search against reviews_raw.embedding.
 
@@ -129,75 +227,101 @@ def _search_reviews(conn, query_vec: list, city: str | None) -> list[dict]:
     When city is None:
         Searches all 30K reviews globally — no city filter.
 
-    Deduplication (B-006):
-        The Kaggle source contains duplicate review texts (the same line of
-        text appears against multiple hotel_ids). Without dedup the TOP_K
-        rows can be 5 copies of the same review at identical similarity,
-        which fills the Ollama summary input with one repeated voice.
+    Deduplication (B-006 + B-006 follow-up):
+        The Kaggle source has two layers of duplication:
+          1. Byte-exact duplicates (same review_text on multiple hotel_ids).
+          2. Near-duplicate clusters: 20+ distinct review_text values that
+             share a ~190-char opener and diverge in a short closing
+             sentence. These are visually identical to a user but distinct
+             to Postgres.
 
-        We wrap the search in DISTINCT ON (review_text). Postgres requires
-        the DISTINCT ON expression to lead the ORDER BY of the SAME query
-        level, so the inner subquery orders by (review_text, distance) —
-        that picks the SMALLEST-distance row per unique review_text. The
-        outer query then re-orders the survivors by distance and caps at
-        TOP_K so the LIMIT applies to deduped rows, not the raw set.
+        We dedup on LEFT(review_text, DEDUP_PREFIX_LEN) — see the constant
+        at the top of this module for the data-derived rationale. Postgres
+        requires the DISTINCT ON expression to lead the ORDER BY of the
+        SAME query level, so the inner subquery orders by
+        (LEFT(review_text, N), distance) — picking the SMALLEST-distance
+        row per unique prefix. The outer query then re-orders the
+        survivors by distance and caps at TOP_K, so the LIMIT applies to
+        deduped rows, not the raw set.
 
         WHERE embedding IS NOT NULL is a safety filter — Phase 3 backfilled
         all rows, but the guard prevents a NULL embedding from ever
         sneaking past as cosine distance against NULL would be undefined.
 
+    Hybrid scoping (B-004):
+        When `hotel_ids` is a non-empty list, an additional
+        `r.hotel_id = ANY(%s)` predicate is added to the SAME inner WHERE,
+        so the dedup picks the closest match per unique review_text WITHIN
+        the filtered hotel set. This shares the dedup path with the city
+        filter rather than wrapping a second subquery around it — keeping
+        one execution plan instead of nesting filters.
+
+        The hotel_ids list comes from _resolve_hotel_ids(), which already
+        encodes any geographic scope. When `hotel_ids` is None the existing
+        global / city-scoped behaviour is preserved byte-for-byte.
+
     Returns a list of dicts, one per review.
     """
+    # Build the inner subquery dynamically so the dedup + scoping stay in
+    # one execution plan. There are four combinations (city × hotel_ids,
+    # each present or absent); the dynamic build keeps them all in one
+    # path instead of duplicating SQL with copy/paste drift risk.
+    #
+    # The dedup expression LEFT(r.review_text, %s) is bound TWICE in the
+    # SQL: once as the DISTINCT ON key and once as the leading ORDER BY
+    # term (Postgres requires they match). Both placeholders draw from
+    # the same DEDUP_PREFIX_LEN constant — keep them in lockstep.
+    inner_joins: list[str] = []
+    inner_where: list[str] = ["r.embedding IS NOT NULL"]
+    # Parameter order in the SQL below (left to right):
+    #   1. LEFT() length for DISTINCT ON
+    #   2. query_vec  (the <=> distance expression)
+    #   3. (optional) city
+    #   4. (optional) hotel_ids
+    #   5. LEFT() length for inner ORDER BY (same value, second binding)
+    #   6. TOP_K
+    inner_params: list = [DEDUP_PREFIX_LEN, query_vec]
+
     if city:
-        # City-scoped search — filter by hotel location.
-        # Two-layer query: inner picks one row per unique review_text (the
-        # one with smallest cosine distance), outer ranks the survivors.
-        sql = """
-            SELECT hotel_id,
-                   rating,
-                   ROUND((1 - distance)::numeric, 4) AS similarity,
-                   review_text
-            FROM (
-                SELECT DISTINCT ON (r.review_text)
-                       r.hotel_id,
-                       r.rating,
-                       r.review_text,
-                       r.embedding <=> %s::vector AS distance
-                FROM reviews_raw r
-                JOIN hotel_master h ON r.hotel_id    = h.hotel_id
-                JOIN dim_location l ON h.location_id = l.location_id
-                WHERE r.embedding IS NOT NULL
-                  AND LOWER(l.city) = %s
-                ORDER BY r.review_text, distance
-            ) deduped
-            ORDER BY distance
-            LIMIT %s
-        """
-        params = [query_vec, city, TOP_K]
-    else:
-        # Global search — no city filter. Same two-layer pattern as above.
-        sql = """
-            SELECT hotel_id,
-                   rating,
-                   ROUND((1 - distance)::numeric, 4) AS similarity,
-                   review_text
-            FROM (
-                SELECT DISTINCT ON (r.review_text)
-                       r.hotel_id,
-                       r.rating,
-                       r.review_text,
-                       r.embedding <=> %s::vector AS distance
-                FROM reviews_raw r
-                WHERE r.embedding IS NOT NULL
-                ORDER BY r.review_text, distance
-            ) deduped
-            ORDER BY distance
-            LIMIT %s
-        """
-        params = [query_vec, TOP_K]
+        inner_joins.append("JOIN hotel_master h ON r.hotel_id    = h.hotel_id")
+        inner_joins.append("JOIN dim_location l ON h.location_id = l.location_id")
+        inner_where.append("LOWER(l.city) = %s")
+        inner_params.append(city)
+
+    if hotel_ids:
+        # ANY(%s) with a Python list — psycopg2 adapts it to a typed array.
+        # Empty list is short-circuited above (`if hotel_ids:`); the caller
+        # should never let an empty list reach here because that would
+        # silently bypass the filter.
+        inner_where.append("r.hotel_id = ANY(%s)")
+        inner_params.append(list(hotel_ids))
+
+    sql = f"""
+        SELECT hotel_id,
+               rating,
+               ROUND((1 - distance)::numeric, 4) AS similarity,
+               review_text
+        FROM (
+            SELECT DISTINCT ON (LEFT(r.review_text, %s))
+                   r.hotel_id,
+                   r.rating,
+                   r.review_text,
+                   r.embedding <=> %s::vector AS distance
+            FROM reviews_raw r
+            {' '.join(inner_joins)}
+            WHERE {' AND '.join(inner_where)}
+            ORDER BY LEFT(r.review_text, %s), distance
+        ) deduped
+        ORDER BY distance
+        LIMIT %s
+    """
+    # Bindings 5 (LEFT length, second occurrence) and 6 (TOP_K) — appended
+    # in SQL textual order so positional %s placeholders match.
+    inner_params.append(DEDUP_PREFIX_LEN)
+    inner_params.append(TOP_K)
 
     with conn.cursor() as cur:
-        cur.execute(sql, params)
+        cur.execute(sql, inner_params)
         rows = cur.fetchall()
 
     return [
@@ -264,9 +388,19 @@ Format as:
 
 # ── Main entry point ──────────────────────────────────────────────────────────
 
-def run(user_query: str) -> dict:
+def run(user_query: str, hotel_ids: list[str] | None = None) -> dict:
     """
     Full semantic search pipeline. Called by ai/main.py.
+
+    Args:
+        user_query: Plain English question from the user.
+        hotel_ids:  Optional pre-resolved hotel_id list (B-004 hybrid path).
+                    When provided, the search is scoped to these hotels AND
+                    the internal _detect_city pass is SKIPPED — callers
+                    pre-encode any geographic constraint into the list, so
+                    a second city filter would be redundant and (in some
+                    cases) over-restrictive. When None, the existing
+                    pure-semantic flow runs unchanged.
 
     Returns a result dict that Phase 5 renders into HTML:
     {
@@ -307,12 +441,22 @@ def run(user_query: str) -> dict:
         _load_cities(conn)
 
         # Step 3 — Detect city in query
-        city           = _detect_city(user_query)
-        result["city"] = city
-        if city:
-            log.info("City detected in query: %s — scoping search", city)
+        # Skipped when the caller supplied hotel_ids — those already encode
+        # any geographic scope and an additional city filter would either
+        # be redundant (matches) or wrong (drops valid hotels in other
+        # cities the caller intentionally included).
+        if hotel_ids is None:
+            city = _detect_city(user_query)
+            result["city"] = city
+            if city:
+                log.info("City detected in query: %s — scoping search", city)
+            else:
+                log.info("No city detected — global search")
         else:
-            log.info("No city detected — global search")
+            city = None
+            log.info(
+                "Hybrid path: scoping to %d pre-resolved hotel_ids", len(hotel_ids)
+            )
 
         # Step 4 — Embed the user query
         # Same model used in Phase 3 to embed reviews_raw — vectors are in
@@ -320,9 +464,12 @@ def run(user_query: str) -> dict:
         query_vec = _model.encode(user_query).tolist()
 
         # Step 5 — pgvector cosine similarity search
-        reviews        = _search_reviews(conn, query_vec, city)
+        reviews        = _search_reviews(conn, query_vec, city, hotel_ids=hotel_ids)
         result["reviews"] = reviews
-        log.info("Retrieved %d reviews (city=%s)", len(reviews), city or "all")
+        log.info(
+            "Retrieved %d reviews (city=%s, hotel_ids=%s)",
+            len(reviews), city or "all", "scoped" if hotel_ids else "unscoped"
+        )
 
         conn.close()
 

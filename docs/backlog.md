@@ -9,7 +9,8 @@
 
 These must be resolved before the dashboard is reliable. A wrong query = wrong widget = misleading dashboard.
 
-> B-001 (retry loop) and B-002 (prefer fact_bookings) are DONE — see Completed.
+> B-001 (retry loop), B-002 (prefer fact_bookings), B-003 (column
+> validation), and B-004 (hybrid filter + scoping) are DONE — see Completed.
 > The system prompt was also fully rewritten this session: real column types, FK
 > relationships, the two-hop fact_bookings→hotel_master→dim_location chain, date
 > handling (date_id is an INTEGER key, never compare to CURRENT_DATE), and the
@@ -17,25 +18,18 @@ These must be resolved before the dashboard is reliable. A wrong query = wrong w
 
 ---
 
-### B-003 — Column name validation before execution
-**Priority:** Medium  
-**Problem:** Ollama generates syntactically valid SQL with hallucinated column names. We only discover this after hitting Postgres with a runtime error.  
-**Fix:** After `_validate_sql()` and before `_execute()`, parse the generated SQL with `sqlparse`, extract all column references, and validate against a hardcoded dict of known table→columns. Reject with a descriptive error if any column doesn't exist.  
-**File:** `ai/text_to_sql.py` — new `_validate_columns(sql)` function  
-**Acceptance:** `python -m ai.main "show occupancy_rate from agg_daily_hotel_kpi"` returns a validation error before touching Postgres, not a Postgres runtime error.
-
----
-
-### B-004 — Hybrid query support (SQL filter + semantic search)
-**Priority:** Medium  
-**Problem:** Queries like "hotels with most negative reviews but rating above 4" need both a SQL filter (rating >= 4) AND semantic search (negative review content). Currently the router picks one path and loses the other dimension entirely.  
-**Fix:** Two-step pipeline in `ai/main.py`:
-1. Detect numeric/boolean conditions in the query (rating, star_category, city filters)
-2. SQL path fetches matching `hotel_id` list based on those conditions
-3. Semantic path searches `reviews_raw` scoped to that `hotel_id` list
-4. Results combined before returning  
-**Files:** `ai/main.py`, `ai/semantic_search.py`  
-**Acceptance:** `python -m ai.main "hotels with most negative reviews but rating above 4"` returns reviews filtered to hotels with avg_rating >= 4.
+### B-003a — `_validate_columns` misses bare WHERE refs on single-table queries
+**Priority:** Low  
+**Problem:** `_validate_columns` misses bare column references inside `WHERE`
+on single-table queries (`_walk_columns` doesn't recurse into `Comparison`
+nodes). False-NEGATIVE only — Postgres still catches it at execution. No
+real query shape hits it (all use qualified refs in multi-table WHEREs).
+Low priority polish; fix carefully to avoid introducing false-positives.  
+**File:** `ai/text_to_sql.py` — extend `_walk_columns` to recurse into
+`sqlparse.sql.Comparison` and other expression-bearing nodes inside `Where`.  
+**Acceptance:** `_validate_columns("SELECT 1 FROM hotel_master WHERE avg_occupancy > 0.5")`
+raises `ValueError` naming `avg_occupancy`; all eight queries in
+`tests/test_validate_columns.py` continue to pass.
 
 ---
 
@@ -54,6 +48,35 @@ These must be resolved before the dashboard is reliable. A wrong query = wrong w
 **Fix:** Deduplicate `reviews_raw` on `(hotel_id, review_text)` during Phase 1 load, or apply `DISTINCT ON (review_text)` in the pgvector query in `semantic_search.py`.  
 **File:** `ai/semantic_search.py` — add `DISTINCT ON` to the search query  
 **Acceptance:** No two identical `review_text` values appear in the top-20 results for any query.
+
+---
+
+## Phase 3/4 — Review Intelligence
+
+Cross-cutting features that touch BOTH the Phase 3 ingest pipeline and the
+Phase 4 query layer. Pure prompt or query-only fixes belong in Phase 4
+Hardening above; pure ingest-time data work belongs in a new Phase 3
+follow-up. Items here span both phases by design.
+
+---
+
+### B-026 — Sentiment classification for reviews
+**Priority:** Medium — resolves L-012 (sentiment-topic conflation)  
+**Problem:** Semantic search matches review TOPIC not POLARITY, so "cleanliness complaints" returns cleanliness praise too (see L-012). Star rating is not a reliable sentiment proxy — confirmed via testing that complaints ("foul smell", "cobwebs") appear in mixed-sentiment 3★ reviews with positive openers.  
+**Design:**
+- Classify each review at INGEST (batch), alongside the existing embedding step (Phase 3) — NOT at query time. Store as a column.
+- Use a DEDICATED local sentiment model (small HuggingFace classifier on the 3070), NOT the star rating (proven unreliable, L-012) and NOT the Ollama LLM (slower, overkill for a narrow task).
+- Categories: sentiment = positive / negative / neutral (3-class). Keep sentiment SEPARATE from relevance — "irrelevant" (e.g. "didn't really stay" reviews) is a different axis from polarity; a separate `is_relevant` flag if needed, not crammed into the sentiment label.
+- Schema: new `sentiment` column on `reviews_raw` (via migration, append-only). Backfill the existing ~30k reviews.
+- Query integration (Phase 4): `detect_filters` learns sentiment words (complaints/negative/bad → `sentiment='negative'`); the hybrid path adds the filter so "complaints about X" = topic(X) AND `sentiment='negative'`.
+
+**Scope:** spans Phase 3 (ingest/embeddings) and Phase 4 (query layer) — migration + pipeline classify step + backfill + `detect_filters` extension + verification. A feature, not a quick fix.
+
+**Known residual:** a single sentiment label still flattens mixed-sentiment reviews ("nice pool BUT cobwebs"). Big improvement over topic-only, not perfect. True solution is aspect-based sentiment (per-topic polarity) — research-grade, out of scope.
+
+**Files:** `db/migrations/00X_review_sentiment.sql`, the ingest/embed pipeline script, `ai/main.py` (`detect_filters`), `ai/semantic_search.py`.
+
+**Acceptance:** "cleanliness complaints" returns predominantly negative-sentiment cleanliness reviews; "best things about hotels" returns positive; the L-012 conflation no longer dominates results.
 
 ---
 
@@ -342,7 +365,7 @@ nvidia-smi
 ## Known Limitations (acknowledged, not scheduled)
 |---|---|---|---|
 | L-001 | `agg_daily_hotel_kpi` empty until Phase 6 Airflow DAGs | Phase 4 | B-013 |
-| L-002 | Hybrid queries (SQL filter + semantic content) degrade silently | Phase 4 | B-004 |
+| L-002 | ~~Hybrid queries (SQL filter + semantic content) degrade silently~~ — RESOLVED by B-004 (Phase 5) | Phase 4 | RESOLVED |
 | L-003 | Duplicate reviews in `reviews_raw` from Kaggle dataset | Phase 3 | B-006 |
 | L-004 | Ollama SQL accuracy ~85-90% on real analytical queries; remaining errors are capability limits (see L-010, L-011), not prompt bugs. Prompt tuning has hit diminishing returns. | Phase 4 | B-017 (model tiering) + B-022 (pin-time verification) |
 | L-005 | IVFFlat recall degrades past ~1M vectors | Phase 3 | Switch to HNSW at scale |
@@ -350,8 +373,10 @@ nvidia-smi
 | L-007 | Streaming events are synthetic (Python simulator, not real PMS) | Phase 2 | Kafka Connect to real PMS APIs in production |
 | L-008 | Flash attention not compiled in torch — CPU fallback for attention | Phase 3 | Update Nvidia drivers + recompile torch with CUDA 12.x |
 | L-009 | Dashboard read path triggers LLM/SQL compute (no cache yet) | Phase 5 | B-022 (cache + frozen SQL), then B-024 (scheduled refresh) |
-| L-010 | 7B model miscounts dimension entities — joins fact_bookings and counts booking rows instead of querying the dimension table directly (e.g. "hotels per city with no star rating" counts bookings, not hotels, and drops the star filter). Produces confidently-wrong results, not errors. | Phase 4 | B-017 (bigger model for SQL) + B-022 (verify SQL at pin time, freeze it) |
+| L-010 | ~~7B model miscounts dimension entities — joins fact_bookings and counts booking rows instead of querying the dimension table directly~~ — **RESOLVED.** Migration 006 added `hotel_master.opened_year` and the system prompt gained the ENTITY COUNT RULE plus the COLUMN LOCATION block scoping `is_cancelled` to fact_bookings. Verified stable across the protected suite: "list hotels count created per year" uses `hotel_master.opened_year` (sums to ~2000); "how many hotels per city" / "how many customers per state" / "list 5 customers" all query their dimension tables directly with NO `is_cancelled` filter (Tests 1, 2, 3, 10 each pass on the reverted single-bullet prompt). The fact-aggregation cancellation portion — bare `<aggregate> by <dimension>` queries occasionally dropping `WHERE NOT b.is_cancelled` — is split out as **L-013**. | Phase 4 | RESOLVED (migration 006 + prompt updates) |
 | L-011 | 7B model omits DISTINCT on plain entity-list queries — "5 customers named R" returns the same person repeated (one row per booking). Adding "unique" to the query fixes it. Capability limit, not a prompt bug; further prompt tuning regresses other query types. | Phase 4 | B-017 (bigger model) |
+| L-012 | Sentiment-topic conflation in semantic review search. Embeddings match TOPIC not POLARITY — "cleanliness complaints" returns cleanliness praise and complaints alike, since both are about cleanliness. A `reviews_raw.rating` filter is NOT a reliable proxy: confirmed via testing that complaints (e.g. "foul smell", "cobwebs") appear in mixed-sentiment 3★ reviews with positive openers, and identical review texts exist across 1–5★. Proper fix requires sentiment scoring at embed time (store a sentiment score per review, filter on it) — a feature, not a filter. Current behaviour: semantic search surfaces topically-relevant reviews; summary should describe results as "reviews mentioning X" not "X complaints". Discovered during B-004 manual testing. | Phase 4 | Planned: **B-026** (sentiment-at-embed-time). Copy fix on the summary line is a smaller separate item still open. |
+| L-013 | Bare grouped aggregations over `fact_bookings` (shapes like "total revenue by city", "bookings by month", "revenue by customer segment", "average nights stayed by season") intermittently drop the `WHERE NOT b.is_cancelled` filter on Qwen-7B. Stronger cues — `LIMIT`, explicit `WHERE` filters on star_category / city / etc. — usually keep the filter (Tests 6 and 7 in the verification suite). Bare grouped shapes do not. **Confirmed not promptable** at this model size: two prompt rewrites attempted — a single-bullet "applies ONLY when fact_bookings is in FROM/JOIN" version (the current text) and a two-bullet universal-rule-plus-illustrations version. Neither resolves the bare-grouped cases. The two-bullet version improved "by month" and "by segment" to 3/3 but degraded an unnamed-shape generalisation ("average nights stayed by season") and added marginal noise on the LIMIT-bearing cases. Root cause: Qwen 7B underweights universal/conditional rules in the system prompt relative to attention pull from concrete examples in the same prompt — a small-model attention budget limit, not a prompt-wording bug. Same family as L-010 and L-011 (capability ceiling, not prompt tuning). **Safeguard:** B-022 freezes generated SQL at pin time, so a missing cancellation filter is a one-time review failure at pin, not a per-refresh data integrity bug — the read path never runs unverified SQL. **Fix path:** B-017 (model tiering — Gemma 12B or similar holds rule discipline better in early testing) is the real remediation. | Phase 4 | B-017 (larger model for SQL) — B-022 pin-time review is the meanwhile safeguard |
 
 ---
 
@@ -371,6 +396,8 @@ nvidia-smi
 | ✓ | Fix `agg_daily_hotel_kpi` column hallucination in prompt | Phase 4 |
 | ✓ | B-001 — Retry loop on SQL execution failure | Phase 4 |
 | ✓ | B-002 — Prefer fact_bookings for booking/count queries (prompt rule) | Phase 4 |
+| ✓ | B-003 — Column name validation before execution (information_schema map + sqlparse walk; conservative skip on ambiguous refs; shares B-001 retry path) — test: `tests/test_validate_columns.py` | Phase 5 |
+| ✓ | B-004 — Hybrid query support (filter detection + hotel_id scoping in semantic search; no second LLM call; resolves L-002) — test: `tests/test_hybrid_queries.py` | Phase 5 |
 | ✓ | Full system-prompt rewrite — real types, FK chain, date handling, city-list-reference-only | Phase 4/5 |
 | ✓ | B-007 — Widget renderer (shape → widget type) | Phase 5 |
 | ✓ | B-008 — Pin widget to dashboard (Postgres table, not JSON) | Phase 5 |

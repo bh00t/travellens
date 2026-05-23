@@ -48,7 +48,7 @@ The principle: the read path never triggers compute. SQL is authored once by the
 
 ## Key engineering highlights
 
-One line each — the blueprint explains the *why* in full.
+One line each — the blueprint explains the *why* in full. For an honest per-feature reliability statement (where the system is trustworthy, where it isn't), see [`docs/capabilities-and-limits.md`](docs/capabilities-and-limits.md).
 
 - **Streaming with idempotent dual sink.** 60-minute event-time tumbling windows keyed by city, dual-sunk to Postgres (UPSERT on `(city, window_start)`) and S3 Parquet (Hive-partitioned by year/month/day/hour). At-least-once delivery, idempotent end-to-end via the UPSERTs.
 - **14-table star schema.** Two fact tables (bookings, price events), five dimensions, two pre-computed aggregates, four reference tables, plus `reviews_raw` carrying a 384-dim `embedding` column. See [`db/schema.sql`](db/schema.sql).

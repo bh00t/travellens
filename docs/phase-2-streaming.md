@@ -586,7 +586,7 @@ To restart: re-run Steps 1–6 from the top.
 
 6. **Schema introspection is mandatory.** `hotel_master.city` doesn't exist — cities are
    in `dim_location`. Writing SQL from memory caused a startup crash. Always read
-   `datamodel.md` before writing any SQL against this schema.
+   [`../datamodel.md`](../datamodel.md) (at repo root) before writing any SQL against this schema.
 
 7. **Auto-compact loses context mid-task.** Capture test results to log files on disk so
    they survive Claude Code conversation compaction.

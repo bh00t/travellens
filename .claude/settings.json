@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "_comment": [
+    "Shared Claude Code permissions for the TravelLens project.",
+    "Distilled from accumulated settings.local.json into a durable",
+    "project-wide subset. Per-developer / one-off rules belong in",
+    ".claude/settings.local.json (gitignored).",
+    "",
+    "Grouped by purpose:",
+    "  1. Docker / compose / per-container exec",
+    "  2. Python: venv + module entry points",
+    "  3. Dependency install + inspection",
+    "  4. Service health probes (dashboard, Ollama, MinIO, Airflow)",
+    "  5. Pytest entry points",
+    "  6. Read-only filesystem and process inspection",
+    "",
+    "Be conservative when expanding `allow`. An over-broad rule trades a",
+    "safety prompt for a silent destructive action."
+  ],
+  "permissions": {
+    "allow": [
+      "Bash(docker --version)",
+      "Bash(docker info *)",
+      "Bash(docker ps *)",
+      "Bash(docker compose *)",
+      "Bash(docker stop *)",
+      "Bash(docker rm *)",
+      "Bash(docker volume *)",
+      "Bash(docker exec travellens-postgres *)",
+      "Bash(docker exec travellens-kafka *)",
+      "Bash(docker exec travellens-minio *)",
+      "Bash(docker exec travellens-zookeeper *)",
+      "Bash(docker exec travellens-airflow *)",
+      "Bash(docker exec travellens-airflow-postgres *)",
+      "PowerShell(docker exec travellens-postgres *)",
+      "PowerShell(docker exec travellens-kafka *)",
+      "PowerShell(docker exec travellens-minio *)",
+      "PowerShell(docker version *)",
+
+      "Bash(python *)",
+      "Bash(python3 *)",
+      "Bash(.venv/Scripts/python.exe *)",
+      "Bash(PYTHONIOENCODING=utf-8 python *)",
+      "PowerShell(python *)",
+      "PowerShell(.\\.venv\\Scripts\\python.exe *)",
+
+      "Bash(pip install *)",
+      "Bash(pip list *)",
+      "PowerShell(pip install *)",
+      "PowerShell(pip list *)",
+
+      "Bash(curl -fs http://localhost:5000/*)",
+      "Bash(curl -fs http://localhost:11434/api/tags)",
+      "Bash(curl -fs http://localhost:8080/health)",
+      "Bash(curl -fs http://localhost:9000/minio/health/live)",
+
+      "Bash(.venv/Scripts/python.exe -m pytest *)",
+      "PowerShell(.\\.venv\\Scripts\\python.exe -m pytest *)",
+      "Bash(python -m pytest *)",
+      "PowerShell(python -m pytest *)",
+
+      "Bash(dir)",
+      "Bash(tasklist)",
+      "PowerShell(Get-ChildItem -Force)",
+      "PowerShell(Get-Process *)",
+      "PowerShell(Get-Command *)",
+      "PowerShell(Get-Job *)",
+
+      "Read(//tmp/**)"
+    ]
+  }
+}

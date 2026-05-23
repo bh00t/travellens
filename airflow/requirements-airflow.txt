@@ -1,0 +1,35 @@
+# Airflow container Python dependencies
+# ======================================
+# Canonical manifest of what's installed inside the travellens-airflow
+# container. SEPARATE from the project's top-level requirements.txt to
+# keep the SQLAlchemy<2.0 constraint isolated — the project pins
+# SQLAlchemy 2.x; Airflow 2.9.x requires <2.0. They live in different
+# Python environments and never see each other.
+#
+# How these get installed today:
+#   docker/docker-compose.yml passes the provider list to the airflow
+#   service via _PIP_ADDITIONAL_REQUIREMENTS, so they install at
+#   container startup. Slow but zero-build. apache-airflow itself is
+#   already in the apache/airflow:2.9.2 base image, so it does NOT
+#   appear in that env var — only the providers do.
+#
+# Production path (future, not built):
+#   Build a custom Dockerfile FROM apache/airflow:2.9.2 that runs
+#   `pip install -r requirements-airflow.txt`. Then drop the
+#   _PIP_ADDITIONAL_REQUIREMENTS env var and use the custom image.
+#   Same packages, faster cold starts, immutable image.
+
+# Airflow core — pinned to match the image tag in docker-compose.yml.
+# Listed here for completeness; the image already provides it.
+apache-airflow==2.9.2
+
+# Postgres provider — gives DAGs PostgresHook, PostgresOperator, and the
+# Connection schema for postgresql:// URIs. DAGs use Conn ID
+# "travellens_warehouse" to reach the warehouse Postgres.
+apache-airflow-providers-postgres==5.10.0
+
+# Amazon provider — gives DAGs S3Hook + the aws:// Connection schema
+# with endpoint_url support. The endpoint_url query param is what lets
+# the same operator code target either AWS S3 or MinIO without change.
+# DAGs use Conn ID "travellens_s3" to reach MinIO.
+apache-airflow-providers-amazon==8.20.0

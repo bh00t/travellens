@@ -413,7 +413,7 @@
           placeholder="Widget title (optional)"
           value="${prompt.substring(0, 65)}"
         />
-        <button class="btn btn-primary" onclick="pinWidget()">📌 Pin to Dashboard</button>
+        <button class="btn btn-primary" id="pinBtn" onclick="pinWidget()">📌 Pin to Dashboard</button>
       </div>`;
 
     renderWidgetBody(document.getElementById('previewBody'), config);
@@ -551,28 +551,70 @@
   // ── pinWidget ──────────────────────────────────────────────────────────────
   /**
    * POST /api/pin with the current prompt, widget type, and title.
-   * Shows a success toast and keeps the preview visible (user can pin multiple
-   * times or change the title and pin again).
+   *
+   * The pin endpoint does real work synchronously (freezes SQL + runs the
+   * query once to seed the result cache — fast for SQL widgets, several
+   * seconds for semantic widgets that go through embedding + Ollama). The
+   * UI feedback contract:
+   *
+   *   On click:    button immediately disables, label flips to spinner +
+   *                "Pinning..." — closes the dead-air gap.
+   *   On success:  toast, button restored.
+   *   On error:    toast with the server's message (or a network-error
+   *                fallback), button restored — never stuck on "Pinning...".
+   *   Re-click:    a button.disabled check at entry no-ops the duplicate
+   *                call; the inherent disabled state is the primary guard,
+   *                this is the belt to the suspenders.
+   *
+   * `finally` is what guarantees the button restores under EVERY exit path
+   * (success, server error, network throw) — without it, a thrown fetch
+   * would leave the button stuck disabled forever.
    */
   async function pinWidget() {
     if (!currentConfig || !currentResult) return;
 
-    const title = document.getElementById('pinTitle').value.trim();
-    const resp  = await fetch('/api/pin', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({
-        prompt:      currentResult.query,
-        widget_type: currentConfig.type,
-        title:       title || currentResult.query.substring(0, 60)
-      })
-    });
+    const btn = document.getElementById('pinBtn');
+    if (!btn) return;
 
-    if (resp.ok) {
-      showToast('✓ Pinned to dashboard', 'success');
-    } else {
-      const err = await resp.json();
-      showToast('Failed to pin: ' + (err.error || 'unknown error'), 'error');
+    // Double-submit guard. The disabled attribute below is the primary
+    // signal (the browser also blocks the click event on a disabled
+    // button), but this early-return handles any race where the same
+    // handler is invoked synchronously twice before the disabled flip
+    // commits.
+    if (btn.disabled) return;
+
+    const originalLabel = btn.innerHTML;
+    btn.disabled  = true;
+    btn.innerHTML = '<span class="spinner"></span> Pinning...';
+
+    try {
+      const title = document.getElementById('pinTitle').value.trim();
+      const resp  = await fetch('/api/pin', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({
+          prompt:      currentResult.query,
+          widget_type: currentConfig.type,
+          title:       title || currentResult.query.substring(0, 60)
+        })
+      });
+
+      if (resp.ok) {
+        showToast('✓ Pinned to dashboard', 'success');
+      } else {
+        // Parse defensively — a 5xx that doesn't return JSON would throw
+        // here without the .catch and the error toast would never fire.
+        const err = await resp.json().catch(() => ({}));
+        showToast('Pin failed — ' + (err.error || 'try again'), 'error');
+      }
+    } catch (err) {
+      // Network failure, abort, etc. — no JSON to parse, surface plainly.
+      showToast('Pin failed — network error', 'error');
+    } finally {
+      // ALWAYS restore. This runs on success, server error, AND thrown
+      // network error — the button can never be left stuck on "Pinning...".
+      btn.disabled  = false;
+      btn.innerHTML = originalLabel;
     }
   }
 

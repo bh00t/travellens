@@ -83,8 +83,81 @@ services:
       timeout: 10s
       retries: 3
 
+  # ── Airflow metadata database ─────────────────────────────────────────────
+  # SEPARATE Postgres instance for Airflow's own metadata (DAG runs, task
+  # instances, encrypted Connection objects). DELIBERATELY internal-only:
+  # no `ports:` mapping, so it is not reachable from the host. Airflow's
+  # orchestration state must never share a database with the warehouse.
+  airflow-postgres:
+    image: postgres:16
+    container_name: travellens-airflow-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       ${AIRFLOW_POSTGRES_DB:-airflow}
+      POSTGRES_USER:     ${AIRFLOW_POSTGRES_USER:-airflow}
+      POSTGRES_PASSWORD: ${AIRFLOW_POSTGRES_PASSWORD:-airflow}
+    volumes:
+      - airflow_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready",
+             "-U", "${AIRFLOW_POSTGRES_USER:-airflow}",
+             "-d", "${AIRFLOW_POSTGRES_DB:-airflow}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Airflow (combined-image, LocalExecutor) ──────────────────────────────
+  # Single container running scheduler + webserver + triggerer via the
+  # `airflow standalone` command. Standalone is the right tool for this
+  # portfolio scope — it is documented as dev/test only, which matches the
+  # demo intent. For a production workload, split into scheduler/webserver/
+  # triggerer services and bake providers into a custom Dockerfile (the
+  # canonical list is in airflow/requirements-airflow.txt).
+  #
+  # Providers are installed at container start via _PIP_ADDITIONAL_REQUIREMENTS
+  # to keep the image generic. This is slow on cold starts but acceptable here.
+  airflow:
+    image: apache/airflow:2.9.2
+    container_name: travellens-airflow
+    restart: unless-stopped
+    depends_on:
+      airflow-postgres:
+        condition: service_healthy
+    environment:
+      AIRFLOW__CORE__EXECUTOR:                 LocalExecutor
+      AIRFLOW__CORE__LOAD_EXAMPLES:            "False"
+      AIRFLOW__CORE__FERNET_KEY:               ${AIRFLOW_FERNET_KEY}
+      AIRFLOW__WEBSERVER__SECRET_KEY:          ${AIRFLOW_WEBSERVER_SECRET_KEY}
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: >-
+        postgresql+psycopg2://${AIRFLOW_POSTGRES_USER:-airflow}:${AIRFLOW_POSTGRES_PASSWORD:-airflow}@airflow-postgres:5432/${AIRFLOW_POSTGRES_DB:-airflow}
+      # Providers installed at startup. Airflow itself ships in the image;
+      # only providers go here. Canonical pinned list in
+      # airflow/requirements-airflow.txt.
+      _PIP_ADDITIONAL_REQUIREMENTS: >-
+        apache-airflow-providers-postgres==5.10.0
+        apache-airflow-providers-amazon==8.20.0
+      # Connection URIs — Airflow auto-imports any AIRFLOW_CONN_<id> env var
+      # as a Connection object on startup. Conn IDs are derived from the
+      # suffix, lowercased. Hosts use Docker DNS names (postgres, minio),
+      # not localhost, because we're INSIDE the compose network here.
+      AIRFLOW_CONN_TRAVELLENS_WAREHOUSE: ${AIRFLOW_CONN_TRAVELLENS_WAREHOUSE}
+      AIRFLOW_CONN_TRAVELLENS_S3:        ${AIRFLOW_CONN_TRAVELLENS_S3}
+    ports:
+      - "8080:8080"
+    volumes:
+      - ../airflow/dags:/opt/airflow/dags
+      - ../airflow/plugins:/opt/airflow/plugins
+    command: standalone
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 90s
+
 volumes:
   postgres_data:
     name: docker_postgres_data
     external: true
   minio_data:
+  airflow_postgres_data:

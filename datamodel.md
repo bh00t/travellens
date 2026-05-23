@@ -705,6 +705,7 @@ All other columns unchanged in shape, only types enforced.
 | `price_tier_id` | VARCHAR(10) | **FK** → `ref_price_tiers` |
 | `base_price_inr` | INT | Nightly rate. Must fit within tier band. |
 | `is_active` | BOOLEAN | ~95% TRUE. Inactive hotels generate no new bookings. |
+| `opened_year` | SMALLINT | Year the hotel opened to guests (1975–2023). **Added via migration 006, not in base schema.** Synthetic but constrained — see *opened_year (migration 006)* below. |
 
 #### Sample Data
 
@@ -733,6 +734,33 @@ WHERE 'Swimming Pool' = ANY(amenities)
 ```
 
 **2. `chain_name` empty means independent, not unknown.** Pandas reads these as NaN. When loading to Postgres, treat empty as `NULL` explicitly.
+
+#### `opened_year` (migration 006)
+
+Year the hotel opened to guests, range 1975–2023. **Added via migration
+`db/migrations/006_hotel_opened_year.sql`, not in the base schema** — the
+base `schema.sql` is frozen and every later structural change ships as a
+numbered migration. Synthetic but constrained:
+
+- Correlated with `star_category`: 5-star skews older (1975–2010), tighter
+  ranges step forward through 4/3/2/1, uncategorised/budget skews newest
+  (2005–2023).
+- OYO override: `chain_name ILIKE 'oyo%'` clamps to 2010–2023 regardless
+  of star (OYO founded 2013).
+- HARD CONSTRAINT: `opened_year <= MIN(dim_date.year)` over the hotel's
+  `fact_bookings` rows — a hotel cannot be booked before it opened.
+  Verified invariant: 0 violations across all 2000 rows.
+
+Populated by `scripts/populate_opened_year.py` with a fixed RNG seed so
+re-runs reproduce. Distribution by decade after load: 1970s 22 · 1980s
+108 · 1990s 281 · 2000s 583 · 2010s 748 · 2020s 258.
+
+**Why it exists.** The 7B SQL model was answering "hotels created per
+year" by counting `fact_bookings` rows (the L-010 dimension-vs-fact
+confusion). A dedicated `opened_year` column on `hotel_master` makes the
+correct query trivially expressible (`SELECT opened_year, COUNT(*) FROM
+hotel_master GROUP BY opened_year`) and removes the failure mode at its
+root. See the ENTITY COUNT rule in `ai/prompts/text_to_sql_system.txt`.
 
 #### Silver variant — schema changes
 

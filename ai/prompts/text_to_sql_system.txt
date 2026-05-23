@@ -18,7 +18,7 @@ fact_bookings          -- one row per booking (the main fact table)
   nightly_rate_inr  NUMERIC
   revenue_inr       NUMERIC   -- full rupee value; divide by 1e7 for crore
   booking_source    VARCHAR   -- 'Agoda','Booking.com','Direct','Goibibo','MakeMyTrip','OYO','Walk-in'
-  is_cancelled      BOOLEAN
+  is_cancelled      BOOLEAN   -- EXISTS ONLY ON fact_bookings. Not on any dimension table.
 
 hotel_master           -- one row per hotel (bridge between bookings and location)
   hotel_id          VARCHAR   (primary key)
@@ -32,6 +32,7 @@ hotel_master           -- one row per hotel (bridge between bookings and locatio
   review_count      INTEGER
   base_price_inr    NUMERIC
   is_active         BOOLEAN
+  opened_year       SMALLINT  -- year the hotel opened to guests (1975-2023)
 
 dim_location           -- city / state / region live HERE, not in hotel_master
   location_id       UUID      (primary key)
@@ -135,10 +136,82 @@ HARD JOIN RULES:
   and are not UUIDs. Casting will fail. Pass through hotel_master instead.
 
 ================================================================================
+COLUMN LOCATION — which columns live on which tables
+================================================================================
+Some columns belong to ONE table only and must never be referenced on another:
+
+- is_cancelled lives ONLY on fact_bookings. It does NOT exist on hotel_master,
+  dim_customer, dim_location, dim_date, dim_room_type, or reviews_raw.
+  A cancellation is a property of a BOOKING, not of a hotel, customer, or city.
+  Therefore any query that does not select from fact_bookings must NOT reference
+  is_cancelled at all — a dimension has no cancellation concept.
+
+- revenue_inr, nights_stayed, nightly_rate_inr, booking_source live ONLY on
+  fact_bookings (they describe a booking event).
+
+- avg_rating, opened_year, star_category, total_rooms live ONLY on hotel_master
+  (they describe a hotel).
+
+- city, state, region live ONLY on dim_location (reached via hotel_master).
+
+If a column is not listed under the table you are selecting from in the SCHEMA
+section above, it does not exist there. Do not add a filter on a column that
+belongs to a table not present in your FROM/JOIN.
+
+================================================================================
+ENTITY COUNT RULE
+================================================================================
+To COUNT distinct ENTITIES (hotels, customers, cities, room types), query
+the DIMENSION table directly. NEVER count over fact_bookings — that counts
+booking ROWS, not entities, and produces numbers in the hundreds of
+thousands where the truth is in the thousands.
+
+Right:                                  Wrong:
+  SELECT COUNT(*) FROM hotel_master       SELECT COUNT(DISTINCT b.hotel_id)
+                                          FROM fact_bookings b
+                                          (misses 92 hotels with no bookings;
+                                          slower; conceptually wrong)
+
+This applies EQUALLY to grouped counts ("per X"). Hotels-per-city joins
+hotel_master to dim_location — NEVER through fact_bookings:
+
+Right:                                  Wrong:
+  SELECT l.city, COUNT(*) AS n            SELECT l.city, COUNT(DISTINCT h.hotel_id)
+  FROM hotel_master h                     FROM fact_bookings b
+  JOIN dim_location l                       JOIN hotel_master h ON ...
+    ON h.location_id = l.location_id        JOIN dim_location l ON ...
+  GROUP BY l.city                         GROUP BY l.city
+  ORDER BY n DESC;                        (drops hotels without bookings;
+                                          fact_bookings is irrelevant here)
+
+For "hotels opened/created per year" use hotel_master.opened_year directly:
+  SELECT opened_year, COUNT(*) AS hotels_opened
+  FROM hotel_master
+  GROUP BY opened_year
+  ORDER BY opened_year;
+
+For "customers per state" use dim_customer.home_state, not fact_bookings.
+For "cities in region X" use dim_location, not joins through bookings.
+
+A dimension-only query (counting or listing hotels, customers, cities, room
+types) takes NO is_cancelled filter — that column is not on those tables (see
+COLUMN LOCATION above). The "exclude cancelled bookings" rule applies only when
+fact_bookings is in the FROM/JOIN.
+
+Do NOT add a LIMIT to "how many X per Y" questions unless the user said
+"top N". "Hotels per city" wants every city, not the top 10.
+
+This rule applies to COUNTING entities only. Aggregations over BOOKINGS
+(revenue, ADR, cancellation rate, nights stayed) still come from
+fact_bookings — those are facts, not entities.
+
+================================================================================
 OUTPUT RULES
 ================================================================================
-- Always exclude cancelled bookings: WHERE NOT b.is_cancelled
-  (unless the question is specifically about cancellations)
+- Exclude cancelled bookings in fact_bookings queries: WHERE NOT b.is_cancelled
+  (unless the question is specifically about cancellations). This applies ONLY
+  when fact_bookings is in the FROM/JOIN — dimension-only queries take no such
+  filter, because is_cancelled is a fact_bookings column (see COLUMN LOCATION).
 - Revenue in crore: ROUND(SUM(b.revenue_inr) / 1e7, 2)
 - ADR (average daily rate): ROUND(AVG(b.revenue_inr / NULLIF(b.nights_stayed, 0)), 0)
 - Cancellation rate: ROUND(100.0 * SUM(CASE WHEN b.is_cancelled THEN 1 ELSE 0 END) / COUNT(*), 2)

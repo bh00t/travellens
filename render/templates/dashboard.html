@@ -121,13 +121,23 @@
   /* Widget card needs relative positioning so the popover anchors to it */
   .widget-card { position: relative; }
 
-  /* Settings popover — floats over the widget, does not resize it */
+  /* Settings popover — floats over the widget, does not resize it.
+     position: FIXED, not absolute — `.widget-card` has `overflow: hidden`
+     (to clip the gray header background to the card's rounded corners),
+     which would also clip an absolutely-positioned child popover at the
+     card boundary. Going fixed escapes that clipping context entirely,
+     so the popover can extend below the card edge. Top/left are set by
+     toggleSettings() from the gear button's getBoundingClientRect(),
+     with flip-up logic when the popover would overflow the viewport. */
   .widget-settings {
-    position: absolute;
-    top: 46px;
-    right: 12px;
+    position: fixed;
     z-index: 50;
     width: 230px;
+    /* max-height + scroll is the last-resort fallback if the viewport
+       is so short that even flipping up doesn't fit (e.g. a phone in
+       landscape) — keeps every control reachable rather than clipped. */
+    max-height: calc(100vh - 24px);
+    overflow-y: auto;
     background: var(--white);
     border: 1px solid var(--gray-200);
     border-radius: 8px;
@@ -975,9 +985,21 @@
 
   /**
    * toggleSettings — show/hide the settings popover for a widget.
+   *
    * Closes any other open popover first so only one is open at a time.
    * Stops event propagation so the document click handler doesn't immediately
    * close the popover we just opened.
+   *
+   * Positioning (the fix for the bottom-clipping bug):
+   *   - The popover uses position: fixed so it escapes the widget-card's
+   *     `overflow: hidden` clipping context.
+   *   - On open, compute top/left from the gear button's
+   *     getBoundingClientRect(). Default: drop down + right-align to the
+   *     gear button (matches the old visual placement).
+   *   - Flip UPWARD when the downward position would overflow the viewport
+   *     bottom — typical for widgets in the last row of the grid.
+   *   - Clamp to the viewport on both axes so the popover never lands
+   *     off-screen on a narrow window.
    */
   function toggleSettings(event, widgetId) {
     event.stopPropagation();
@@ -985,11 +1007,61 @@
     if (!panel) return;
     const isOpen = panel.style.display === 'block';
 
-    // Close all open popovers
+    // Close every open popover before placing the new one (single-popover rule).
     document.querySelectorAll('.widget-settings').forEach(p => p.style.display = 'none');
 
-    // Toggle this one
-    panel.style.display = isOpen ? 'none' : 'block';
+    if (isOpen) return;  // we were closing, nothing more to do
+
+    // ── Position the popover relative to the gear button ────────────────
+    const gearBtn  = event.currentTarget;
+    const gearRect = gearBtn.getBoundingClientRect();
+    const vw       = window.innerWidth;
+    const vh       = window.innerHeight;
+    const margin   = 8;            // viewport edge buffer
+    const gap      = 6;            // vertical gap between gear and popover
+    const width    = panel.offsetWidth || 230;  // matches CSS width
+
+    // To measure the popover's HEIGHT we need it briefly in the layout
+    // tree. visibility:hidden keeps it un-paintable but gives us
+    // offsetHeight; we then flip visibility back before the browser
+    // gets a chance to render an unpositioned flash.
+    panel.style.visibility = 'hidden';
+    panel.style.display    = 'block';
+    panel.style.top        = '0px';   // neutralise any prior placement
+    panel.style.left       = '0px';
+    const height = panel.offsetHeight;
+
+    // Horizontal: right-align the popover's right edge to the gear button's
+    // right edge — same visual anchoring as the old `right: 12px` rule.
+    let left = gearRect.right - width;
+
+    // Vertical: default drop-down position.
+    let top = gearRect.bottom + gap;
+    // Flip UP when dropping down would clip the viewport bottom.
+    if (top + height > vh - margin) {
+      const flippedTop = gearRect.top - height - gap;
+      // Only flip if flipping ACTUALLY helps (it might not on a very
+      // short viewport where neither direction fits — in that case keep
+      // the downward placement and rely on the CSS max-height + scroll).
+      if (flippedTop >= margin) top = flippedTop;
+    }
+
+    // Clamp both axes inside the viewport.
+    left = Math.max(margin, Math.min(left, vw - width - margin));
+    top  = Math.max(margin, top);
+
+    // Final safety: clamp the popover's height to whatever room remains
+    // between its top and the viewport bottom. The CSS rule already caps
+    // absolute height at calc(100vh - 24px), but that's not the same as
+    // "from THIS top, how much room is left" — on a very short viewport
+    // where neither direction fits cleanly, the popover could still extend
+    // past the viewport bottom. This inline value overrides the CSS cap
+    // with a position-aware one. The overflow-y:auto on .widget-settings
+    // turns the excess into a scroll, so every control stays reachable.
+    panel.style.maxHeight  = (vh - top - margin) + 'px';
+    panel.style.left       = left + 'px';
+    panel.style.top        = top  + 'px';
+    panel.style.visibility = '';   // fall back to stylesheet (visible)
   }
 
   // Click anywhere outside an open popover closes it

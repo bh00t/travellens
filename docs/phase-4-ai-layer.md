@@ -5,6 +5,8 @@
 > **Files:** `ai/query_router.py` · `ai/text_to_sql.py` · `ai/semantic_search.py` · `ai/main.py`  
 > **Status:** [ ] In progress / [x] Complete  
 
+> For current behavior and accuracy levels, see [`capabilities-and-limits.md`](./capabilities-and-limits.md).
+
 ---
 
 
@@ -309,6 +311,31 @@ time python ai/main.py "complaints about AC not working"
 ```
 
 All 6 must pass before moving to Phase 5.
+
+### Hardening tests (added in Phase 5)
+
+The six tests above are the original Phase 4 acceptance bar and still apply.
+Two additional pytest suites were added during Phase 5 hardening to lock in
+the B-003 and B-004 fixes against regression. Run them in addition to the
+six commands above before declaring the AI layer stable.
+
+```bash
+# B-003 — column-name validation (information_schema + sqlparse guard)
+pytest tests/test_validate_columns.py -v
+
+# B-004 — hybrid queries (filter detection + hotel_id scoping)
+pytest tests/test_hybrid_queries.py -v
+
+# Full suite — everything under tests/
+pytest tests/ -v
+```
+
+These are regression suites, not replacements. The hybrid-queries file
+includes both fast unit tests on `detect_filters()` and slower
+stack-hitting tests marked `@pytest.mark.slow`; run
+`pytest tests/test_hybrid_queries.py -v -m "not slow"` for the fast
+detection layer alone (sub-second). Both suites skip cleanly when
+`travellens-postgres` is unreachable rather than passing vacuously.
 
 ---
 

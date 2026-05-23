@@ -180,3 +180,32 @@ rm -f render/templates/monitor.html
   prototype-first, needs `huggingface.co` allowlisted).
 - **CHECKIN/CHECKOUT counts** → needs consumer instrumentation (frozen Phase-2 file).
 - **Live events/sec throughput** → needs a metrics table the consumer writes to.
+
+---
+
+
+## CLAUDE CODE INSTRUCTIONS
+> Customise before running — adjust paths, usernames, and any rules specific to your environment or workflow preferences.
+
+- Read this entire file before writing any code
+- Confirm the real schema FIRST:
+  `docker exec travellens-postgres psql -U travellens -d travellens -c "\d agg_hourly_city_stats"`
+  and `"\d reviews_raw"`. The SQL in this phase GUESSES column names — the real schema wins.
+- MODIFY `render/server.py` — add the `/monitor` route + helpers; do not rewrite existing routes
+- CREATE `render/templates/monitor.html` — extend the existing `base.html`; reuse its design tokens and Chart.js include
+- Add the "Monitor" nav link in `base.html` (the nav lives there — one additive line)
+- Guard every external dependency (Airflow HTTP, MinIO listing) with a short timeout — the page MUST render even when a dependency is down (show "Unreachable" / "—", never a stack trace)
+- Pipeline-processing metrics ONLY — no business content (ratings, sentiment, revenue trends, top cities); those stay in the Explorer
+- Do not modify any Phase 2 file (`scripts/stream_consumer.py`, `kafka_event_producer.py`) — frozen; this phase only reads what they produce
+- Run all 5 ACCEPTANCE TESTS (cold, warm, chaos, filters, dependency-down) — report ✓/✗ per test
+- Output "PHASE 7 ACCEPTED" only after all 5 pass
+- Do not run any git commands — the user commits after acceptance
+
+
+## NEXT
+
+Phase 6 — `docs/phase-6-airflow.md`. Airflow infrastructure is up, but the five DAGs
+(B-024, B-013, B-014, B-015, B-016) are not built — that is the next build work.
+Order: migrations `006_hotel_sentiment_scores.sql` + `007_customer_ltv.sql` first, then
+**B-024** `refresh_pinned_widgets` (smallest scope, output already consumed by the
+dashboard, fastest validation loop), then B-013 / B-014 / B-015 / B-016.

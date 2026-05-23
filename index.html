@@ -1198,7 +1198,7 @@
 <!-- ══ 10 IMPLEMENTATION PLAN ══ -->
 <section id="plan" style="margin-bottom:4rem;" class="reveal">
   <h2 style="font-family:'Fraunces',serif;font-size:1.75rem;font-weight:700;color:#000;display:flex;align-items:center;gap:.875rem;margin-bottom:.75rem;"><span class="section-num">10</span> Implementation Plan — 24 Days</h2>
-  <p style="font-size:.875rem;color:#595959;line-height:1.7;max-width:620px;margin-bottom:1.5rem;">Day 0 covers prerequisites. Six build phases follow, each with a clear objective. Click <strong>View Guide ↗</strong> on any phase to open its full runbook — prerequisites, steps, and acceptance tests — on GitHub.</p>
+  <p style="font-size:.875rem;color:#595959;line-height:1.7;max-width:620px;margin-bottom:1.5rem;">Day 0 covers prerequisites. Seven build phases follow, each with a clear objective. Click <strong>View Guide ↗</strong> on any phase to open its full runbook — prerequisites, steps, and acceptance tests — on GitHub.</p>
   <div style="border:2px solid #000;box-shadow:4px 4px 0 #000;overflow-x:auto;margin-bottom:2rem;">
     <div style="background:#F4F4F5;border-bottom:2px solid #000;display:grid;grid-template-columns:90px 160px 1fr 140px;gap:0;min-width:780px;">
       <div style="padding:.65rem 1rem;font-family:'JetBrains Mono',monospace;font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:#000;border-right:1px solid #D4D4D8;">Timeline</div>
@@ -1256,11 +1256,19 @@
     </div>
 
     <!-- Phase 6 — Airflow -->
-    <div style="display:grid;grid-template-columns:90px 160px 1fr 140px;min-width:780px;">
+    <div style="display:grid;grid-template-columns:90px 160px 1fr 140px;border-bottom:1px solid #E4E4E7;min-width:780px;">
       <div style="padding:.875rem 1rem;font-family:'JetBrains Mono',monospace;font-size:.75rem;font-weight:800;color:#00B140;border-right:1px solid #E4E4E7;display:flex;align-items:center;">Day 24</div>
       <div style="padding:.875rem 1rem;font-weight:700;font-size:.85rem;border-right:1px solid #E4E4E7;display:flex;align-items:center;">Orchestration — Airflow batch DAGs</div>
       <div style="padding:.875rem 1rem;color:#595959;font-size:.8rem;line-height:1.55;border-right:1px solid #E4E4E7;">Orchestrate the batch layer with Airflow (LocalExecutor, isolated metadata): scheduled DAGs to reconcile late events, roll up Gold KPI tables, and track run history. Infrastructure is up; the DAGs are being built.</div>
       <div style="padding:.875rem 1rem;display:flex;align-items:center;justify-content:center;"><a href="https://github.com/bh00t/travellens/blob/main/docs/phase-6-airflow.md" target="_blank" rel="noopener" class="phase-btn" style="text-decoration:none;">View Guide &#8599;</a></div>
+    </div>
+
+    <!-- Phase 7 — Pipeline Monitor -->
+    <div style="display:grid;grid-template-columns:90px 160px 1fr 140px;min-width:780px;">
+      <div style="padding:.875rem 1rem;font-family:'JetBrains Mono',monospace;font-size:.75rem;font-weight:800;color:#00B140;border-right:1px solid #E4E4E7;display:flex;align-items:center;">Day 26</div>
+      <div style="padding:.875rem 1rem;font-weight:700;font-size:.85rem;border-right:1px solid #E4E4E7;display:flex;align-items:center;">Pipeline Monitor — operational dashboard</div>
+      <div style="padding:.875rem 1rem;color:#595959;font-size:.8rem;line-height:1.55;border-right:1px solid #E4E4E7;">An operational <code style="font-family:'JetBrains Mono',monospace;font-size:.92em;background:#F4F4F5;border:1px solid #D4D4D8;padding:1px 4px;">/monitor</code> view answering "is the pipeline processing data correctly?" — stream activity, review-embedding coverage, and pipeline health (Airflow, quarantine, freshness), with date + city filters. Every external dependency is guarded, so the page renders even when one is down. Shipped.</div>
+      <div style="padding:.875rem 1rem;display:flex;align-items:center;justify-content:center;"><a href="https://github.com/bh00t/travellens/blob/main/docs/phase-7-monitor.md" target="_blank" rel="noopener" class="phase-btn" style="text-decoration:none;">View Guide &#8599;</a></div>
     </div>
 
   </div>

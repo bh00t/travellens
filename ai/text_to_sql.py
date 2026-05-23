@@ -334,3 +334,79 @@ def run(user_query: str) -> dict:
             log.error("Retry also failed: %s", retry_error)
 
     return result
+
+
+# ── Frozen-SQL execution path (B-022) ─────────────────────────────────────────
+# Once a widget is pinned, its SQL is frozen on dashboard_widgets.generated_sql.
+# Every refresh runs THIS SQL — never re-prompts Ollama. Eliminates the SQL
+# drift between refreshes that Ollama's non-determinism would otherwise cause,
+# and removes ~2-3s of LLM latency per refresh.
+#
+# Freezing the SQL text does NOT freeze dates inside the SQL — CURRENT_DATE,
+# CURRENT_TIMESTAMP, and date_id lookups against now() re-evaluate each run,
+# so "current month" widgets still auto-update correctly.
+
+def run_stored_sql(sql: str, user_query: str = "") -> dict:
+    """
+    Execute a previously-frozen SQL string. No Ollama call, no retry loop.
+
+    Used by the dashboard refresh path (B-022) — the SQL was generated and
+    validated once at pin time and stored on dashboard_widgets.generated_sql.
+    Every subsequent refresh just re-runs it.
+
+    Args:
+        sql:        The frozen SQL string from dashboard_widgets.generated_sql.
+        user_query: The original natural-language prompt — copied into the
+                    result dict for the renderer's debug/title use. Optional.
+
+    Returns the same shape as run() so widget_renderer.build_widget_config()
+    works on either result interchangeably:
+    {
+        "path":      "sql",
+        "query":     <original user question>,
+        "sql":       <the frozen SQL — unchanged>,
+        "columns":   [<column name strings>],
+        "rows":      [<result tuples, max 100>],
+        "retried":   False        — never retries on this path
+        "error":     None         — or error message string on failure
+    }
+
+    Why no retry on this path:
+        The SQL was validated and successfully executed at pin time. If it
+        fails now, the schema has changed underneath it — retrying with the
+        same SQL won't help. The user can use "regenerate SQL" in the widget
+        settings (a future B-022 follow-up) to re-author the query.
+    """
+    result = {
+        "path":    "sql",
+        "query":   user_query,
+        "sql":     sql,
+        "columns": [],
+        "rows":    [],
+        "retried": False,
+        "error":   None,
+    }
+
+    # Re-validate even though the SQL was validated at pin time. The cache
+    # column is just a TEXT field; cheap to verify it is still SELECT-only.
+    try:
+        validated = _validate_sql(sql)
+    except ValueError as e:
+        result["error"] = str(e)
+        return result
+
+    try:
+        columns, rows     = _execute(validated)
+        result["columns"] = columns
+        result["rows"]    = rows
+        log.info(
+            "Stored SQL returned %d rows (no Ollama call)", len(rows)
+        )
+    except Exception as e:
+        # Schema drift, permission change, etc. — return the error rather
+        # than retrying. The widget settings UI exposes "regenerate SQL"
+        # for the rare case where re-authoring is wanted.
+        result["error"] = f"Stored SQL execution failed: {e}\nSQL: {sql}"
+        log.error("Stored SQL execution failed: %s", e)
+
+    return result

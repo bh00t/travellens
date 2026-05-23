@@ -45,7 +45,20 @@
       "PowerShell(docker exec travellens-minio *)",
       "Bash(python3 -m json.tool)",
       "PowerShell(Rename-Item *)",
-      "PowerShell(Start-Process \"C:\\\\Users\\\\risha\\\\Desktop\\\\Code\\\\repo\\\\travellens\\\\index.html\"; Write-Host \"index.html opened in default browser\")"
+      "PowerShell(Start-Process \"C:\\\\Users\\\\risha\\\\Desktop\\\\Code\\\\repo\\\\travellens\\\\index.html\"; Write-Host \"index.html opened in default browser\")",
+      "PowerShell(python -m render.server)",
+      "Bash(curl -fs http://localhost:5000/dashboard)",
+      "Bash(until curl *)",
+      "Bash(awk '/async function refreshWidget/,/^  }/' /tmp/dash.html)",
+      "Bash(grep -o '<pre class=\"widget-sql hidden\" id=\"sql-block-8\"><code>.\\\\{100,300\\\\}' /tmp/dash.html)",
+      "Bash(awk '/function openSqlModal/,/^  }$/' /tmp/dash.html)",
+      "Bash(curl -fs -o /tmp/dash.html -w \"HTTP %{http_code}\\\\n\" http://localhost:5000/dashboard)",
+      "Bash(awk '/id=\"settings-8\"/,/<\\\\/div>/' /tmp/dash.html)",
+      "Bash(xargs -I{} sed -n '{},+30p' /tmp/dash.html)",
+      "Bash(xargs -I{} sed -n '{},+45p' /tmp/dash.html)",
+      "Bash(curl -s -w \"\\\\nHTTP %{http_code}\\\\n\" -X POST -H \"Content-Type: application/json\" -d '{\"title\":\"\"}' http://localhost:5000/api/widget/8/settings)",
+      "Bash(curl -s -w '\\\\nHTTP %{http_code}\\\\n' -X POST -H 'Content-Type: application/json' -d '{\"title\":\"__TRACKED_VAR__\"}' http://localhost:5000/api/widget/8/settings)",
+      "Bash(dir docs *)"
     ]
   }
 }

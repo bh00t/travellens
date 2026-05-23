@@ -129,37 +129,72 @@ def _search_reviews(conn, query_vec: list, city: str | None) -> list[dict]:
     When city is None:
         Searches all 30K reviews globally — no city filter.
 
+    Deduplication (B-006):
+        The Kaggle source contains duplicate review texts (the same line of
+        text appears against multiple hotel_ids). Without dedup the TOP_K
+        rows can be 5 copies of the same review at identical similarity,
+        which fills the Ollama summary input with one repeated voice.
+
+        We wrap the search in DISTINCT ON (review_text). Postgres requires
+        the DISTINCT ON expression to lead the ORDER BY of the SAME query
+        level, so the inner subquery orders by (review_text, distance) —
+        that picks the SMALLEST-distance row per unique review_text. The
+        outer query then re-orders the survivors by distance and caps at
+        TOP_K so the LIMIT applies to deduped rows, not the raw set.
+
+        WHERE embedding IS NOT NULL is a safety filter — Phase 3 backfilled
+        all rows, but the guard prevents a NULL embedding from ever
+        sneaking past as cosine distance against NULL would be undefined.
+
     Returns a list of dicts, one per review.
     """
     if city:
-        # City-scoped search — filter by hotel location
+        # City-scoped search — filter by hotel location.
+        # Two-layer query: inner picks one row per unique review_text (the
+        # one with smallest cosine distance), outer ranks the survivors.
         sql = """
-            SELECT
-                r.hotel_id,
-                r.rating,
-                ROUND((1 - (r.embedding <=> %s::vector))::numeric, 4) AS similarity,
-                r.review_text
-            FROM reviews_raw r
-            JOIN hotel_master h ON r.hotel_id   = h.hotel_id
-            JOIN dim_location l ON h.location_id = l.location_id
-            WHERE LOWER(l.city) = %s
-            ORDER BY r.embedding <=> %s::vector
+            SELECT hotel_id,
+                   rating,
+                   ROUND((1 - distance)::numeric, 4) AS similarity,
+                   review_text
+            FROM (
+                SELECT DISTINCT ON (r.review_text)
+                       r.hotel_id,
+                       r.rating,
+                       r.review_text,
+                       r.embedding <=> %s::vector AS distance
+                FROM reviews_raw r
+                JOIN hotel_master h ON r.hotel_id    = h.hotel_id
+                JOIN dim_location l ON h.location_id = l.location_id
+                WHERE r.embedding IS NOT NULL
+                  AND LOWER(l.city) = %s
+                ORDER BY r.review_text, distance
+            ) deduped
+            ORDER BY distance
             LIMIT %s
         """
-        params = [query_vec, city, query_vec, TOP_K]
+        params = [query_vec, city, TOP_K]
     else:
-        # Global search — no city filter
+        # Global search — no city filter. Same two-layer pattern as above.
         sql = """
-            SELECT
-                r.hotel_id,
-                r.rating,
-                ROUND((1 - (r.embedding <=> %s::vector))::numeric, 4) AS similarity,
-                r.review_text
-            FROM reviews_raw r
-            ORDER BY r.embedding <=> %s::vector
+            SELECT hotel_id,
+                   rating,
+                   ROUND((1 - distance)::numeric, 4) AS similarity,
+                   review_text
+            FROM (
+                SELECT DISTINCT ON (r.review_text)
+                       r.hotel_id,
+                       r.rating,
+                       r.review_text,
+                       r.embedding <=> %s::vector AS distance
+                FROM reviews_raw r
+                WHERE r.embedding IS NOT NULL
+                ORDER BY r.review_text, distance
+            ) deduped
+            ORDER BY distance
             LIMIT %s
         """
-        params = [query_vec, query_vec, TOP_K]
+        params = [query_vec, TOP_K]
 
     with conn.cursor() as cur:
         cur.execute(sql, params)

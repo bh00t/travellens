@@ -167,6 +167,200 @@
   }
   .settings-select:focus { border-color: var(--green); }
 
+  /* ── Rename row (input + Save button) ────────────────────────────────────── */
+  /* Lives at the very top of the popover so it reads as the headline action.
+     Flex row: input fills the remaining width, Save button stays compact on
+     the right. The input is styled to match .settings-select so the popover
+     reads as a consistent block of controls. */
+  .settings-rename-row {
+    display: flex;
+    gap: .4rem;
+    align-items: center;
+    padding: .4rem 0;
+  }
+  .settings-input {
+    flex: 1;
+    /* min-width:0 lets flexbox shrink the input below its natural content
+       size — without this, long titles stretch the input off the popover. */
+    min-width: 0;
+    border: 1px solid var(--gray-200);
+    border-radius: 4px;
+    padding: .25rem .5rem;
+    font-family: inherit;
+    font-size: .73rem;
+    background: var(--white);
+    color: var(--gray-900);
+    outline: none;
+    transition: border-color .12s;
+  }
+  .settings-input:focus { border-color: var(--green); }
+  /* Compact Save button — matches the visual weight of .settings-select so
+     the input + button reads as one cohesive control. */
+  .btn-rename-save {
+    flex-shrink: 0;
+    font-family: var(--font-mono);
+    font-size: .63rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    padding: .3rem .55rem;
+    color: var(--gray-900);
+    background: var(--white);
+    border: 1px solid var(--gray-200);
+    border-radius: 4px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background .12s, border-color .12s;
+  }
+  .btn-rename-save:hover {
+    background: var(--gray-50);
+    border-color: var(--gray-500);
+  }
+
+  /* ── Show SQL toggle button (read-only display) ──────────────────────────── */
+  /* Sits at the bottom of the settings popover. Neutral styling — this is a
+     non-mutating, read-only action so it should NOT look dangerous. Full-width
+     so it reads as a separate row below the two dropdowns above. */
+  .btn-show-sql {
+    display: block;
+    width: 100%;
+    margin-top: .5rem;
+    padding: .4rem .5rem;
+    font-family: var(--font-mono);
+    font-size: .68rem;
+    font-weight: 700;
+    text-align: center;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    color: var(--gray-900);
+    background: transparent;
+    border: 1px solid var(--gray-200);
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background .12s, border-color .12s;
+  }
+  .btn-show-sql:hover {
+    background: var(--gray-50);
+    border-color: var(--gray-500);
+  }
+  /* ── Hidden per-widget SQL data store ────────────────────────────────────── */
+  /* The frozen SQL string is embedded once per widget at server-render time
+     inside a <pre class="sql-data"> element. It is NEVER visible — it exists
+     only so the shared modal's JS can read .textContent for that widget on
+     demand without making any HTTP request. Keeping it as a <pre> (rather
+     than a data-* attribute) preserves whitespace and newlines exactly. */
+  .sql-data { display: none; }
+
+  /* ── Shared SQL modal (one instance for the whole page) ──────────────────── */
+  /* Built as an OVERLAY so it never resizes the widget card it relates to —
+     the card and grid stay byte-identical whether the modal is open or shut.
+     The outer .sql-modal is the full-viewport dimmed backdrop; the inner
+     .sql-modal-content is the centred white card. */
+  .sql-modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, .55);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    padding: 1rem;
+  }
+  /* HTML5 [hidden] is overridden by display:flex above, so explicitly hide. */
+  .sql-modal[hidden] { display: none; }
+
+  .sql-modal-content {
+    background: var(--white);
+    border-radius: 8px;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, .3);
+    width: 100%;
+    max-width: 640px;          /* responsive: fills the viewport on small screens */
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;          /* keeps the rounded corners crisp on the header */
+  }
+
+  /* Header row inside the modal: title left, Copy centre-ish, ✕ far right. */
+  .sql-modal-header {
+    display: flex;
+    align-items: center;
+    gap: .75rem;
+    padding: .65rem 1rem;
+    border-bottom: 1px solid var(--gray-200);
+    background: var(--gray-50);
+  }
+  .sql-modal-title {
+    font-family: var(--font-mono);
+    font-size: .7rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: var(--gray-900);
+    flex: 1;                  /* push Copy and ✕ to the right */
+  }
+  .sql-modal-copy {
+    font-family: var(--font-mono);
+    font-size: .65rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    padding: .3rem .7rem;
+    color: var(--gray-900);
+    background: var(--white);
+    border: 1px solid var(--gray-200);
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background .12s, border-color .12s;
+  }
+  .sql-modal-copy:hover {
+    background: var(--gray-50);
+    border-color: var(--gray-500);
+  }
+  /* Brief confirmation state after a successful clipboard write */
+  .sql-modal-copy.copied {
+    background: var(--green);
+    color: var(--white);
+    border-color: var(--green);
+  }
+  .sql-modal-close {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    font-size: 1.1rem;
+    line-height: 1;
+    color: var(--gray-500);
+    padding: 0 .35rem;
+  }
+  .sql-modal-close:hover { color: var(--gray-900); }
+
+  /* Body — wraps the <pre> so the dark code box has a small inset from the
+     white modal walls and its 4px corners stay visible. */
+  .sql-modal-body {
+    padding: 1rem;
+    background: var(--white);
+  }
+  .sql-modal-pre {
+    margin: 0;
+    padding: 1rem;
+    background: #1a1a1a;
+    color: var(--green);
+    font-family: var(--font-mono);
+    font-size: .78rem;
+    line-height: 1.5;
+    border-radius: 4px;
+    overflow-x: auto;
+    overflow-y: auto;
+    max-height: 60vh;          /* vertical scroll for long SQL */
+    white-space: pre;          /* preserve newlines, do not word-wrap */
+  }
+  .sql-modal-pre code {
+    /* Reset default <code> styles so the parent <pre> rules win cleanly */
+    font-family: inherit;
+    background: transparent;
+    color: inherit;
+    padding: 0;
+  }
+
   /* Widget body — minimum height so empty/loading states don't collapse card */
   .widget-body { padding: 1rem; min-height: 140px; }
 
@@ -330,14 +524,23 @@
   <div class="widget-grid" id="widgetGrid">
     {% for w in widgets %}
     <!--
-      data-widget-id  — used by JS to call /api/refresh/<id> and /api/widget/<id>
+      data-widget-id        — used by JS to call /api/refresh/<id> and /api/widget/<id>
       data-refresh-interval — minutes between auto-refresh (0 = page load only)
+      data-cached           — "true" if last_result_json is populated for this widget
+      data-stale            — "true" if the cache is missing or older than the interval
+
+      B-022 read-path contract:
+        cached + !stale → loadWidget() renders from the embedded JSON below.
+                          No network call. Sub-millisecond render.
+        stale            → loadWidget() falls back to POST /api/refresh.
     -->
     <div class="widget-card{% if w.width == 'full' %} full-width{% endif %}"
          id="widget-{{ w.widget_id }}"
          data-widget-id="{{ w.widget_id }}"
          data-refresh-interval="{{ w.refresh_interval_minutes }}"
-         data-width="{{ w.width }}">
+         data-width="{{ w.width }}"
+         data-cached="{{ 'true' if w.cached_config else 'false' }}"
+         data-stale="{{ 'true' if w.is_stale else 'false' }}">
 
       <div class="widget-header">
         <div>
@@ -366,6 +569,29 @@
       <div class="widget-settings" id="settings-{{ w.widget_id }}"
            style="display:none;" onclick="event.stopPropagation()">
         <div class="settings-popover-title">Widget settings</div>
+
+        <!--
+          Rename row — pre-filled with the widget's current title.
+          Enter inside the input triggers a save; the explicit Save button
+          on the right does the same. We do NOT save on blur to avoid a
+          double-save when the user clicks the Save button (clicking the
+          button blurs the input). maxlength matches the VARCHAR(200)
+          schema limit so the browser refuses overlong input before the
+          server has to.
+        -->
+        <div class="settings-rename-row">
+          <input type="text"
+                 class="settings-input"
+                 id="rename-input-{{ w.widget_id }}"
+                 value="{{ w.title }}"
+                 maxlength="200"
+                 placeholder="Widget title"
+                 onkeydown="if (event.key === 'Enter') renameWidget({{ w.widget_id }})">
+          <button class="btn-rename-save"
+                  onclick="renameWidget({{ w.widget_id }})"
+                  title="Save the new title">Save</button>
+        </div>
+
         <div class="settings-row">
           <span class="settings-label">Auto-refresh</span>
           <select class="settings-select"
@@ -386,14 +612,70 @@
             <option value="full"   {% if w.width == 'full' %}selected{% endif %}>Full row</option>
           </select>
         </div>
+
+        {% if w.has_sql %}
+        <!--
+          Show SQL — opens the shared modal overlay (defined once at the
+          bottom of this page). The frozen SQL is already embedded in the
+          page inside the hidden .sql-data block below the widget body, so
+          opening the modal is a pure DOM read — no network call.
+          Only rendered when has_sql is true; semantic widgets have no SQL.
+        -->
+        <button class="btn-show-sql"
+                id="sql-btn-{{ w.widget_id }}"
+                onclick="openSqlModal({{ w.widget_id }})"
+                title="Show the frozen SQL for this widget">
+          Show SQL
+        </button>
+        {% endif %}
       </div>
 
-      <!-- Body starts as a spinner — JS fills it via /api/refresh -->
+      <!-- Body starts as a spinner — JS fills it via cache or /api/refresh -->
       <div class="widget-body" id="body-{{ w.widget_id }}">
         <div class="widget-loading">
           <span class="spinner"></span> Loading...
         </div>
       </div>
+
+      {% if w.has_sql %}
+      <!--
+        Hidden per-widget SQL data store. Always display:none — the user
+        never sees this directly. The shared modal's openSqlModal() reads
+        .textContent off this element to populate its body, which keeps
+        every widget's SQL pre-rendered in the page (no fetch on click)
+        without affecting the widget card's layout.
+
+        Content layout (so the modal AND a Copy-to-clipboard land valid SQL):
+
+            -- Prompt: <the original natural-language question>
+            -- Pinned: <human-readable pin timestamp>
+            <blank line — separates header from code>
+            <the frozen SQL>
+
+        The two leading lines use SQL line-comment syntax (--), so the
+        ENTIRE block is valid SQL — pasting it into psql, DBeaver, or any
+        client runs the query and shows the prompt/date as comments.
+
+        We embed the prompt verbatim. Realistic prompts are single-line
+        questions from the Explorer search box; in the unlikely case a
+        prompt contains a newline, only the first line would remain a
+        comment — that's the user's edit to make, not the dashboard's.
+
+        Jinja2 autoescapes {{ w.prompt }} and {{ w.sql }} → safe to
+        interpolate. Reading .textContent later un-escapes back to the
+        original text. Read-only data store: no edit, no save, no form.
+      -->
+      <pre class="sql-data" id="sql-data-{{ w.widget_id }}">-- Prompt: {{ w.prompt }}
+-- Pinned: {{ w.pinned_at }}
+
+{{ w.sql }}</pre>
+      {% endif %}
+
+      {% if w.cached_config %}
+      <!-- B-022 server-side cache embedded inline. loadWidget() reads this
+           and renders without any network call when the widget is fresh. -->
+      <script type="application/json" id="cached-{{ w.widget_id }}">{{ w.cached_config | tojson }}</script>
+      {% endif %}
 
     </div>
     {% endfor %}
@@ -408,6 +690,42 @@
     <a href="/explore" class="btn btn-primary">Open Explorer</a>
   </div>
   {% endif %}
+
+  <!--
+    ── Shared SQL modal ────────────────────────────────────────────────────
+    ONE instance per page. openSqlModal(id) reads the SQL from the matching
+    .sql-data <pre> and writes it into #sql-modal-body, then removes the
+    [hidden] attribute. Backdrop click (the outer .sql-modal element) and
+    the ✕ button both call closeSqlModal(); Esc is bound globally in JS.
+
+    The widget grid above is unaffected — the modal is position:fixed and
+    sits on its own stacking context (z-index 1000), so showing or hiding
+    it never changes the size of any widget card or causes reflow.
+  -->
+  <div id="sql-modal"
+       class="sql-modal"
+       hidden
+       onclick="if (event.target === this) closeSqlModal()"
+       aria-modal="true"
+       role="dialog">
+    <div class="sql-modal-content">
+      <div class="sql-modal-header">
+        <span class="sql-modal-title">SQL</span>
+        <button id="sql-copy-btn"
+                class="sql-modal-copy"
+                onclick="copySql()"
+                title="Copy SQL to clipboard">Copy</button>
+        <button class="sql-modal-close"
+                onclick="closeSqlModal()"
+                aria-label="Close SQL modal">&#x2715;</button>
+      </div>
+      <div class="sql-modal-body">
+        <!-- The <pre><code> here is populated each time the modal opens.
+             Stays empty in the DOM until the first openSqlModal() call. -->
+        <pre class="sql-modal-pre"><code id="sql-modal-body"></code></pre>
+      </div>
+    </div>
+  </div>
 
 </div>
 {% endblock %}
@@ -508,11 +826,106 @@
   }
 
   /**
+   * openSqlModal — populate and show the shared SQL modal.
+   *
+   * Pure DOM read — the SQL string for `widgetId` is already embedded in the
+   * page inside a hidden <pre class="sql-data" id="sql-data-{id}"> element.
+   * We read its .textContent and write it into the modal's <code> body.
+   * NO fetch, NO XHR, NO /api/* call (acceptance test #5).
+   *
+   * The widget card and grid are not touched in any way — the modal is
+   * position:fixed and lives in its own stacking context, so the card
+   * keeps its exact size and the grid does not reflow (acceptance #1).
+   */
+  function openSqlModal(widgetId) {
+    const dataEl = document.getElementById('sql-data-'  + widgetId);
+    const bodyEl = document.getElementById('sql-modal-body');
+    const modal  = document.getElementById('sql-modal');
+    if (!dataEl || !bodyEl || !modal) return;
+
+    // .textContent (not innerHTML) — the SQL is plain text, never HTML.
+    // This also undoes Jinja's HTML autoescape so the user sees the
+    // SQL in its original form (e.g. < and > inside string literals).
+    bodyEl.textContent = dataEl.textContent;
+
+    // Reset the Copy button to its default state every time we open,
+    // so a previous "Copied" flash from another widget doesn't leak.
+    const copyBtn = document.getElementById('sql-copy-btn');
+    if (copyBtn) {
+      copyBtn.textContent = 'Copy';
+      copyBtn.classList.remove('copied');
+    }
+
+    modal.hidden = false;
+  }
+
+  /**
+   * closeSqlModal — hide the shared modal.
+   * Called by the ✕ button, the backdrop click handler, and the Esc key.
+   */
+  function closeSqlModal() {
+    const modal = document.getElementById('sql-modal');
+    if (modal) modal.hidden = true;
+  }
+
+  /**
+   * copySql — copy the SQL in the open modal to the OS clipboard.
+   *
+   * Uses navigator.clipboard.writeText (modern, async, secure-context
+   * required). On success the Copy button flips to "Copied" for ~1.5s
+   * then flips back. On failure (older browser, insecure context) it
+   * briefly shows "Copy failed" so the user knows nothing landed in
+   * their clipboard.
+   */
+  async function copySql() {
+    const bodyEl = document.getElementById('sql-modal-body');
+    const btn    = document.getElementById('sql-copy-btn');
+    if (!bodyEl || !btn) return;
+
+    const original = 'Copy';
+    try {
+      await navigator.clipboard.writeText(bodyEl.textContent);
+      btn.textContent = 'Copied';
+      btn.classList.add('copied');
+    } catch (err) {
+      btn.textContent = 'Copy failed';
+    }
+    // Restore the button to its default label after a short confirmation
+    // window, regardless of success/failure. 1.5s matches typical UI
+    // copy-confirmation timings (long enough to read, short enough to
+    // not block the user from copying again immediately after).
+    setTimeout(() => {
+      btn.textContent = original;
+      btn.classList.remove('copied');
+    }, 1500);
+  }
+
+  /**
+   * Global Esc key handler — closes the modal if it is open.
+   * Attached once at script-eval time, not per modal-open, so we don't
+   * leak listeners. Cheap: a single keydown event hits one if-check.
+   */
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    const modal = document.getElementById('sql-modal');
+    if (modal && !modal.hidden) closeSqlModal();
+  });
+
+  /**
    * refreshWidget — re-fetch data for one widget via POST /api/refresh/<id>.
    * Shows spinner during fetch, then calls renderWidget with the result.
    * Updates "Last refreshed" timestamp on success.
+   *
+   * @param {number}  widgetId  The widget ID to refresh.
+   * @param {boolean} [force]   Informational hint that the caller knows the
+   *                            cache is invalid. Doesn't change the request
+   *                            — /api/refresh already inspects its own cache
+   *                            server-side — but lets future callers signal
+   *                            intent without breaking existing call sites.
    */
-  async function refreshWidget(widgetId) {
+  async function refreshWidget(widgetId, force = false) {
+    // (Earlier inline-SQL-block reset removed — the SQL viewer is now a
+    // page-level modal, independent of any single widget's refresh cycle.)
     const bodyEl = document.getElementById('body-' + widgetId);
     bodyEl.innerHTML = `
       <div class="widget-loading">
@@ -618,6 +1031,74 @@
   }
 
   /**
+   * renameWidget — rename a pinned widget via the partial-update settings API.
+   *
+   * UX contract:
+   *   - Reads the popover's rename input, trims whitespace.
+   *   - Empty title is rejected client-side with a toast (no network call).
+   *     The server enforces the same rule, but failing fast spares a round
+   *     trip and gives an instantly visible error.
+   *   - On success: update the .widget-title text in the card header in
+   *     place (no full page reload), close the popover, confirm with a
+   *     "Renamed" toast.
+   *   - On server error (4xx/5xx): surface the server's error text in a
+   *     toast so 422 messages like "title too long" reach the user.
+   *
+   * Triggered by:
+   *   - The Save button next to the rename input (onclick)
+   *   - Pressing Enter inside the input (onkeydown handler in the template)
+   *   We deliberately do NOT save on blur — clicking the Save button blurs
+   *   the input, which would otherwise fire two saves for one click.
+   */
+  async function renameWidget(widgetId) {
+    const input = document.getElementById('rename-input-' + widgetId);
+    if (!input) return;
+
+    // Trim — a title of only spaces is the same as empty from the user's
+    // perspective, and matches the server-side .strip() behaviour.
+    const newTitle = input.value.trim();
+
+    if (!newTitle) {
+      showToast('Title cannot be empty', 'error');
+      return;
+    }
+
+    try {
+      const resp = await fetch('/api/widget/' + widgetId + '/settings', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ title: newTitle })
+      });
+      const data = await resp.json();
+
+      if (!resp.ok) {
+        // Surface the server's specific error (e.g. "title too long") so
+        // the user can act on it rather than retrying blindly.
+        showToast(data.error || 'Failed to rename', 'error');
+        return;
+      }
+
+      // Live update: rewrite the card header's title without a page reload.
+      // querySelector scoped to this widget's card so titles don't get
+      // mixed up across widgets that happen to share text.
+      const card = document.getElementById('widget-' + widgetId);
+      if (card) {
+        const titleEl = card.querySelector('.widget-title');
+        if (titleEl) titleEl.textContent = newTitle;
+      }
+
+      // Close the popover — the rename is the most prominent action in
+      // there, so closing on success gives clear "done" feedback.
+      const panel = document.getElementById('settings-' + widgetId);
+      if (panel) panel.style.display = 'none';
+
+      showToast('Renamed', 'success');
+    } catch (err) {
+      showToast('Network error: ' + err.message, 'error');
+    }
+  }
+
+  /**
    * refreshAll — refresh every widget on the dashboard in sequence.
    * Disables the button and shows progress while running.
    */
@@ -658,8 +1139,43 @@
   }
 
   /**
+   * loadWidget — cache-aware page-load handler (B-022).
+   *
+   * If the server marked this widget as cached AND not stale, parse the
+   * inline JSON cached config and render it instantly. No network call.
+   * This is what makes dashboard tab-switching feel instant — flipping
+   * between /about and /dashboard no longer pays Ollama latency.
+   *
+   * Otherwise, fall back to refreshWidget() which goes through the cache-
+   * aware /api/refresh endpoint (cache hit, frozen SQL, or full recompute).
+   */
+  function loadWidget(card) {
+    const id     = parseInt(card.dataset.widgetId);
+    const cached = card.dataset.cached === 'true';
+    const stale  = card.dataset.stale  === 'true';
+    const bodyEl = document.getElementById('body-' + id);
+
+    if (cached && !stale) {
+      const node = document.getElementById('cached-' + id);
+      if (node) {
+        try {
+          const config = JSON.parse(node.textContent);
+          renderWidget(bodyEl, config);
+          return;
+        } catch (err) {
+          // Fall through to refresh if the embedded JSON is malformed
+          console.warn('Bad cached config for widget', id, err);
+        }
+      }
+    }
+
+    // No cache, stale cache, or parse failure → fetch fresh
+    refreshWidget(id);
+  }
+
+  /**
    * On page load:
-   *   1. Refresh every widget card immediately
+   *   1. Render each widget from cache if fresh, else fetch via refreshWidget
    *   2. Set up setInterval for widgets with refresh_interval_minutes > 0
    *   3. Make the grid sortable (drag-and-drop reordering)
    */
@@ -668,10 +1184,12 @@
       const id       = parseInt(card.dataset.widgetId);
       const interval = parseInt(card.dataset.refreshInterval) || 0;
 
-      // Immediate refresh on page load
-      refreshWidget(id);
+      // Cache-aware load — instant render when cache is fresh
+      loadWidget(card);
 
-      // Scheduled refresh for widgets with an interval set
+      // Scheduled refresh for widgets with an interval set. /api/refresh
+      // itself honours the cache, so a tick that arrives mid-window is
+      // effectively free; a tick past the window triggers compute.
       if (interval > 0) {
         setInterval(() => refreshWidget(id), interval * 60 * 1000);
       }

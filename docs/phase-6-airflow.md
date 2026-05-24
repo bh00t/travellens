@@ -25,8 +25,8 @@ travellens/
 │   └── requirements-airflow.txt      ← CREATE (provider manifest, container-only)
 ├── db/
 │   └── migrations/
-│       ├── 006_hotel_sentiment_scores.sql ← CREATE (target table for B-015)
-│       └── 007_customer_ltv.sql           ← CREATE (target table for B-016)
+│       ├── 008_hotel_sentiment_scores.sql ← CREATE (target table for B-015)
+│       └── 009_customer_ltv.sql           ← CREATE (target table for B-016)
 ├── docs/
 │   └── phase-6-airflow.md            ← this file
 ├── requirements.txt                  ← LEAVE ALONE (sqlalchemy stays at 2.0.x)
@@ -469,7 +469,7 @@ docker exec travellens-minio mc ls local/travellens-data/late_events/ | grep -v 
 
 Two weekly DAGs that build Gold-layer aggregates other tooling can
 query without paying the underlying compute cost on each request.
-Both write to new tables created by migrations `006` and `007`.
+Both write to new tables created by migrations `008` and `009`.
 
 #### B-015 — `hotel_sentiment_scores`
 
@@ -479,7 +479,7 @@ Both write to new tables created by migrations `006` and `007`.
 | `catchup`         | `False` — recomputed in full each week |
 | `max_active_runs` | `1` |
 | Source tables     | `reviews_raw` (with `embedding`), `hotel_master` |
-| Target            | `hotel_sentiment_scores` (new Gold table, migration 006) |
+| Target            | `hotel_sentiment_scores` (new Gold table, migration 008) |
 | Connection        | `travellens_warehouse` |
 
 **Computation** — per `hotel_id`:
@@ -514,7 +514,7 @@ ORDER BY sentiment_score DESC LIMIT 10;
 | `catchup`         | `False` — recomputed in full each week |
 | `max_active_runs` | `1` |
 | Source tables     | `fact_bookings`, `dim_customer` |
-| Target            | `customer_ltv` (new Gold table, migration 007) |
+| Target            | `customer_ltv` (new Gold table, migration 009) |
 | Connection        | `travellens_warehouse` |
 
 **Computation** — per `customer_id`:

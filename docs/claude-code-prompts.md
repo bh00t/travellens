@@ -30,6 +30,8 @@ Make sure these are true once, before Phase 1:
   - `docs/phase-3-embeddings.md`
   - `docs/phase-4-ai-layer.md`
   - `docs/phase-5-dashboard.md`
+  - `docs/phase-6-airflow.md`
+  - `docs/phase-7-monitor.md`
   - `docs/backlog.md`
 
 ---
@@ -266,9 +268,14 @@ test passes. Never modify the acceptance test to make it pass — that defeats t
 
 ## File map
 
+> Canonical layout lives in root `CLAUDE.md`. This is a phase-prompt-oriented
+> snapshot — keep paths here in sync with `CLAUDE.md` and `db/migrations/`.
+
 ```
 travellens/
 ├── CLAUDE.md                        ← Claude Code reads this automatically every session
+├── README.md                        ← portfolio front door
+├── run.py                           ← dev launcher: docker + 3 host procs; --no-sim / --server-only / --window N
 ├── docs/
 │   ├── phase-0-setup.md             ← Phase 0 spec (Part A manual + Part B Claude Code)
 │   ├── phase-1-postgres.md          ← Phase 1 spec
@@ -276,7 +283,11 @@ travellens/
 │   ├── phase-3-embeddings.md        ← Phase 3 spec
 │   ├── phase-4-ai-layer.md          ← Phase 4 spec
 │   ├── phase-5-dashboard.md         ← Phase 5 spec
+│   ├── phase-6-airflow.md           ← Phase 6 spec (current — in progress)
+│   ├── phase-7-monitor.md           ← Phase 7 spec (complete — /monitor live pulse)
 │   ├── backlog.md                   ← known issues, future work, LLM comparison plan
+│   ├── capabilities-and-limits.md   ← per-feature reliability reference
+│   ├── session-notes.md             ← short-lived handoff context between sessions
 │   └── claude-code-prompts.md       ← this file
 ├── ai/
 │   ├── __init__.py                  ← required — Python package marker
@@ -294,6 +305,7 @@ travellens/
 │       ├── base.html
 │       ├── dashboard.html
 │       ├── explore.html
+│       ├── monitor.html             ← Phase 7
 │       └── about.html
 ├── scripts/
 │   ├── generate_embeddings.py
@@ -304,15 +316,20 @@ travellens/
 │   ├── kafka_event_producer.py
 │   └── init_s3_buckets.py
 ├── db/
-│   ├── schema.sql
-│   └── migrations/
-│       └── 003_dashboard_widgets.sql
+│   ├── schema.sql                   ← base 14-table star schema (frozen)
+│   └── migrations/                  ← append-only; treat every file here as immutable
+│       ├── 003_dashboard_widgets.sql       ← Phase 5
+│       ├── 004_widget_settings.sql         ← Phase 5
+│       ├── 005_widget_cache.sql            ← Phase 5 (B-022)
+│       ├── 006_hotel_opened_year.sql       ← Phase 5 hardening
+│       └── 007_pipeline_live_metrics.sql   ← Phase 7 (B-032)
 ├── docker/
 │   ├── postgres.Dockerfile
-│   └── docker-compose.yml
+│   └── docker-compose.yml           ← + airflow + airflow-postgres services (Phase 6)
+├── airflow/
+│   ├── dags/                        ← Phase 6 DAGs (B-024/013/014/015/016) — not yet built
+│   └── plugins/
 ├── data/                            ← gitignored — source CSVs + seed JSON
-├── airflow/dags/                    ← Phase 6 (not started)
-├── flink/                           ← Phase 6 (not started)
 └── tests/
 ```
 
@@ -327,5 +344,8 @@ travellens/
 | 2 | Kafka streaming + dual sink | ✓ Complete |
 | 3 | Embeddings + pgvector | ✓ Complete |
 | 4 | AI layer (Text-to-SQL + semantic) | ✓ Complete |
-| 5 | Flask dashboard | ⬜ In progress |
-| 6 | Airflow DAGs | ⬜ Not started |
+| 5 | Flask dashboard | ✓ Complete |
+| 6 | Airflow DAGs | ⬜ In progress — infra/containers up, 5 DAGs not built |
+| 7 | Pipeline monitor (/monitor) | ✓ Complete — B-027 base + B-029 in-place auto-refresh + B-032 live throughput redesign all shipped |
+
+Current phase: **6**. Root `CLAUDE.md` is the canonical source for phase status — this table is a copy for prompt-file convenience.

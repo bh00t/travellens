@@ -87,15 +87,18 @@ Current phase: **6** — Phase 7 shipped (monitor redesign done end-to-end). Rea
 - **Never commit `.env`** — it is gitignored, keep it that way. Confirm with
   `git check-ignore .env` before any commit.
 - **Never modify `data/`** — source files are read-only.
-- **Migrations are append-only** — never edit an existing migration (003, 004, 005, 006, 007).
-  Add a new numbered migration for any schema change.
+- **Migrations are append-only** — never edit any applied migration. The frozen
+  set is whatever already exists in `db/migrations/`; treat every file in that
+  directory as immutable and add a new numbered migration for any schema change.
 - **`schema.sql` is the base; later columns live in migrations.** The frozen
-  `db/schema.sql` captures the original 14-table star schema. Every later structural
-  change (003 dashboard widgets, 004 widget settings, 005 widget cache, 006
-  `hotel_master.opened_year`, 007 `pipeline_metrics` + four extra `agg_hourly_city_stats`
-  count columns) is a numbered migration. The actual current schema is `schema.sql`
-  PLUS every applied migration — both together are the source of truth. Read both
-  before writing anything LLM-facing that depends on a column existing.
+  `db/schema.sql` captures the original 14-table star schema. Every later
+  structural change — new columns, new tables, new indexes — ships as a numbered
+  migration in `db/migrations/`; that directory is the current source of truth
+  for the migration set. The actual current schema is `schema.sql` PLUS every
+  file in `db/migrations/` — both together are the source of truth. Read both
+  before writing anything LLM-facing that depends on a column existing; do not
+  rely on an enumerated list here, because this bullet drifts the moment a new
+  migration lands.
 
 ---
 

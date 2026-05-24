@@ -26,6 +26,76 @@ travellens/
 └── .env                         ← LEAVE ALONE (add Kafka + S3 vars manually)
 ```
 
+---
+
+## POST-ACCEPTANCE HARDENING (logged after Phase 2 shipped)
+
+Phase 2 is acceptance-complete. The two changes below were taken under
+explicit backlog items (B-031, B-032) after `scripts/stream_consumer.py`
+was un-frozen on a scoped exception. Steps / ARCHITECTURE DECISIONS / DO
+NOT below still describe the consumer's **original** shape; the bullets
+here describe what is actually running now. The backlog is the
+authoritative status — see `docs/backlog.md` (B-031, B-032, L-014, L-015,
+L-016).
+
+- **B-031 (resolves L-016):** main loop swapped from the endless
+  `for msg in consumer:` generator to a bounded
+  `consumer.poll(timeout_ms=1000, max_records=INNER_BATCH_MAX)` so the
+  flush check and max-runtime check are guaranteed to run each cycle
+  even under saturating load. Broker eviction defences added
+  (`max_poll_interval_ms=600000`, `session_timeout_ms=30000`,
+  `heartbeat_interval_ms=10000`). `WINDOW_SIZE_MINUTES` and
+  `WATERMARK_GRACE_SECONDS` are now env-overridable (defaults UNCHANGED
+  at 60 / 300) so a small-window dev verification doesn't require
+  editing the source. Production behaviour is byte-for-byte unchanged
+  when no env vars are set.
+
+- **B-032 Chunk 2 (resolves L-014 counting half and resolves L-015):**
+    - **`VALID_EVENT_TYPES` now five:** `BOOKING, CANCELLATION,
+      CHECKIN, CHECKOUT, PRICE_CHANGE`. `PROCESSED_EVENT_TYPES` is now
+      **four** — CHECKIN and CHECKOUT join BOOKING and CANCELLATION
+      past the Gate 3 silent filter. PRICE_CHANGE is still the only
+      valid-but-dropped type.
+    - **Per-type counts on `agg_hourly_city_stats`:** the consumer now
+      writes `total_checkins`, `total_checkouts`, `total_cancellations`
+      (migration 007 columns) alongside the original `total_bookings`
+      and the derived `cancellation_rate` (the ratio is unchanged — the
+      new `total_cancellations` column is the raw count, kept separate
+      so both signals are queryable). `total_reviews` stays NULL —
+      REVIEW is not a stream event today (B-030).
+    - **`pipeline_metrics` heartbeat:** every flush-check tick
+      (`FLUSH_CHECK_SECONDS`, default 10s) the consumer writes ONE row
+      to the `pipeline_metrics` table (cumulative `events_consumed`,
+      `bookings`, `cancellations`, `malformed`, `late`, plus
+      `active_windows = len(state)`, `max_event_ts`, `consumer_lag`
+      reserved NULL). The INSERT is wrapped in its OWN try/except — a
+      heartbeat failure logs to stderr and is swallowed; it can never
+      crash the loop. Events/sec is derived in the read path as the
+      delta between consecutive heartbeat rows, not stored.
+
+- **B-032 Chunk 3 (producer — completes the CHECKOUT lifecycle):**
+  `scripts/kafka_event_producer.py` now emits `CHECKOUT` events. The
+  `EVENT_TYPES` array is `["BOOKING", "CHECKIN", "CHECKOUT",
+  "CANCELLATION", "PRICE_CHANGE"]` with weights `[0.55, 0.18, 0.12,
+  0.10, 0.05]` (sums to exactly 1.0). `make_event` carries only the
+  base envelope (`event_id, event_type, hotel_id, city, event_ts`)
+  for CHECKOUT — same shape as CHECKIN/CANCELLATION, no extra
+  type-specific fields. The full counted lifecycle is now
+  `BOOKING → CHECKIN → CHECKOUT → CANCELLATION`; `PRICE_CHANGE` is
+  still emitted but still silently dropped at consumer Gate 3.
+  Verified with a 120s @ 50 evt/s run: `total_checkouts > 0` on every
+  recent window; consumer reports `Malformed dropped: 0` (CHECKOUT is
+  accepted, not quarantined as unknown_event_type — proves the Chunk 2
+  allow-list ordering was right); aggregate mix across the run matches
+  the design weights within ~1pp.
+
+These items are why `scripts/stream_consumer.py` and
+`scripts/kafka_event_producer.py` are no longer in the "frozen — never
+modify" list. Any further consumer or producer changes still need a
+named backlog item.
+
+---
+
 ## OBJECTIVE
 
 Build a pure-Python Kafka consumer that reads booking events, validates them through a

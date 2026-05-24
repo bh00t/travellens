@@ -71,7 +71,7 @@ docker compose --env-file ../.env up -d
 
 # 2. Apply schema and migrations in order
 docker exec -i travellens-postgres psql -U travellens -d travellens < ../db/schema.sql
-for f in ../db/migrations/00{1..5}_*.sql; do
+for f in ../db/migrations/00{1..7}_*.sql; do
   docker exec -i travellens-postgres psql -U travellens -d travellens < "$f"
 done
 
@@ -86,6 +86,18 @@ python -m render.server
 ```
 
 The streaming pipeline runs separately; see [`docs/phase-2-streaming.md`](docs/phase-2-streaming.md) for producer and consumer commands.
+
+### Running the stack
+
+Once the one-time setup above is done, `run.py` is the dev launcher — one command, clean Ctrl-C teardown:
+
+```bash
+python run.py                  # full stack: Docker (if needed) + consumer + simulator + dashboard
+python run.py --no-sim         # consumer + dashboard live, NO simulator (send events by hand:
+                               #   python -m scripts.kafka_event_producer --rate 50 --duration 60)
+python run.py --server-only    # ONLY the Flask dashboard (assumes Docker/DB already up; for viewing existing data)
+python run.py --window N       # run the consumer with an N-minute window (testing; prod is 60m)
+```
 
 ## Design decisions and trade-offs
 

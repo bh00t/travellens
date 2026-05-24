@@ -138,45 +138,86 @@ bad SQL is a user-review failure, not a runtime bug.
 
 ---
 
-## 5. Pipeline monitor (`/monitor`, B-027)
+## 5. Pipeline monitor (`/monitor`, B-027 + B-029 + B-032)
 
 **What it does.** An operational view answering "is the pipeline
-processing data correctly?" — distinct from the business-analytics
-Explorer. Three sections under one date+city filter: stream activity
-(`agg_hourly_city_stats`), review-embedding coverage (`reviews_raw`),
-and pipeline health (Airflow `/health`, MinIO quarantine counts,
-stream freshness). Every external dependency is guarded — the page
-renders even when Airflow or MinIO is down.
+processing data correctly, right now?" — distinct from the
+business-analytics Explorer. The Chunk-4 redesign reads **two**
+operational tables with different roles:
+
+| Source | Role | Filtered? |
+|---|---|---|
+| `pipeline_metrics` | live "now" — events/sec, alive signal | No — header pulse, always real-time |
+| `agg_hourly_city_stats` | filtered history — per-type lifecycle counts | Yes (date + city) |
+
+Layout: a **header pulse** (events/sec + alive dot), a date+city filter
+bar, then three sections — **Events** (per-type lifecycle counts +
+SOON placeholders), **Quarantine** (malformed / late), **Health**
+(freshness + Airflow). Every external dependency is guarded — the page
+renders even when MinIO or Airflow is down.
 
 **Works well on:**
-- **Processing-correctness signals** straight from what the pipeline
-  landed: bookings/revenue/windows processed, embedding coverage
-  (`embedding IS NOT NULL` over total), malformed + late quarantine
-  object counts, and stream freshness from `MAX(window_start)`.
-- **Graceful degradation.** Airflow HTTP and MinIO listing are wrapped
-  with short timeouts; a down dependency shows "Unreachable" / "—",
-  never a stack trace (verified — cold-load and Airflow-down
-  acceptance tests).
-- **Honest empty states.** A cold system shows zeros plus an
-  "is the consumer running?" banner — correct, not broken. Default
-  range is all stream data, not "today" (synthetic data may have
-  nothing dated today).
+- **Live throughput.** The header pulse derives events/sec as the delta
+  between the latest two `pipeline_metrics` rows (heartbeats land every
+  ~10s from the consumer). `alive` is `age < 15s` — the dot turns grey
+  within one tick of the consumer stopping. Verified end-to-end against
+  the producer rate (50 evt/s in, 49.6–50.2 evt/s computed at the page).
+- **Per-event-type lifecycle counts.** Bookings / check-ins / check-outs
+  / cancellations(≈) are real values written by the consumer to
+  `agg_hourly_city_stats` (`total_checkins`, `total_checkouts`,
+  `total_cancellations` columns added in migration 007). Filtered by
+  the chosen date range and city.
+- **In-place auto-refresh.** A small JS polls `/monitor/data` every 10s,
+  carrying the current page's query string, and patches the live pulse
+  and EVENTS / QUARANTINE numbers via `textContent`. Scroll position
+  and filter-form focus are preserved. No external libs.
+- **Honest defaults.** Filter defaults to **today (UTC)** for both
+  endpoints, FIXED — the page does NOT fall back to "all data" when
+  today is empty. A cold system showing zeros for today is the correct
+  answer; the empty-state banner explains how to start the simulator.
+- **Honest placeholders.** Three tiles in EVENTS (`Review`, `Embedded`,
+  `Sentiment`) render a dashed "SOON" empty-state with the blocking
+  backlog ID rather than a fabricated value — see Limits below.
+- **Graceful degradation.** Airflow HTTP, MinIO listing, and the
+  heartbeat read are all wrapped with short timeouts; a down dependency
+  shows `—` / "Unreachable" / "waiting for heartbeat", never a stack
+  trace. Verified by stopping MinIO mid-session — page still HTTP 200.
 
 **Reliability — high for what it measures, with three honest caveats:**
-- **Cancellations are ≈-derived, not stored.** `agg_hourly_city_stats`
-  holds `cancellation_rate`, not a raw count; the card reconstructs
-  `rate × bookings / (1 − rate)` and labels it "≈". If the column
-  is absent (schema variance), the card shows "—". The route
-  introspects `information_schema` to decide, so it is correct either way.
-- **No live throughput.** There is no events/sec gauge — see
-  [**L-015**](./backlog.md). The consumer's in-memory counters are not
-  written to a queryable table (frozen Phase-2 file), so the monitor
-  infers activity from what landed, not from a live rate.
-- **No check-in/check-out counts.** CHECKIN/CHECKOUT are filtered at the
-  consumer's Gate 3 and never persisted — see [**L-014**](./backlog.md).
-- **Sentiment is deferred.** Section 2 shows embedding *processing*
-  status only; sentiment classification is pending
-  [**B-026**](./backlog.md). Rating is a proven-bad polarity proxy (L-012).
+
+- **Cancellations are ≈-derived for back-compat, not stored as the raw
+  count.** Migration 007 added a `total_cancellations` column and the
+  consumer now writes it, but the monitor still derives the displayed
+  value algebraically from `cancellation_rate × bookings / (1 − rate)`
+  so old window rows written before migration 007 still surface a
+  sensible number. The card labels this "≈" to signal the NUMERIC(5,4)
+  rounding error. If the rate column is absent (schema variance), the
+  card shows `—`. The route introspects `information_schema` to decide,
+  so it is correct either way.
+- **Review / Embedded / Sentiment tiles are placeholders.** They render
+  a dashed "SOON" empty-state with `—` because the upstream data
+  doesn't exist yet. The Review and Embedded tiles unblock when
+  REVIEW becomes a stream event (**B-030**); the Sentiment tile
+  unblocks when sentiment classification ships at embed time
+  (**B-026**). Rating is NOT used as a polarity proxy — it's a
+  proven-bad signal (L-012). Never showing a fake number is the design
+  rule; the badge plus the backlog ID makes the gap legible.
+- **Revenue is not on this page by design.** The Chunk 4 redesign
+  removed the revenue card because revenue is a business KPI, not a
+  pipeline-health signal. Business answers live in the
+  [Explorer](/explore).
+
+**Resolved limitations** — both previously listed here as limits, both
+fixed by the Chunk 4 redesign:
+
+- ~~No live throughput~~ → **resolved by B-032**. The consumer writes a
+  `pipeline_metrics` heartbeat every ~10s; the header pulse reads it.
+  See [L-015](./backlog.md).
+- ~~No check-in / check-out counts~~ → **resolved by B-032 Chunks 2 + 3**.
+  CHECKIN and CHECKOUT now pass Gate 3, are aggregated per window, and
+  are written to dedicated columns. The producer emits both at design
+  weights (CHECKIN 0.18, CHECKOUT 0.12). See
+  [L-014](./backlog.md).
 
 **Freshness threshold caveat.** "Fresh/Aging/Stale" is the age of the
 latest window vs `MONITOR_FRESH_MINUTES` (default 15) /
@@ -185,9 +226,10 @@ prod's 60-min windows a healthy pipeline can read "Aging" right after a
 flush — raise the threshold via `.env`.
 
 **Limits:** the monitor reads operational tables directly (not via the
-AI layer) by design — it is pipeline state, not a business answer.
-Tables that Phase-6 DAGs fill (`agg_daily_hotel_kpi`, sentiment, LTV)
-are intentionally absent; those are the Explorer's job.
+AI layer) — that is the deliberate exception called out in
+`render/server.py`'s module docstring. Tables that Phase-6 DAGs fill
+(`agg_daily_hotel_kpi`, sentiment, LTV) are intentionally absent;
+those are the Explorer's job.
 
 ---
 

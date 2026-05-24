@@ -3,8 +3,8 @@ Event simulator — publishes booking events to Kafka at a configurable rate.
 
 This producer is the upstream half of the streaming pipeline. It reads a
 seed file of hotel records (created in Phase 1), generates synthetic
-event-stream data (bookings, cancellations, check-ins, price changes) and
-publishes them to a Kafka topic. The downstream consumer
+event-stream data (bookings, cancellations, check-ins, check-outs, price
+changes) and publishes them to a Kafka topic. The downstream consumer
 (scripts/stream_consumer.py) reads from this topic, aggregates by city
 into time windows, and dual-sinks to Postgres + S3.
 
@@ -92,8 +92,27 @@ HERITAGE_CITIES = {"Jaipur", "Udaipur", "Agra", "Jaisalmer",
 # Event type mix — BOOKING dominates, with smaller tails for the others.
 # The weights here are also the *expected* distribution the consumer will
 # see (before chaos is applied).
-EVENT_TYPES   = ["BOOKING", "CHECKIN", "CANCELLATION", "PRICE_CHANGE"]
-EVENT_WEIGHTS = [0.65, 0.20, 0.10, 0.05]
+#
+# CHECKOUT joined the mix as part of the live-metrics work (B-032 / migration
+# 007 / Chunk 2 consumer wiring). The consumer's VALID_EVENT_TYPES now includes
+# CHECKOUT, and a CHECKOUT lands in the new total_checkouts column on
+# agg_hourly_city_stats — so the producer needs to actually emit some.
+#
+# Rationale for the rebalance (must sum to exactly 1.0):
+#
+#   BOOKING       0.55  — still clearly dominant, the headline event. Trimmed
+#                         from 0.65 to make room without crushing the tails.
+#   CHECKIN       0.18  — roughly proportional to bookings on a small lag,
+#                         since most bookings eventually check in.
+#   CHECKOUT      0.12  — slightly less than CHECKIN because some bookings
+#                         cancel or no-show before checkout.
+#   CANCELLATION  0.10  — unchanged, matches the ~12% real cancellation rate.
+#   PRICE_CHANGE  0.05  — unchanged, rare operational event.
+#
+# Sum: 0.55 + 0.18 + 0.12 + 0.10 + 0.05 = 1.00 (do not let it drift —
+# random.choices doesn't require sum=1.0 but it makes the mix self-documenting).
+EVENT_TYPES   = ["BOOKING", "CHECKIN", "CHECKOUT", "CANCELLATION", "PRICE_CHANGE"]
+EVENT_WEIGHTS = [0.55,      0.18,      0.12,       0.10,           0.05]
 
 BOOKING_SOURCES = ["MakeMyTrip", "Goibibo", "Booking.com", "Agoda",
                    "Direct", "OYO", "Airbnb"]
@@ -145,12 +164,18 @@ def _corrupt_missing_field(event):
 def _corrupt_unknown_event_type(event):
     """
     Replace event_type with a string outside the valid set
-    {BOOKING, CANCELLATION, CHECKIN, PRICE_CHANGE}.
+    {BOOKING, CANCELLATION, CHECKIN, CHECKOUT, PRICE_CHANGE}.
     """
     # NOTE: "" removed — the consumer's fail-fast validator catches empty
     # strings as missing_field before reaching the event_type allow-list
     # check, causing per-reason label divergence. The empty-string case is
     # already covered by _corrupt_missing_field.
+    #
+    # Lower-case "checkout" stays in the bad-choices list deliberately:
+    # CHECKOUT is now a valid event type but the consumer's allow-list is
+    # case-sensitive, so lower-case "checkout" still hits the
+    # unknown_event_type branch (proven by the consumer reading
+    # `event["event_type"] not in VALID_EVENT_TYPES`).
     bad = dict(event)
     bad["event_type"] = random.choice(["book", "BOOK", "RESERVED", "checkout"])
     return bad, "unknown_event_type"
@@ -305,8 +330,12 @@ def make_event(hotel, month):
     """
     Build one event dict from a hotel seed record. The event type is
     drawn from EVENT_TYPES with EVENT_WEIGHTS, and BOOKING / PRICE_CHANGE
-    get additional fields filled in. event_ts is always set to wall-clock
-    now (chaos may overwrite it later if late injection fires).
+    get additional fields filled in. CHECKIN, CHECKOUT, and CANCELLATION
+    carry only the base envelope (event_id, event_type, hotel_id, city,
+    event_ts) — the consumer only needs the city + timestamp to bump the
+    matching count column on agg_hourly_city_stats. event_ts is always
+    set to wall-clock now (chaos may overwrite it later if late injection
+    fires).
     """
     etype = random.choices(EVENT_TYPES, weights=EVENT_WEIGHTS)[0]
     now_utc = datetime.now(timezone.utc).isoformat()

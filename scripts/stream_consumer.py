@@ -135,31 +135,52 @@ S3_BUCKET   = os.getenv("S3_BUCKET",             "travellens-data")
 S3_PREFIX   = os.getenv("S3_PREFIX_PROCESSED",   "processed/")
 
 # Window size: events are bucketed into 60-minute tumbling windows.
-# For fast dev testing you can drop this to 2; remember to revert before
-# production-realistic runs or the S3 key collision artifact reappears.
-WINDOW_SIZE_MINUTES = 60
+# Env-overridable so fast dev/test runs can use a small window WITHOUT
+# editing this file — e.g. set WINDOW_SIZE_MINUTES=2 in .env to make a
+# window close (and flush) within a couple of minutes instead of ~65.
+# The DEFAULT IS UNCHANGED at 60: if the env var is unset, behaviour is
+# byte-for-byte identical to before. Remember the S3 key-collision
+# artifact with sub-hour windows (see LESSONS LEARNED) — dev-only.
+WINDOW_SIZE_MINUTES = int(os.getenv("WINDOW_SIZE_MINUTES", "60"))
 
 # Grace period before a window is considered closed. This is the
 # trade-off between freshness (short grace = fast aggregates) and
 # correctness (long grace = fewer late drops). 300s is the production
 # default. In dev, your producer emits chronologically, so you'll never
 # see lateness unless you enable CHAOS_LATE_PCT.
-WATERMARK_GRACE_SECONDS = 300
+# Env-overridable for the same fast-test reason as the window size; the
+# DEFAULT IS UNCHANGED at 300. Pair a small window with a small grace
+# (e.g. WATERMARK_GRACE_SECONDS=30) so a 2-min window actually closes
+# during a short run instead of waiting 5 extra minutes for the grace.
+WATERMARK_GRACE_SECONDS = int(os.getenv("WATERMARK_GRACE_SECONDS", "300"))
 
 # How often we wake up to check if any windows are ready to flush.
 # Independent of window size — this is just the polling cadence.
 FLUSH_CHECK_SECONDS = 10
 
+# Max records pulled per poll() cycle in the main loop (Bug A fix).
+# This BOUNDS how long the loop stays in event-processing before it
+# falls through to the flush check and the max-runtime check. Without a
+# bound, a continuous stream keeps the consumer busy forever and those
+# checks never run. Smaller = snappier flush cadence + safer against
+# broker eviction; larger = marginally higher throughput. 200 suits the
+# project's ~50 evt/s rate. Env-overridable; default 200.
+INNER_BATCH_MAX = int(os.getenv("INNER_BATCH_MAX", "200"))
+
 # Event types that pass validation. Anything outside this set lands in
 # malformed_events with reason "unknown_event_type" — the producer must
-# emit one of these four exact strings or it's a producer bug.
-VALID_EVENT_TYPES = {"BOOKING", "CANCELLATION", "CHECKIN", "PRICE_CHANGE"}
+# emit one of these five exact strings or it's a producer bug.
+# CHECKOUT joined the family in Chunk 2 of the live-metrics work so the
+# hourly aggregate can count guest arrivals AND departures; it is a
+# valid event even before the producer starts emitting it (Chunk 3).
+VALID_EVENT_TYPES = {"BOOKING", "CANCELLATION", "CHECKIN", "CHECKOUT", "PRICE_CHANGE"}
 
-# Of the four valid types, only these two contribute to the aggregate.
-# CHECKIN and PRICE_CHANGE are valid events but irrelevant to the
-# city-revenue rollup, so we filter them silently after validation —
-# they're NOT malformed, they're just out of scope for this consumer.
-PROCESSED_EVENT_TYPES = {"BOOKING", "CANCELLATION"}
+# Of the five valid types, these four contribute to the city aggregate.
+# Only PRICE_CHANGE is silently filtered after validation — it's valid
+# but irrelevant to the city-revenue rollup, so it's NOT malformed,
+# just out of scope. CHECKIN/CHECKOUT now feed dedicated count columns
+# on agg_hourly_city_stats (total_checkins / total_checkouts).
+PROCESSED_EVENT_TYPES = {"BOOKING", "CANCELLATION", "CHECKIN", "CHECKOUT"}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -288,20 +309,32 @@ def postgres_sink(row):
     try:
         conn = psycopg2.connect(**DB_PARAMS)
         cur  = conn.cursor()
+        # Chunk 2 widening: total_checkins / total_checkouts /
+        # total_cancellations are NEW count columns (migration 007)
+        # that the consumer now populates so the hourly aggregate
+        # captures every event class the producer emits, not just
+        # bookings. cancellation_rate (the ratio) is still derived
+        # separately in build_row and stays in the UPSERT unchanged.
+        # total_reviews exists on the table but is intentionally NOT
+        # written here — no REVIEW events flow through this consumer.
         cur.execute(
             """
             INSERT INTO agg_hourly_city_stats
                 (city, window_start, window_end, total_bookings,
-                 total_revenue_inr, avg_occupancy_rate, cancellation_rate)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+                 total_revenue_inr, avg_occupancy_rate, cancellation_rate,
+                 total_checkins, total_checkouts, total_cancellations)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (city, window_start)
             DO UPDATE SET
-                window_end         = EXCLUDED.window_end,
-                total_bookings     = EXCLUDED.total_bookings,
-                total_revenue_inr  = EXCLUDED.total_revenue_inr,
-                avg_occupancy_rate = EXCLUDED.avg_occupancy_rate,
-                cancellation_rate  = EXCLUDED.cancellation_rate,
-                ingestion_ts       = CURRENT_TIMESTAMP
+                window_end          = EXCLUDED.window_end,
+                total_bookings      = EXCLUDED.total_bookings,
+                total_revenue_inr   = EXCLUDED.total_revenue_inr,
+                avg_occupancy_rate  = EXCLUDED.avg_occupancy_rate,
+                cancellation_rate   = EXCLUDED.cancellation_rate,
+                total_checkins      = EXCLUDED.total_checkins,
+                total_checkouts     = EXCLUDED.total_checkouts,
+                total_cancellations = EXCLUDED.total_cancellations,
+                ingestion_ts        = CURRENT_TIMESTAMP
             """,
             (
                 row["city"],
@@ -311,6 +344,9 @@ def postgres_sink(row):
                 row["total_revenue_inr"],
                 row["avg_occupancy_rate"],
                 row["cancellation_rate"],
+                row["total_checkins"],
+                row["total_checkouts"],
+                row["total_cancellations"],
             ),
         )
         conn.commit()
@@ -457,18 +493,28 @@ def build_row(window_start, city, acc):
     window_end    = window_start + timedelta(minutes=WINDOW_SIZE_MINUTES)
     bookings      = acc["bookings"]
     cancels       = acc["cancellations"]
+    # Chunk 2: per-window check-in / check-out counts.
+    # The accumulator started tracking these in this chunk so the row
+    # can carry total_checkins / total_checkouts straight through to
+    # the agg_hourly_city_stats UPSERT. They will read 0 for CHECKOUT
+    # until the producer learns to emit it in Chunk 3 — that's expected.
+    checkins      = acc["checkins"]
+    checkouts     = acc["checkouts"]
     revenue       = acc["revenue"]
     total         = bookings + cancels
     cancel_rate   = round(cancels / total, 4) if total else 0.0
     occupancy_pct = min(bookings / 50.0 * 100, 100.0)
     return {
-        "city":               city,
-        "window_start":       window_start.isoformat(),
-        "window_end":         window_end.isoformat(),
-        "total_bookings":     bookings,
-        "total_revenue_inr":  round(revenue, 2),
-        "avg_occupancy_rate": round(occupancy_pct, 2),
-        "cancellation_rate":  round(cancel_rate, 4),
+        "city":                 city,
+        "window_start":         window_start.isoformat(),
+        "window_end":           window_end.isoformat(),
+        "total_bookings":       bookings,
+        "total_revenue_inr":    round(revenue, 2),
+        "avg_occupancy_rate":   round(occupancy_pct, 2),
+        "cancellation_rate":    round(cancel_rate, 4),
+        "total_checkins":       checkins,
+        "total_checkouts":      checkouts,
+        "total_cancellations":  cancels,
     }
 
 
@@ -551,6 +597,22 @@ def main():
         # manually after each successful sink. TravelLens accepts
         # the rare double-count from a crash mid-flush.
         enable_auto_commit=True,
+        # ── Bug B fix: survive slow batches without broker eviction ──
+        # These were previously UNSET, so kafka-python used its defaults
+        # (session 10s, heartbeat 3s, max-poll-interval 5min). Under
+        # chaos load the consumer spends a long time between polls doing
+        # blocking S3 quarantine writes (one put_object per bad event).
+        # If the gap between polls exceeds max_poll_interval_ms, the
+        # broker assumes the consumer died and evicts it from the group
+        # ("no active members"), lag balloons, and nothing ever flushes.
+        # We raise the ceilings so a slow batch can't trigger eviction.
+        # Combined with the bounded poll() batch in the main loop, the
+        # gap between polls is now both CAPPED (max_poll_records) and
+        # TOLERATED (max_poll_interval_ms). Defaults preserved otherwise.
+        max_poll_records=INNER_BATCH_MAX,   # cap fetch size to bound per-poll work
+        max_poll_interval_ms=600000,        # 10 min headroom for slow S3 batches (was 5 min default)
+        session_timeout_ms=30000,           # 30s before the broker calls us dead (was 10s default)
+        heartbeat_interval_ms=10000,        # 10s heartbeat — must be <= 1/3 of session_timeout_ms
     )
 
     # ── In-memory window state ──────────────────────────────────────────
@@ -566,6 +628,13 @@ def main():
         "bookings":      0,
         "revenue":       0.0,
         "cancellations": 0,
+        # Chunk 2: dedicated buckets for CHECKIN / CHECKOUT so the
+        # hourly aggregate can report guest arrivals/departures
+        # alongside booking activity. They must be initialised here —
+        # without these keys, the accumulator block below would
+        # KeyError the first time it tried to increment them.
+        "checkins":      0,
+        "checkouts":     0,
         "total_events":  0,
         "last_event_ts": 0.0,
     })
@@ -579,6 +648,14 @@ def main():
         "windows_flushed":      0,
         "late_dropped":         0,
         "malformed_dropped":    0,
+        # Chunk 2: cumulative run-totals for BOOKING and CANCELLATION
+        # events, incremented in the accumulator block alongside the
+        # per-window counts. These power the pipeline_metrics
+        # heartbeat (and via deltas, the live throughput tile on
+        # /monitor). Per-window totals already live inside `state`;
+        # these are the run-lifetime totals an outside observer needs.
+        "bookings":             0,
+        "cancellations":        0,
         "malformed_by_reason":  defaultdict(int),
     }
 
@@ -612,7 +689,30 @@ def main():
     # blocks for up to consumer_timeout_ms.
 
     while running:
-        for msg in consumer:
+        # ── Phase 1: poll a BOUNDED batch ────────────────────────────
+        # Bug A fix. This was previously `for msg in consumer:`, which
+        # iterates the KafkaConsumer as an ENDLESS generator that only
+        # yields control back to us after consumer_timeout_ms (1s) of
+        # SILENCE on the topic. Under a continuous stream — especially
+        # `--chaos`, where every bad event triggers a blocking S3 write
+        # so the loop is always busy — the topic never goes silent for a
+        # full second, the inner loop never ended, and the flush check
+        # (Phase 2) and max-runtime check (Phase 3) below NEVER RAN. The
+        # consumer just ground on until the broker evicted it, and no
+        # window was ever flushed to Postgres.
+        #
+        # consumer.poll() fixes this: it returns control every cycle —
+        # after timeout_ms (1s) OR once max_records have been fetched,
+        # whichever comes first. We flatten the {partition: [records]}
+        # result into one list and process each record with the EXACT
+        # SAME gate/accumulate logic as before (the loop body below is
+        # unchanged). The only behavioural difference is that Phase 2/3
+        # are now guaranteed a turn on every cycle, even under load.
+        # No event is dropped: records we don't fetch this cycle stay on
+        # the topic and are returned by the next poll().
+        _polled = consumer.poll(timeout_ms=1000, max_records=INNER_BATCH_MAX)
+        _batch = [m for _records in _polled.values() for m in _records]
+        for msg in _batch:
             if not running:
                 break
 
@@ -696,6 +796,19 @@ def main():
                 continue
 
             # ── Accumulate (all gates passed) ────────────────────────
+            # Chunk 2: the if/else became if/elif/elif/elif because
+            # PROCESSED_EVENT_TYPES now spans four types, not two.
+            # BOOKING and CANCELLATION accumulator semantics are
+            # UNCHANGED — same fields, same revenue handling. We
+            # additionally:
+            #   - bump dedicated CHECKIN / CHECKOUT counters on the
+            #     window accumulator (feeds the new total_checkins /
+            #     total_checkouts columns on agg_hourly_city_stats).
+            #   - bump cumulative run-totals for BOOKING / CANCELLATION
+            #     on run_metrics (feeds the pipeline_metrics heartbeat).
+            # total_events still counts all PROCESSED types — that
+            # invariant is exactly why the increment lives outside the
+            # if-chain, untouched.
             key = (window_start.isoformat(), event["city"])
             acc = state[key]
             if event["event_type"] == "BOOKING":
@@ -703,8 +816,14 @@ def main():
                 # `or 0` handles the case where revenue_inr is None
                 # (legitimate for some event variants in the future).
                 acc["revenue"]  += float(event.get("revenue_inr", 0) or 0)
-            else:  # CANCELLATION
+                run_metrics["bookings"] += 1
+            elif event["event_type"] == "CANCELLATION":
                 acc["cancellations"] += 1
+                run_metrics["cancellations"] += 1
+            elif event["event_type"] == "CHECKIN":
+                acc["checkins"] += 1
+            elif event["event_type"] == "CHECKOUT":
+                acc["checkouts"] += 1
             acc["total_events"]  += 1
             acc["last_event_ts"] = max(acc["last_event_ts"], event_ts_secs)
 
@@ -724,6 +843,60 @@ def main():
         now = time.time()
         if (now - t_last_flush) >= FLUSH_CHECK_SECONDS:
             t_last_flush = now
+
+            # ── Pipeline heartbeat (Chunk 2 / B-032 / L-015) ─────────
+            # Write one cumulative-metrics snapshot to pipeline_metrics
+            # every flush-check tick (~FLUSH_CHECK_SECONDS). The
+            # /monitor read path derives events/sec as the delta
+            # between successive rows — no rate column needed.
+            #
+            # Same connect/execute/commit/close cadence as
+            # postgres_sink: wasteful at scale, fine at TravelLens's
+            # tens-of-windows-per-run volume.
+            #
+            # CRITICAL: wrapped in its OWN try/except. A heartbeat
+            # failure (DB blip, duplicate metric_ts, network hiccup)
+            # MUST NEVER crash the consumer loop — losing one snapshot
+            # is observability noise; losing the consumer is data loss.
+            # We log to stderr and continue, by design.
+            #
+            # active_windows = len(state) reflects the OPEN windows
+            # held in memory at the moment of the heartbeat, BEFORE
+            # this tick's flush has had a chance to prune closed ones.
+            # That ordering is intentional — it matches the brief's
+            # "after t_last_flush = now" placement and gives the
+            # monitor a stable cadence-based signal independent of
+            # whether any window happened to close on this tick.
+            # consumer_lag is intentionally NULL: the column is
+            # reserved for a future Kafka-AdminClient lookup.
+            try:
+                mt_conn = psycopg2.connect(**DB_PARAMS)
+                mt_cur  = mt_conn.cursor()
+                mt_cur.execute(
+                    """
+                    INSERT INTO pipeline_metrics
+                        (metric_ts, events_consumed, bookings, cancellations,
+                         malformed, late, active_windows, max_event_ts, consumer_lag)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        datetime.now(timezone.utc),
+                        run_metrics["events_consumed"],
+                        run_metrics["bookings"],
+                        run_metrics["cancellations"],
+                        run_metrics["malformed_dropped"],
+                        run_metrics["late_dropped"],
+                        len(state),
+                        (datetime.fromtimestamp(max_event_ts, tz=timezone.utc)
+                         if max_event_ts else None),
+                        None,  # consumer_lag — reserved, not yet computed
+                    ),
+                )
+                mt_conn.commit()
+                mt_conn.close()
+            except Exception as exc:
+                print(f"  ✗ pipeline_metrics heartbeat error: {exc}", file=sys.stderr)
+
             watermark_secs = max_event_ts - WATERMARK_GRACE_SECONDS
 
             # Identify all windows whose end is before the watermark —

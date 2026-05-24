@@ -4,9 +4,18 @@
 
 {#
   Pipeline monitor — "is the solution processing data correctly?"
-  Extends base.html, reuses its tokens (--green/--black/--gray-*/--font-mono)
-  and Chart.js include. Three sections, one date+city filter bar.
-  All numbers are server-rendered; no per-card JS, no /api calls.
+  Chunk 4 layout:
+    HEADER     live-throughput pulse (pipeline_metrics, ignores filter)
+    FILTER     date + city (default = today UTC)
+    EVENTS     bookings / checkins / checkouts / cancellations(≈)
+               + SOON tiles: review, embedded, sentiment
+    QUARANTINE malformed / late
+    HEALTH     stream freshness + Airflow
+
+  Reuses the existing tokens from base.html (--green / --gray-* / --font-mono)
+  and the .metric / .metric-grid / .pill / .filter-bar neo-brutalist style
+  (2px border, 4px black box-shadow). No external libs, no Chart.js usage.
+  JS at the bottom polls /monitor/data every 10s and updates numbers in place.
 #}
 
 {% block extra_styles %}
@@ -14,9 +23,44 @@
   /* Status colours layered on top of base tokens (base ships only --green). */
   :root { --amber: #B45309; --amber-bg: #FEF3C7; --red: #dc2626; --red-bg: #fef2f2; }
 
-  .mon-header { margin-bottom: 1.5rem; }
-  .mon-header h1 { font-family: var(--font-mono); font-size: 1.15rem; font-weight: 800; color: var(--gray-900); }
+  /* ── Header (title + live pulse) ────────────────────────────────────────── */
+  .mon-header {
+    display: flex; flex-wrap: wrap; align-items: flex-start;
+    justify-content: space-between; gap: 1.5rem; margin-bottom: 1.5rem;
+  }
+  .mon-header-title h1 { font-family: var(--font-mono); font-size: 1.15rem; font-weight: 800; color: var(--gray-900); }
   .mon-sub { font-size: .8rem; color: var(--gray-500); margin-top: .35rem; line-height: 1.5; max-width: 720px; }
+
+  /* Live pulse — small card on the right of the header. */
+  .live-pulse {
+    background: var(--white); border: 2px solid var(--black);
+    box-shadow: 4px 4px 0 var(--black); padding: .75rem 1rem;
+    display: flex; flex-direction: column; gap: .35rem; min-width: 220px;
+  }
+  .live-pulse-row { display: flex; align-items: baseline; justify-content: space-between; gap: .75rem; }
+  .live-pulse-label {
+    font-family: var(--font-mono); font-size: .62rem; font-weight: 800;
+    text-transform: uppercase; letter-spacing: .06em; color: var(--gray-500);
+  }
+  .live-pulse-value {
+    font-family: var(--font-mono); font-size: 1.4rem; font-weight: 800;
+    color: var(--green); line-height: 1;
+  }
+  .live-pulse-value.idle { color: var(--gray-900); }
+  .live-pulse-cap { font-size: .65rem; color: var(--gray-500); line-height: 1.4; }
+
+  /* Live dot pill — green when alive, grey when stale. */
+  .dot-pill {
+    display: inline-flex; align-items: center; gap: .4rem;
+    font-family: var(--font-mono); font-size: .68rem; font-weight: 800;
+    padding: .2rem .55rem; border: 2px solid; border-radius: 4px;
+    text-transform: uppercase; letter-spacing: .04em;
+  }
+  .dot-pill.alive { color: var(--green); border-color: var(--green); background: #ECFDF3; }
+  .dot-pill.stale { color: var(--gray-500); border-color: var(--gray-200); background: var(--white); }
+  .dot { width: .55rem; height: .55rem; border-radius: 50%; display: inline-block; }
+  .dot.alive { background: var(--green); box-shadow: 0 0 0 3px #ECFDF3; }
+  .dot.stale { background: var(--gray-200); }
 
   /* ── Filter bar ─────────────────────────────────────────────────────────── */
   .filter-bar {
@@ -60,6 +104,7 @@
   .metric-label {
     font-family: var(--font-mono); font-size: .64rem; font-weight: 800;
     text-transform: uppercase; letter-spacing: .06em; color: var(--gray-500);
+    display: flex; align-items: center; gap: .5rem; flex-wrap: wrap;
   }
   .metric-value {
     font-family: var(--font-mono); font-size: 1.9rem; font-weight: 800;
@@ -72,6 +117,18 @@
   .metric-value.warn { color: var(--amber); }
   .metric-value.bad  { color: var(--red); }
   .metric-value.idle { color: var(--gray-900); }
+
+  /* SOON tile: dashed border, muted, with a SOON badge. NEVER shows fake data. */
+  .metric.soon {
+    border-style: dashed; box-shadow: none; background: #FAFAFA;
+  }
+  .metric.soon:hover { transform: none; box-shadow: none; }
+  .metric.soon .metric-value { color: var(--gray-500); }
+  .badge-soon {
+    font-family: var(--font-mono); font-size: .55rem; font-weight: 800;
+    letter-spacing: .08em; padding: .1rem .4rem; border-radius: 3px;
+    background: var(--gray-900); color: var(--white);
+  }
 
   /* Status pill (used for freshness / airflow text states). */
   .pill {
@@ -94,16 +151,50 @@
 {% block content %}
 <div class="page">
 
+  <!-- ── Header — title + live throughput pulse ───────────────────────────── -->
   <div class="mon-header">
-    <h1>Pipeline Monitor</h1>
-    <p class="mon-sub">
-      Operational view — is the pipeline processing data correctly? Stream throughput,
-      embedding coverage, quarantine, and scheduler health. Business analytics (revenue
-      trends, rankings, sentiment) live in the <a href="/explore" style="color:var(--green);">Explorer</a>.
-    </p>
+    <div class="mon-header-title">
+      <h1>Pipeline Monitor</h1>
+      <p class="mon-sub">
+        Operational view — is the pipeline processing data correctly? Live throughput,
+        per-event-type counts, quarantine, and scheduler health. Business analytics
+        (revenue, rankings, sentiment) live in the
+        <a href="/explore" style="color:var(--green);">Explorer</a>.
+      </p>
+    </div>
+
+    <div class="live-pulse" id="live-pulse">
+      <div class="live-pulse-row">
+        <span class="live-pulse-label">Events / sec</span>
+        {% if live.has_data and live.alive %}
+        <span class="dot-pill alive" id="live-pill">
+          <span class="dot alive"></span>
+          <span id="live-pill-text">live · {{ "%.0f"|format(live.age_secs) }}s ago</span>
+        </span>
+        {% elif live.has_data %}
+        <span class="dot-pill stale" id="live-pill">
+          <span class="dot stale"></span>
+          <span id="live-pill-text">stale · {{ "%.0f"|format(live.age_secs) }}s ago</span>
+        </span>
+        {% else %}
+        <span class="dot-pill stale" id="live-pill">
+          <span class="dot stale"></span>
+          <span id="live-pill-text">waiting for heartbeat</span>
+        </span>
+        {% endif %}
+      </div>
+      <div class="live-pulse-row">
+        <span class="live-pulse-value {{ '' if (live.has_data and live.alive) else 'idle' }}" id="live-eps">
+          {% if live.has_data %}{{ "%.1f"|format(live.events_per_sec) }}{% else %}—{% endif %}
+        </span>
+      </div>
+      <div class="live-pulse-cap">
+        From <code>pipeline_metrics</code> heartbeat. Real-time — ignores the filter below.
+      </div>
+    </div>
   </div>
 
-  <!-- ── Filter bar (GET) — date + city only ─────────────────────────────── -->
+  <!-- ── Filter bar (GET) — date + city, default today UTC ────────────────── -->
   <form class="filter-bar" method="get" action="/monitor">
     <div class="filter-field">
       <label for="from">From</label>
@@ -123,107 +214,125 @@
       </select>
     </div>
     <button type="submit" class="btn btn-primary">Apply</button>
-    {% if sel_from or sel_to or sel_city %}
     <a href="/monitor" class="btn btn-ghost">Clear</a>
-    {% endif %}
   </form>
 
-  <!-- ══ Section 1 — Stream activity (date + city filtered) ═══════════════ -->
+  <!-- ══ Section — Events (date + city filtered) ═════════════════════════ -->
   <section class="mon-section">
-    <div class="mon-section-head"><h2>1 · Stream activity</h2></div>
+    <div class="mon-section-head"><h2>Events</h2></div>
     <p class="mon-caption">
-      From <code>agg_hourly_city_stats</code> — what the Kafka consumer has flushed.
-      <strong>Filtered by the date range and city above.</strong>
-      Default shows all available stream data.
+      Per-type event counts from <code>agg_hourly_city_stats</code> — what the consumer
+      has flushed for the selected date range and city. <strong>SOON</strong> tiles render
+      placeholders until their upstream lands; no fake values.
     </p>
 
     {% if stream.windows == 0 %}
     <div class="mon-banner">
       No stream data in this range — is the consumer running? Start the stack with
-      <code>python run.py</code>, or widen the filter. A cold system showing zero here is
-      correct, not broken.
+      <code>python run.py</code>, or widen the filter. A cold system showing zeros for
+      today is correct, not broken.
     </div>
     {% endif %}
 
     <div class="metric-grid">
+      <!-- Real per-type counts (B-032 Chunks 2 + 3) -->
       <div class="metric">
-        <div class="metric-label">Bookings processed</div>
-        <div class="metric-value {{ 'ok' if stream.bookings else 'idle' }}">{{ "{:,}".format(stream.bookings) }}</div>
+        <div class="metric-label">Bookings</div>
+        <div class="metric-value {{ 'ok' if stream.bookings else 'idle' }}" id="ev-bookings">{{ "{:,}".format(stream.bookings) }}</div>
         <div class="metric-note">BOOKING events aggregated into windows.</div>
+      </div>
+
+      <div class="metric">
+        <div class="metric-label">Check-ins</div>
+        <div class="metric-value {{ 'ok' if stream.checkins else 'idle' }}" id="ev-checkins">{{ "{:,}".format(stream.checkins) }}</div>
+        <div class="metric-note">CHECKIN events — guest arrivals.</div>
+      </div>
+
+      <div class="metric">
+        <div class="metric-label">Check-outs</div>
+        <div class="metric-value {{ 'ok' if stream.checkouts else 'idle' }}" id="ev-checkouts">{{ "{:,}".format(stream.checkouts) }}</div>
+        <div class="metric-note">CHECKOUT events — guest departures.</div>
       </div>
 
       <div class="metric">
         <div class="metric-label">Cancellations (≈)</div>
         {% if stream.cancellations is not none %}
-        <div class="metric-value {{ 'ok' if stream.cancellations else 'idle' }}">≈{{ "{:,}".format(stream.cancellations) }}</div>
+        <div class="metric-value {{ 'ok' if stream.cancellations else 'idle' }}" id="ev-cancellations">≈{{ "{:,}".format(stream.cancellations) }}</div>
         <div class="metric-note">Derived from <code>cancellation_rate</code> × bookings.</div>
         {% else %}
-        <div class="metric-value idle">—</div>
+        <div class="metric-value idle" id="ev-cancellations">—</div>
         <div class="metric-note">No <code>cancellation_rate</code> column in the agg table.</div>
         {% endif %}
       </div>
 
-      <div class="metric">
-        <div class="metric-label">Revenue processed</div>
-        <div class="metric-value {{ 'ok' if stream.revenue else 'idle' }}">₹{{ "{:,.0f}".format(stream.revenue) }}</div>
-        <div class="metric-note">Sum of <code>total_revenue_inr</code> (real, from the event).</div>
+      <!-- SOON tiles — placeholders that activate when upstream lands -->
+      <div class="metric soon">
+        <div class="metric-label">Review <span class="badge-soon">SOON</span></div>
+        <div class="metric-value">—</div>
+        <div class="metric-note">REVIEW not yet a stream event — unblocked by B-030.</div>
+      </div>
+
+      <div class="metric soon">
+        <div class="metric-label">Embedded <span class="badge-soon">SOON</span></div>
+        <div class="metric-value">—</div>
+        <div class="metric-note">Of reviews in stream, filtered — unblocked by B-030.</div>
+      </div>
+
+      <div class="metric soon">
+        <div class="metric-label">Sentiment <span class="badge-soon">SOON</span></div>
+        <div class="metric-value">—</div>
+        <div class="metric-note">Scored at embed time — unblocked by B-026.</div>
       </div>
 
       <div class="metric">
-        <div class="metric-label">Windows processed</div>
-        <div class="metric-value {{ 'ok' if stream.windows else 'idle' }}">{{ "{:,}".format(stream.windows) }}</div>
-        <div class="metric-note">{{ stream.cities }} cit{{ 'y' if stream.cities == 1 else 'ies' }} · tumbling-window rows flushed.</div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ══ Section 2 — Review embeddings (NOT filtered) ════════════════════ -->
-  <section class="mon-section">
-    <div class="mon-section-head"><h2>2 · Review embeddings</h2></div>
-    <p class="mon-caption">
-      From <code>reviews_raw</code> — embedding processing status.
-      <strong>Not affected by the filters</strong> (reviews are static — no time or city axis).
-      Sentiment classification is pending (B-026); this section shows processing coverage only.
-    </p>
-
-    <div class="metric-grid">
-      <div class="metric">
-        <div class="metric-label">Reviews received</div>
-        <div class="metric-value idle">{{ "{:,}".format(embed.received) }}</div>
-        <div class="metric-note">Total rows loaded (Kaggle MakeMyTrip / OYO).</div>
-      </div>
-
-      <div class="metric">
-        <div class="metric-label">Embedded</div>
-        <div class="metric-value ok">{{ "{:,}".format(embed.embedded) }}</div>
-        <div class="metric-note">Rows with a non-null <code>embedding</code> vector.</div>
-      </div>
-
-      <div class="metric">
-        <div class="metric-label">Unprocessed</div>
-        <div class="metric-value {{ 'warn' if embed.unprocessed else 'ok' }}">{{ "{:,}".format(embed.unprocessed) }}</div>
-        <div class="metric-note">Awaiting embedding. Zero = full coverage.</div>
-      </div>
-
-      <div class="metric">
-        <div class="metric-label">Coverage</div>
-        <div class="metric-value {{ 'ok' if embed.coverage_pct >= 99.95 else 'warn' }}">{{ "%.1f"|format(embed.coverage_pct) }}%</div>
-        <div class="metric-note">Embedded ÷ received.</div>
+        <div class="metric-label">Windows flushed</div>
+        <div class="metric-value {{ 'ok' if stream.windows else 'idle' }}" id="ev-windows">{{ "{:,}".format(stream.windows) }}</div>
+        <div class="metric-note" id="ev-windows-note">{{ stream.cities }} cit{{ 'y' if stream.cities == 1 else 'ies' }} · tumbling-window rows.</div>
       </div>
     </div>
   </section>
 
-  <!-- ══ Section 3 — Pipeline health (NOT filtered) ══════════════════════ -->
+  <!-- ══ Section — Quarantine (date + city filtered context) ═════════════ -->
   <section class="mon-section">
-    <div class="mon-section-head"><h2>3 · Pipeline health</h2></div>
+    <div class="mon-section-head"><h2>Quarantine</h2></div>
     <p class="mon-caption">
-      Current state — <strong>not affected by the filters.</strong>
-      Freshness doubles as the consumer-alive signal; quarantine + Airflow reflect the
-      moment you loaded this page.
+      Objects the consumer routed to MinIO for triage — bad data isolated, not silently
+      dropped. Counts are bucket-wide (not filtered).
     </p>
 
     <div class="metric-grid">
-      <!-- Freshness -->
+      <div class="metric">
+        <div class="metric-label">Malformed</div>
+        {% if quarantine.reachable %}
+        <div class="metric-value {{ 'warn' if quarantine.malformed else 'ok' }}" id="qu-malformed">{{ "{:,}".format(quarantine.malformed) }}</div>
+        <div class="metric-note">Objects under <code>malformed_events/</code>.</div>
+        {% else %}
+        <div class="metric-value warn" id="qu-malformed">—</div>
+        <div class="metric-note">MinIO unreachable.</div>
+        {% endif %}
+      </div>
+
+      <div class="metric">
+        <div class="metric-label">Late</div>
+        {% if quarantine.reachable %}
+        <div class="metric-value {{ 'warn' if quarantine.late else 'ok' }}" id="qu-late">{{ "{:,}".format(quarantine.late) }}</div>
+        <div class="metric-note">Objects under <code>late_events/</code>.</div>
+        {% else %}
+        <div class="metric-value warn" id="qu-late">—</div>
+        <div class="metric-note">MinIO unreachable.</div>
+        {% endif %}
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ Section — Health (NOT filtered) ═════════════════════════════════ -->
+  <section class="mon-section">
+    <div class="mon-section-head"><h2>Health</h2></div>
+    <p class="mon-caption">
+      Pipeline freshness and scheduler status — the moment you loaded this page.
+    </p>
+
+    <div class="metric-grid">
       <div class="metric">
         <div class="metric-label">Stream freshness</div>
         {% if freshness.status == 'fresh' %}
@@ -241,31 +350,6 @@
         {% endif %}
       </div>
 
-      <!-- Malformed quarantine -->
-      <div class="metric">
-        <div class="metric-label">Malformed quarantine</div>
-        {% if quarantine.reachable %}
-        <div class="metric-value {{ 'warn' if quarantine.malformed else 'ok' }}">{{ "{:,}".format(quarantine.malformed) }}</div>
-        <div class="metric-note">Objects under <code>{{ "malformed_events/" }}</code> in MinIO.</div>
-        {% else %}
-        <div class="metric-value warn">—</div>
-        <div class="metric-note">MinIO unreachable.</div>
-        {% endif %}
-      </div>
-
-      <!-- Late quarantine -->
-      <div class="metric">
-        <div class="metric-label">Late quarantine</div>
-        {% if quarantine.reachable %}
-        <div class="metric-value {{ 'warn' if quarantine.late else 'ok' }}">{{ "{:,}".format(quarantine.late) }}</div>
-        <div class="metric-note">Objects under <code>{{ "late_events/" }}</code> in MinIO.</div>
-        {% else %}
-        <div class="metric-value warn">—</div>
-        <div class="metric-note">MinIO unreachable.</div>
-        {% endif %}
-      </div>
-
-      <!-- Airflow scheduler -->
       <div class="metric">
         <div class="metric-label">Airflow scheduler</div>
         {% if airflow.status == 'healthy' %}
@@ -281,4 +365,97 @@
   </section>
 
 </div>
+
+<script>
+  // ── In-place refresh — poll /monitor/data every 10s and update numbers ──
+  // Keeps the live pulse + EVENTS + QUARANTINE numbers current without a
+  // full page reload (so scroll position and the filter form's focus state
+  // aren't disturbed). HEALTH stays server-rendered; if you want it fresh,
+  // hit Apply on the filter bar.
+  //
+  // The fetch carries the current page's query string so the polled data
+  // matches the filter the user is looking at. If the user changes the
+  // filter and hits Apply, that's a full reload — the next setInterval
+  // tick will start polling with the new params automatically.
+  (function () {
+    const POLL_MS = 10000;
+    const fmtInt = (n) => (n == null ? "—" : Number(n).toLocaleString());
+
+    function updateLive(live) {
+      const epsEl  = document.getElementById("live-eps");
+      const pill   = document.getElementById("live-pill");
+      const pillTx = document.getElementById("live-pill-text");
+      if (!epsEl || !pill || !pillTx) return;
+
+      if (!live || !live.has_data) {
+        epsEl.textContent = "—";
+        epsEl.classList.add("idle");
+        pill.className = "dot-pill stale";
+        pill.querySelector(".dot").className = "dot stale";
+        pillTx.textContent = "waiting for heartbeat";
+        return;
+      }
+      epsEl.textContent = Number(live.events_per_sec).toFixed(1);
+      const age = (live.age_secs == null) ? "" : Math.round(live.age_secs) + "s ago";
+      if (live.alive) {
+        epsEl.classList.remove("idle");
+        pill.className = "dot-pill alive";
+        pill.querySelector(".dot").className = "dot alive";
+        pillTx.textContent = "live · " + age;
+      } else {
+        epsEl.classList.add("idle");
+        pill.className = "dot-pill stale";
+        pill.querySelector(".dot").className = "dot stale";
+        pillTx.textContent = "stale · " + age;
+      }
+    }
+
+    function updateStream(stream) {
+      if (!stream) return;
+      const set = (id, v) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = v;
+      };
+      set("ev-bookings",  fmtInt(stream.bookings));
+      set("ev-checkins",  fmtInt(stream.checkins));
+      set("ev-checkouts", fmtInt(stream.checkouts));
+      set("ev-windows",   fmtInt(stream.windows));
+      const cancel = stream.cancellations;
+      set("ev-cancellations", cancel == null ? "—" : "≈" + fmtInt(cancel));
+      const noteEl = document.getElementById("ev-windows-note");
+      if (noteEl && stream.cities != null) {
+        const c = Number(stream.cities);
+        noteEl.textContent = c + (c === 1 ? " city" : " cities") +
+                             " · tumbling-window rows.";
+      }
+    }
+
+    function updateQuarantine(q) {
+      if (!q) return;
+      const m = document.getElementById("qu-malformed");
+      const l = document.getElementById("qu-late");
+      if (!q.reachable) {
+        if (m) m.textContent = "—";
+        if (l) l.textContent = "—";
+        return;
+      }
+      if (m) m.textContent = fmtInt(q.malformed);
+      if (l) l.textContent = fmtInt(q.late);
+    }
+
+    async function tick() {
+      try {
+        const url = "/monitor/data" + window.location.search;
+        const r   = await fetch(url, { headers: { "Accept": "application/json" } });
+        if (!r.ok) return;
+        const data = await r.json();
+        updateLive(data.live);
+        updateStream(data.stream);
+        updateQuarantine(data.quarantine);
+      } catch (e) { /* swallow — try again on the next tick */ }
+    }
+
+    setInterval(tick, POLL_MS);
+  })();
+</script>
 {% endblock %}

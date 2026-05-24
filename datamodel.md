@@ -31,6 +31,7 @@
    - [reviews_raw.csv](#reviews_rawcsv-)
 9. [Gold Layer — Derived Analytics](#gold-layer--derived-analytics)
    - [agg_hourly_city_stats](#agg_hourly_city_stats)
+   - [pipeline_metrics](#pipeline_metrics)
    - [agg_daily_hotel_kpi](#agg_daily_hotel_kpi)
    - [agg_monthly_zone_summary](#agg_monthly_zone_summary)
    - [customer_lifetime_value](#customer_lifetime_value)
@@ -1093,9 +1094,13 @@ Pre-aggregated tables that power dashboards and frequently-asked queries. None o
 | `total_revenue_inr` | NUMERIC(15,2) | Sum of `revenue_inr` from BOOKING events |
 | `avg_occupancy_rate` | NUMERIC(5,2) | Occupancy estimate as a percentage (0.00–100.00). Approximated as `min(bookings / 50.0 × 100, 100.0)` since true occupancy needs room-inventory join |
 | `cancellation_rate` | NUMERIC(5,4) | `cancellations / (bookings + cancellations)` as a fraction in `[0, 1]` |
-| `ingestion_ts` | TIMESTAMP | When this row was written. `DEFAULT CURRENT_TIMESTAMP` |
+| `ingestion_ts` | TIMESTAMP | When this row was written. `DEFAULT CURRENT_TIMESTAMP`, NOT NULL |
+| `total_checkins` | INTEGER | Count of CHECKIN events in this window for this city. **Added via migration 007.** NULL on rows written before the consumer is taught to populate it (L-014 fix). |
+| `total_checkouts` | INTEGER | Count of CHECKOUT events in this window. **Migration 007.** Same caveat as `total_checkins`. |
+| `total_cancellations` | INTEGER | Count of explicit CANCELLATION events. **Migration 007.** Distinct from `cancellation_rate` (which is the booking-to-cancellation ratio); this is a raw count. |
+| `total_reviews` | INTEGER | Count of REVIEW events landed in this window. **Migration 007.** Today reviews are batch-loaded only — column stays NULL until a REVIEW event type ships in the producer/consumer (see B-030). |
 
-> **Schema notes:** The column is named `avg_occupancy_rate` for historical reasons — it actually holds a percentage value (0–100), not a rate (0–1). The other metric `cancellation_rate` is a true rate. Earlier design drafts proposed extra columns (`total_checkins`, `total_cancellations`, `avg_nightly_rate_inr`, `late_event_count`) — these were dropped in implementation because they were either trivially derivable (checkins ≈ bookings on a small lag) or not yet needed by any dashboard. They can be added via `ALTER TABLE` if a future query needs them.
+> **Schema notes:** The column is named `avg_occupancy_rate` for historical reasons — it actually holds a percentage value (0–100), not a rate (0–1). The other metric `cancellation_rate` is a true rate. `cancellation_rate` and `ingestion_ts` shipped in Phase 2 but were undocumented here until migration 007 — the migration records them with `IF NOT EXISTS` so a single migration file is a complete record of the columns the live pipeline depends on. Migration 007 also adds the four `total_checkins`/`total_checkouts`/`total_cancellations`/`total_reviews` count columns; the consumer write-path that populates them is a separate change (the storage is in place, the producer/consumer wiring is the next chunk).
 
 #### Sample Data (real, from a 5-minute dev run)
 
@@ -1122,6 +1127,53 @@ The producer of this table is `scripts/stream_consumer.py`. Worth noting in the 
 - **Late events** (arrived after their window closed) → routed to operational quarantine, NOT included in this aggregate at flush time. A future reconciliation job (Phase 6) will additively merge late events into the affected `(city, window_start)` rows.
 
 The `ingestion_ts` column reflects when the row was last UPSERTed. A row whose `ingestion_ts` is significantly later than its `window_end` indicates a re-flush — either from a dev-mode short window reopening, or eventually from the Phase 6 late-event reconciler.
+
+---
+
+### `pipeline_metrics`
+
+**Purpose:** Append-only consumer heartbeat. One row written every ~5–10s by `scripts/stream_consumer.py` capturing the current snapshot of its in-memory `run_metrics` counters. Powers the monitor's LIVE THROUGHPUT view (events/sec, lag, consumer-alive).
+**Produced by:** `scripts/stream_consumer.py` (B-032 / migration 007; consumer write-path is the next chunk after the migration)
+**Update cadence:** ~5–10s per row while the consumer is running; gaps imply the consumer is down
+**Lookback:** Append-only, never truncated; meant to be trimmed by retention later (not yet implemented)
+
+#### Schema (actual, as deployed in migration 007)
+
+| Column | Type | Notes |
+|---|---|---|
+| `metric_ts` | TIMESTAMP | **PK.** Heartbeat timestamp the consumer wrote the row at |
+| `events_consumed` | BIGINT | Cumulative consumed-since-start. NOT NULL, default 0 |
+| `bookings` | BIGINT | Cumulative BOOKING events seen. NOT NULL, default 0 |
+| `cancellations` | BIGINT | Cumulative CANCELLATION events seen. NOT NULL, default 0 |
+| `malformed` | BIGINT | Cumulative Gate 1/2 drops (failed schema validation, parse errors, unknown event types, unknown cities). NOT NULL, default 0 |
+| `late` | BIGINT | Cumulative late-watermark drops (events arriving after their window closed). NOT NULL, default 0 |
+| `active_windows` | INTEGER | Open windows held in memory at heartbeat time. NOT NULL, default 0 |
+| `max_event_ts` | TIMESTAMP | Latest event timestamp seen so far. Nullable (no events yet → NULL) |
+| `consumer_lag` | BIGINT | Kafka consumer lag at heartbeat time. Nullable — may be unavailable from kafka-python |
+
+#### Why this exists (resolves L-015)
+
+The consumer's `run_metrics` counters used to live only in memory and print only at shutdown — nothing queryable mid-run. So the monitor could only infer activity from what landed in `agg_hourly_city_stats` (which only moves when an hourly window flushes) and from object counts in the MinIO quarantine prefixes. That made the monitor a batch-rollup viewer, not a real-time monitor. `pipeline_metrics` is the live metrics path that runs alongside the hourly aggregate — fine windows for "now", coarse windows for "the trend" — exactly how production systems run both.
+
+#### Use cases
+
+- *"Events per second right now"* — `(LATEST.events_consumed - PREVIOUS.events_consumed) / interval_seconds`
+- *"Is the consumer alive?"* — heartbeat age = `NOW() - MAX(metric_ts)`; large = down
+- *"Current Kafka lag"* — latest `consumer_lag`
+- *"Late-event rate trend"* — `late` delta over a sliding window
+- *"Open windows held in memory"* — latest `active_windows`, alerts if it grows without bound
+
+#### Read pattern (monitor)
+
+```sql
+-- last two heartbeats, for an events/sec delta
+SELECT *
+FROM pipeline_metrics
+ORDER BY metric_ts DESC
+LIMIT 2;
+```
+
+Counters are cumulative-since-consumer-start, so the read path derives rates as deltas between adjacent rows rather than storing a `rate` column. Restarts reset counters; rate calculations should drop deltas where the newer cumulative value is lower than the older one (process restart).
 
 ---
 
@@ -1367,8 +1419,22 @@ The original blueprint specified **PyFlink** for the stream-processing layer (Ka
 For each hotel, every "tick" (e.g. every second):
 1. Calculate current rate = `base_daily_bookings × (peak_mult if peak_month else off_season_mult)`
 2. Generate Poisson-distributed events at that rate
-3. For each event: pick room type, pick OTA source by weights, generate price within range
+3. For each event: draw an event type from the weighted mix below, then for BOOKING/PRICE_CHANGE fill the type-specific extra fields
 4. Publish JSON to Kafka `booking-events` topic
+
+#### Event types emitted
+
+The producer's `EVENT_TYPES` / `EVENT_WEIGHTS` arrays (in `scripts/kafka_event_producer.py`) define the live event mix. Weights sum to exactly 1.0:
+
+| Event type | Weight | Carries extra fields? | Notes |
+|---|---:|---|---|
+| `BOOKING` | 0.55 | yes — `room_type_id`, `revenue_inr`, `nights`, `booking_source` | Headline event. Drives `total_bookings` and `total_revenue_inr` on `agg_hourly_city_stats`. |
+| `CHECKIN` | 0.18 | no — base envelope only | Drives `total_checkins`. Roughly proportional to bookings on a small lag (most bookings eventually check in). |
+| `CHECKOUT` | 0.12 | no — base envelope only | Drives `total_checkouts`. Slightly less than CHECKIN because some bookings cancel or no-show before checkout. |
+| `CANCELLATION` | 0.10 | no — base envelope only | Drives `total_cancellations` (raw count) and feeds `cancellation_rate` (ratio). Matches the ~12% real cancellation rate. |
+| `PRICE_CHANGE` | 0.05 | yes — `room_type_id`, `old_price_inr`, `new_price_inr` | Passes consumer Gate 2 (`VALID_EVENT_TYPES`) but is then silently filtered at Gate 3 (not in `PROCESSED_EVENT_TYPES`). Reserved for a future fact_price_events stream path. |
+
+**Base envelope** (every event regardless of type): `event_id`, `event_type`, `hotel_id`, `city`, `event_ts`. `CHECKIN`, `CHECKOUT`, and `CANCELLATION` carry only this envelope — the consumer only needs the city + timestamp to bump the matching count column on `agg_hourly_city_stats`.
 
 #### Producer & consumer CLI
 

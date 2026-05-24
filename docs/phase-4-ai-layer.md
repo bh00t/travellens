@@ -66,7 +66,7 @@ for Phase 5 to render.
 | `text_to_sql.py` | `ai/` | Returns rows for known-good SQL queries |
 | `semantic_search.py` | `ai/` | Returns reviews + summary for review queries |
 | `main.py` | `ai/` | Single entry point routes and returns correct result |
-| `text_to_sql_system.txt` | `ai/prompts/` | Schema DDL + India context + 5 few-shot examples |
+| `text_to_sql_system.txt` | `ai/prompts/` | SELECT-only header + SCHEMA + JOIN MAP + COLUMN LOCATION + ENTITY COUNT RULE + OUTPUT RULES (general rules over the data model, not few-shot question→SQL pairs) |
 
 ---
 
@@ -89,7 +89,9 @@ summarisation. No API cost, no data leaving the machine, no rate limits.
 
 Trade-off vs Claude API: lower accuracy on hard queries (~75–85% vs ~95% on Spider-hard).
 For a portfolio project demoing realistic hotel queries, the system prompt with full
-schema DDL and few-shot examples closes most of the gap.
+schema DDL plus general join, column-location, entity-count, and output rules closes
+most of the gap. The prompt deliberately avoids few-shot question→SQL pairs — those
+drift the moment a new query shape arrives; the general rules generalise.
 
 ### SELECT-only SQL guard
 
@@ -133,7 +135,26 @@ Create the system prompt file. It must contain:
    - Seasons: peak (Dec–Jan), shoulder (Oct, Feb–Mar), monsoon trough (Jun–Sep)
    - Never use `hotel_master.city` — cities are in `dim_location`
 
-4. Five few-shot examples — see the examples block in the original spec.
+4. General rule sections (NOT question→SQL example pairs):
+   - **JOIN MAP** — copy-paste FROM/JOIN blocks for the common access patterns
+     (need city/state → through `hotel_master`+`dim_location`; need customer
+     attributes → through `dim_customer`; need date attributes → through
+     `dim_date`), plus DATE HANDLING (`date_id` is a surrogate key, the real
+     date is `dim_date.full_date`) and HARD JOIN RULES that forbid
+     cross-type equality like `b.hotel_id = l.location_id`.
+   - **COLUMN LOCATION** — which columns live on which table only, e.g.
+     `is_cancelled` lives ONLY on `fact_bookings`; a dimension-only query
+     must not reference it.
+   - **ENTITY COUNT RULE** — to count entities (hotels, customers, cities),
+     query the dimension table directly; never count over `fact_bookings`
+     (which counts booking ROWS, not entities).
+   - **OUTPUT RULES** — exclude cancelled bookings on `fact_bookings`
+     queries; revenue in crore via `/ 1e7`; ADR; cancellation-rate formula;
+     by-city/by-state grouping; LIMIT only for "top N"; `SELECT DISTINCT`
+     when listing repeatable entities; `fact_bookings` is the analytics
+     source — `agg_daily_hotel_kpi` / `agg_hourly_city_stats` /
+     `pipeline_metrics` are operational tables and must NOT be used for
+     business KPIs.
 
 ---
 
@@ -230,7 +251,11 @@ python ai/main.py "average daily rate for 5-star hotels in Goa"
 
 Each must return rows with no error. Check the printed SQL — does it match what
 you'd write by hand? If a query produces wrong SQL, copy it into psql to debug,
-then update the few-shot examples in `text_to_sql_system.txt`.
+then tighten the matching rule section in `text_to_sql_system.txt` — the JOIN MAP
+block if it used the wrong join shape, COLUMN LOCATION if it referenced a column
+on the wrong table, ENTITY COUNT RULE if it counted bookings instead of entities,
+or OUTPUT RULES otherwise. Adding a one-off question→SQL example for the failing
+query is a last resort, not the first fix.
 
 ---
 
@@ -358,8 +383,10 @@ python ai/main.py "price changes in Goa last 30 days"
 ```
 
 Look at the generated SQL in each output. Does it match what you'd write manually?
-If not — copy the SQL into psql, figure out what it should be, then add that
-as a new few-shot example in `text_to_sql_system.txt`.
+If not — copy the SQL into psql, figure out what it should be, then tighten the
+matching rule section in `text_to_sql_system.txt` (JOIN MAP / COLUMN LOCATION /
+ENTITY COUNT RULE / OUTPUT RULES). A one-off example for that exact query is a
+last resort — the general rule generalises to every related query.
 
 ---
 
@@ -434,8 +461,10 @@ queries will be slow (~8–15s). Fix: update Nvidia drivers to CUDA 12.x.
   model on every query call (~2 second penalty each time)
 - Do not hardcode the Ollama model name in code — always read from `.env`
 - Do not use `hotel_master.city` in any SQL — cities are in `dim_location`
-- Do not skip the few-shot examples in the system prompt — they are the biggest
-  lever for improving SQL accuracy
+- Do not strip the general rule sections (SCHEMA / JOIN MAP / COLUMN LOCATION /
+  ENTITY COUNT RULE / OUTPUT RULES) from the system prompt — those rules are the
+  primary SQL-accuracy lever. The prompt is deliberately NOT a few-shot example
+  list; adding one-off question→SQL pairs is a last resort, not a tuning method
 
 ---
 
@@ -459,7 +488,7 @@ _(Fill in after Phase 4 is complete)_
 - Router misclassifications — any queries routed to the wrong path?
 - Actual Ollama latency on GPU:
 - Any Ollama timeout issues:
-- Few-shot examples that needed to be added:
+- Rule sections that needed tightening (JOIN MAP / COLUMN LOCATION / ENTITY COUNT / OUTPUT RULES):
 
 ---
 

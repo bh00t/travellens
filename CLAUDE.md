@@ -41,9 +41,9 @@ Learning project — building data engineering skills by shipping real code, not
 | 4 | AI layer (Text-to-SQL + semantic) | ✓ Complete |
 | 5 | Flask dashboard | ✓ Complete |
 | 6 | Airflow DAGs | ⬜ In progress — infra/containers up, 5 DAGs not built |
-| 7 | Pipeline monitor (/monitor) | ⬜ In progress — built, 9/10 acceptance tests pass; Test 2 pending window close |
+| 7 | Pipeline monitor (/monitor) | ✓ Complete — B-027 base + B-029 in-place auto-refresh + B-032 live throughput redesign all shipped (live pulse, default-today filter, lifecycle counts, SOON placeholders, `/monitor/data` JSON sidecar) |
 
-Current phase: **7** (pipeline monitor, pending Test 2) — read `docs/phase-7-monitor.md`. Phase 6 DAGs (B-024/013/014/015/016) still open; infra is up.
+Current phase: **6** — Phase 7 shipped (monitor redesign done end-to-end). Read `docs/phase-7-monitor.md` for the live-pulse + auto-refresh design. Phase 6 DAGs (B-024/013/014/015/016) still open; infra is up.
 
 > Phase 4 and 5 are acceptance-complete but under ongoing hardening via backlog
 > items (B-003, B-004, B-006, B-022). "Complete" means the phase shipped — it does
@@ -87,8 +87,15 @@ Current phase: **7** (pipeline monitor, pending Test 2) — read `docs/phase-7-m
 - **Never commit `.env`** — it is gitignored, keep it that way. Confirm with
   `git check-ignore .env` before any commit.
 - **Never modify `data/`** — source files are read-only.
-- **Migrations are append-only** — never edit an existing migration (003, 004, 005, 006).
+- **Migrations are append-only** — never edit an existing migration (003, 004, 005, 006, 007).
   Add a new numbered migration for any schema change.
+- **`schema.sql` is the base; later columns live in migrations.** The frozen
+  `db/schema.sql` captures the original 14-table star schema. Every later structural
+  change (003 dashboard widgets, 004 widget settings, 005 widget cache, 006
+  `hotel_master.opened_year`, 007 `pipeline_metrics` + four extra `agg_hourly_city_stats`
+  count columns) is a numbered migration. The actual current schema is `schema.sql`
+  PLUS every applied migration — both together are the source of truth. Read both
+  before writing anything LLM-facing that depends on a column existing.
 
 ---
 
@@ -128,30 +135,35 @@ travellens/
 │   ├── __init__.py                  ← required
 │   ├── server.py                    ← Flask app: pages + API (pin freezes SQL,
 │   │                                  refresh serves cache or runs frozen SQL;
-│   │                                  + /monitor route, Phase 7 B-027)
+│   │                                  + /monitor + /monitor/data routes, Phase 7
+│   │                                  B-027 base + B-029/B-032 live-pulse redesign)
 │   ├── widget_renderer.py           ← result shape → Chart.js config
 │   └── templates/
 │       ├── base.html                ← shared nav + layout
 │       ├── dashboard.html           ← pinned widgets grid (+ Show SQL modal, rename)
 │       ├── explore.html             ← chat interface + widget preview
-│       ├── monitor.html             ← Phase 7: pipeline monitor (B-027)
+│       ├── monitor.html             ← Phase 7 monitor (B-027 + B-029 + B-032 Chunk 4):
+│       │                              header live pulse, default-today filter,
+│       │                              EVENTS/QUARANTINE/HEALTH sections, SOON
+│       │                              placeholders, 10s in-place auto-refresh
 │       └── about.html               ← product page
 ├── scripts/
 │   ├── generate_embeddings.py       ← Phase 3: batch embed reviews_raw
 │   ├── semantic_playground.py       ← Phase 3: interactive semantic search test
 │   ├── load_to_postgres.py          ← Phase 1: bulk loader
 │   ├── validate_load.py             ← Phase 1: 20-check validator
-│   ├── stream_consumer.py           ← Phase 2: Kafka consumer + dual sink
-│   ├── kafka_event_producer.py      ← Phase 2: synthetic event producer
+│   ├── stream_consumer.py           ← Phase 2 + B-032 Ch.2: dual sink + per-type counts + pipeline_metrics heartbeat
+│   ├── kafka_event_producer.py      ← Phase 2 + B-032 Ch.3: emits 5 event types (BOOKING/CHECKIN/CHECKOUT/CANCELLATION/PRICE_CHANGE; weights 0.55/0.18/0.12/0.10/0.05)
 │   └── init_s3_buckets.py           ← Phase 2: MinIO bucket bootstrap
 ├── ai/                              (see above)
 ├── db/
 │   ├── schema.sql                   ← 14-table star schema (frozen)
 │   └── migrations/
-│       ├── 003_dashboard_widgets.sql ← Phase 5: dashboard state table
-│       ├── 004_widget_settings.sql   ← Phase 5: width column
-│       ├── 005_widget_cache.sql      ← B-022: generated_sql + last_result_json
-│       └── 006_opened_year.sql       ← hotel_master.opened_year (entity-count queries)
+│       ├── 003_dashboard_widgets.sql      ← Phase 5: dashboard state table
+│       ├── 004_widget_settings.sql        ← Phase 5: width column
+│       ├── 005_widget_cache.sql           ← B-022: generated_sql + last_result_json
+│       ├── 006_hotel_opened_year.sql      ← hotel_master.opened_year (entity-count queries)
+│       └── 007_pipeline_live_metrics.sql  ← B-032: pipeline_metrics + 4 new agg_hourly_city_stats count cols
 ├── docker/
 │   ├── postgres.Dockerfile          ← Postgres 16 + pgvector
 │   └── docker-compose.yml           ← postgres + kafka + zookeeper + minio
@@ -172,6 +184,7 @@ travellens/
 | Forgetting `__init__.py` in new package | Create it (empty) immediately when making a new package folder |
 | Using `hotel_master.city` in SQL | Always `dim_location.city` via JOIN on `location_id` |
 | Querying `agg_daily_hotel_kpi` for booking counts | Use `fact_bookings` — KPI table is empty until B-013 DAG runs |
+| Steering the SQL prompt to `agg_hourly_city_stats` for business answers | The stream rollup is now POPULATED (was previously claimed "empty" in the prompt — corrected during the B-032 Chunk 4 doc pass). It is the source for the `/monitor` dashboard, NOT for Explorer queries. `text_to_sql_system.txt` now names `agg_daily_hotel_kpi`, `agg_hourly_city_stats`, AND `pipeline_metrics` together as "operational/streaming aggregate tables, not the booking analytics source" — all business booking/revenue/cancellation analytics route to `fact_bookings`. |
 | Short words in `SEMANTIC_TRIGGERS` | Minimum ~5 chars or multi-word phrases — `"hot"` matches inside `"hotels"` |
 | Running `python ai/main.py` | Always `python -m ai.main` from repo root |
 | Building IVFFlat index before all embeddings written | Always embed first, index last |
@@ -184,6 +197,8 @@ travellens/
 | Counting entities via `fact_bookings` rows | "How many hotels", "hotels per city", "hotels opened per year" → query `hotel_master` directly (optionally joined to other dimensions). `fact_bookings` is for booking ROWS, not entity counts. The system prompt's ENTITY COUNT RULE codifies this. |
 | `hotel_master.opened_year` columns | `opened_year SMALLINT` added in migration 006 (synthetic, range 1975–2023, correlated with `star_category`, capped at the hotel's earliest booking year). Use this directly for "hotels opened/created per year" — never derive opening year from `fact_bookings` dates. |
 | `is_cancelled` scope | `is_cancelled` lives ONLY on `fact_bookings` — it does NOT exist on `hotel_master`, `dim_customer`, `dim_location`, `dim_date`, `dim_room_type`, or `reviews_raw`. A query whose FROM/JOIN doesn't include `fact_bookings` MUST NOT reference it (counting hotels, listing customers, enumerating cities — none take an `is_cancelled` filter). For fact_bookings queries, exclude cancelled bookings by default (`WHERE NOT b.is_cancelled`) unless the question is specifically about cancellations. |
+| `agg_hourly_city_stats` column drift | Real columns post-migration 007: `city`, `window_start`, `window_end`, `total_bookings`, `total_revenue_inr`, `avg_occupancy_rate`, `cancellation_rate`, `ingestion_ts`, `total_checkins`, `total_checkouts`, `total_cancellations`, `total_reviews`. Population (B-032 Chunks 2 + 3 — end-to-end): `total_checkins`, `total_checkouts`, and `total_cancellations` are all written by the consumer for every flushed window and read non-zero on recent windows because the producer now emits all three event types at design weights (CHECKIN 0.18, CHECKOUT 0.12, CANCELLATION 0.10). `total_reviews` stays NULL — REVIEW is not a stream event today (B-030). |
+| `pipeline_metrics` table | Append-only heartbeat written by `scripts/stream_consumer.py` every `FLUSH_CHECK_SECONDS` (~10s) — live since B-032 Chunk 2. Columns: `metric_ts` (PK), `events_consumed`, `bookings`, `cancellations`, `malformed`, `late` (BIGINT, NOT NULL default 0), `active_windows` (INT, NOT NULL default 0), `max_event_ts` (TIMESTAMP, NULL), `consumer_lag` (BIGINT, NULL — reserved, not computed yet). Counters are cumulative-since-start — derive events/sec as a delta between adjacent rows, not as a stored column. Drop deltas where the newer value < older value (consumer restart reset). Added in migration 007 to resolve L-015. |
 
 ---
 

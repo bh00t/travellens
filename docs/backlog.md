@@ -241,6 +241,49 @@ This is the "compute path" half of B-022 — it moves widget refresh off the req
 so the dashboard read path only ever reads cache. Depends on B-022's frozen-SQL storage being
 in place first.
 
+### B-033 — quarantine_daily_rollup DAG (self-healing daily summary) ⬜ PENDING [Phase 6]
+
+**Problem:** `_monitor_quarantine()` lists ALL S3 objects under `malformed_events/` and
+`late_events/` on every page load — slow (the ~8s MinIO-timeout render) and unbounded as
+quarantine grows. Quarantine also can't be date-filtered today, even though the S3 keys ARE
+day-partitioned (`year=/month=/day=/hour=/`). City is NOT in the quarantine key (malformed events
+often can't be parsed for a city — that's why they're malformed), so city is correctly
+non-filterable.
+
+**Solution:** a daily Airflow DAG that rolls each COMPLETED day's S3 quarantine counts into a new
+table:
+  quarantine_daily_summary (
+    summary_date    DATE PRIMARY KEY,
+    malformed_count INTEGER NOT NULL DEFAULT 0,
+    late_count      INTEGER NOT NULL DEFAULT 0,
+    computed_at     TIMESTAMP NOT NULL DEFAULT now()
+  )
+
+**MUST be self-healing (the key requirement):** the DAG does NOT assume "yesterday." Each run it
+computes  missing_days = (days present in S3 up to yesterday UTC) − (days already in
+quarantine_daily_summary)  and backfills ALL of them, idempotently (INSERT ... ON CONFLICT
+(summary_date) DO UPDATE). So a missed schedule, pipeline downtime, or a manual late run all
+converge to a complete, correct table. The schedule is best-effort; the S3-reconciliation is the
+correctness guarantee — because the objects really are in S3, a skipped run loses nothing, it just
+delays the count until the next run.
+
+**Monitor read-path change:** past days in the filter range → SUM from quarantine_daily_summary
+(fast, indexed). Today (if in range) → live count (S3 today-prefix, or pipeline_metrics). Date
+filter then works on quarantine; city labelled N/A on those tiles.
+
+**Open decisions at build time:**
+- Today's source: live S3 list of today's prefix (correct across consumer restarts, one cheap
+  day-prefix call) vs latest pipeline_metrics row (fast but resets per consumer-run = "this run"
+  not "today"). Lean S3-today.
+- Write explicit zero-rows for quarantine-free completed days? Recommended YES, so "gap" vs
+  "genuinely zero" is distinguishable.
+
+**Depends on:** nothing hard; sits in the Phase-6 rollup-DAG family alongside daily_hotel_kpi /
+reconcile_late_events. Same idempotent-backfill pattern is worth reusing across those DAGs.
+
+**Why it matters (portfolio):** demonstrates idempotent gap-recovery, not just "schedule a
+script" — a real DE robustness pattern.
+
 
 ---
 
@@ -394,6 +437,127 @@ orphaned processes.
 
 ---
 
+## Phase 2 Hardening — Consumer (scoped frozen-file exception)
+
+> `scripts/stream_consumer.py` is on the FROZEN list. This is a deliberate,
+> logged exception taken to resolve L-016 (consumer never flushes under load).
+> Defaults are preserved; production behaviour is unchanged unless env vars are set.
+> **TODO after verification:** note this exception in CLAUDE.md's frozen-file list,
+> and re-run the Phase-2 acceptance suite to confirm no regression.
+
+### B-031 — Consumer resilience fix (resolves L-016)
+**Priority:** High — fixes the pipeline's core "nothing ever flushes" failure.
+**Changes (all in `scripts/stream_consumer.py`, heavily commented, defaults unchanged):**
+1. **Bug A — main loop:** replaced the endless `for msg in consumer:` generator with a
+   bounded `consumer.poll(timeout_ms=1000, max_records=INNER_BATCH_MAX)` batch. `poll()`
+   always returns control each cycle, so the flush check and max-runtime check are
+   guaranteed to run even under saturating load. Per-event processing body (all gates,
+   accumulation) is byte-for-byte unchanged — verified by diff.
+2. **Bug B — eviction:** added `max_poll_records`, `max_poll_interval_ms=600000`,
+   `session_timeout_ms=30000`, `heartbeat_interval_ms=10000` to the `KafkaConsumer` so a
+   slow chaos batch can't trigger broker eviction.
+3. **Testability:** `WINDOW_SIZE_MINUTES`, `WATERMARK_GRACE_SECONDS` are now
+   `os.getenv(..., <prod default>)`; added `INNER_BATCH_MAX` (default 200). Defaults
+   identical to before — set `WINDOW_SIZE_MINUTES=2` / `WATERMARK_GRACE_SECONDS=30` in
+   `.env` for fast dev verification only.
+**Acceptance (pending — verify with own eyes):**
+- **Test A (no-chaos correctness):** small-window `.env` + `--max-runtime 150` → a window
+  closes mid-run, flush logs appear, `agg_hourly_city_stats` count increases, monitor Fresh.
+- **Test B (chaos resilience):** same + chaos → NO "no active members" eviction, quarantine
+  counts climb, consumer self-exits clean, windows still increase.
+- **Test C (regression):** no env overrides → startup banner reads "Window: 60m | grace 300s".
+**Caveat:** `_make_late` in the producer assumes 60m/300s when shifting events 70–180 min
+back; under a 2-min test window everything late-injected lands far past the watermark
+(still classified late, so Test B holds) — proportions won't mirror prod.
+
+---
+
+### ~~B-029 — `/monitor` auto-refresh (no manual reload)~~ — **SHIPPED**
+**Status:** ✓ COMPLETE — see Completed table. Resolved by the Chunk 4 redesign:
+landed straight at B-029b (the smoother JSON+JS variant, skipping B-029a's
+full-page reload as unnecessary now that B-032 was landing in the same change).
+`render/server.py` exposes `GET /monitor/data` returning the live + stream +
+quarantine subset as JSON; `render/templates/monitor.html` polls it every 10s
+and patches values via `textContent`, preserving scroll position and
+filter-form focus. No env knob needed — 10s is hard-coded to match the
+consumer's `FLUSH_CHECK_SECONDS`. Pairs with B-032 to make the live pulse
+update in place without reload.
+
+---
+
+### ~~B-032 — Live pipeline metrics (real-time throughput; resolves L-015)~~ — **SHIPPED** ⭐
+**Status:** ✓ COMPLETE — see Completed table. All 4 chunks delivered.
+- **Chunk 1 — migration** ✓ `db/migrations/007_pipeline_live_metrics.sql` —
+  `pipeline_metrics` table + 4 new count columns on `agg_hourly_city_stats`.
+- **Chunk 2 — consumer** ✓ `scripts/stream_consumer.py` processes CHECKIN +
+  CHECKOUT past Gate 3, writes per-type counts to the new agg columns, and
+  emits a `pipeline_metrics` heartbeat every `FLUSH_CHECK_SECONDS` (~10s) in
+  its own try/except.
+- **Chunk 3 — producer** ✓ `scripts/kafka_event_producer.py` emits CHECKOUT
+  at design weight 0.12 alongside BOOKING / CHECKIN / CANCELLATION /
+  PRICE_CHANGE (weights 0.55 / 0.18 / 0.12 / 0.10 / 0.05, sum 1.0).
+- **Chunk 4 — monitor UI** ✓ `/monitor` redesigned with a header live pulse
+  (events/sec from heartbeat deltas, alive=age<15s, "waiting for heartbeat"
+  empty state), default-today filter (FIXED — no all-data fallback), and
+  EVENTS / QUARANTINE / HEALTH sections. Revenue card removed (business →
+  Explorer). Three SOON placeholder tiles (Review, Embedded, Sentiment)
+  render dashed "—" with blocking backlog IDs — never fake values.
+- **`/monitor/data`** ✓ JSON sidecar returning `{live, stream, quarantine}`,
+  same query-string contract as `/monitor`. 10s in-place polling shipped
+  with this (folds in B-029).
+
+**Verified end-to-end (Chunk 4 acceptance, 11 PASS / 0 FAIL):** events/sec
+matches the 50 evt/s producer rate exactly (49.6 / 50.2 evt/s from hand-
+computed heartbeat deltas); dot goes grey within one tick when the consumer
+stops; filtered counts match a psql aggregate exactly (3,383 / 1,033 / 691 /
+≈598 / 44 / 44); SOON tiles render `—` with the backlog IDs; revenue absent
+from the page; numbers update in DOM ~every 10s with scroll preserved; page
+still renders HTTP 200 with MinIO stopped.
+
+**Retires L-015 in full and resolves L-014 for COUNTING** (CHECKIN /
+CHECKOUT now counted via Chunks 2 + 3 — see L-014 entry for the residual
+caveat that these counts live only in the stream aggregate, not in
+`fact_bookings`).
+
+**Design note (locked):** the hourly `agg_hourly_city_stats` stays AS-IS for
+business KPIs; `pipeline_metrics` is the SEPARATE fast metrics path
+alongside it. Fine windows for "now", coarse for "the trend" — exactly how
+production systems run both. Do NOT shrink the production window to fake
+real-time.
+
+**Future follow-ons (not part of B-032):**
+- **B-030** unblocks the Review + Embedded SOON tiles (REVIEW becomes a
+  stream event).
+- **B-026** unblocks the Sentiment SOON tile (scored at embed time).
+- `pipeline_metrics.consumer_lag` is reserved NULL; an AdminClient hook
+  would populate it but is a small follow-on, not on this item.
+
+---
+
+### B-030 — Reviews are not generated in the stream (feature gap, NOT a correlation bug)
+**Origin:** User wanted reviews tied to real hotels/bookings rather than unrelated.
+**Verified fact (settled, do not re-litigate the correlation part):** hotel-level correlation
+ALREADY EXISTS — query confirmed **1,908 / 2,000 (95.4%)** of review-hotels have real bookings
+in `fact_bookings`; every review joins to a real hotel via `reviews_raw.hotel_id`. The 92-hotel
+gap is reviewed-but-not-booked hotels (the stream seeds from only 500 hotels) — expected, not a
+bug. So "wild unrelated reviews" was a non-issue; **no correlation fix needed.**
+**The ACTUAL gap:** reviews exist only as a static 30K batch load — the live stream emits no
+REVIEW event. So the pipeline can't demonstrate reviews arriving/being processed live, and there
+is no guest-/booking-level linkage (the stream carries no `customer_id`; `reviews_raw` has no
+`customer_id`/`booking_id`).
+**To add reviews as a stream event (decision, if pursued):**
+- Producer emits a REVIEW event tied to a hotel (hotel-level correlation is real; guest-level
+  would need customer identity added to producer→consumer→schema, currently absent everywhere).
+- Consumer gains a REVIEW path → insert into `reviews_raw` (+ optional `customer_id`/`booking_id`
+  columns via append-only migration).
+- Streaming embedding-at-ingest (the one genuinely new capability; today embeddings are batch).
+- **Real-text trade-off:** generated review text is weak for semantic search. Smart middle path:
+  sample REAL Kaggle text and attach to streamed stays — correlation AND real language.
+**Status:** Open decision — correlation already works (verified). Streaming-reviews is an optional
+Phase-8-class feature, NOT urgent. Lower priority than B-029/B-032 (the monitor redesign).
+
+---
+
 ## Phase 7 — Monitoring
 
 > See `docs/phase-7-monitor.md` (executable runbook) and
@@ -417,8 +581,9 @@ orphaned processes.
 | L-011 | 7B model omits DISTINCT on plain entity-list queries — "5 customers named R" returns the same person repeated (one row per booking). Adding "unique" to the query fixes it. Capability limit, not a prompt bug; further prompt tuning regresses other query types. | Phase 4 | B-017 (bigger model) |
 | L-012 | Sentiment-topic conflation in semantic review search. Embeddings match TOPIC not POLARITY — "cleanliness complaints" returns cleanliness praise and complaints alike, since both are about cleanliness. A `reviews_raw.rating` filter is NOT a reliable proxy: confirmed via testing that complaints (e.g. "foul smell", "cobwebs") appear in mixed-sentiment 3★ reviews with positive openers, and identical review texts exist across 1–5★. Proper fix requires sentiment scoring at embed time (store a sentiment score per review, filter on it) — a feature, not a filter. Current behaviour: semantic search surfaces topically-relevant reviews; summary should describe results as "reviews mentioning X" not "X complaints". Discovered during B-004 manual testing. | Phase 4 | Planned: **B-026** (sentiment-at-embed-time). Copy fix on the summary line is a smaller separate item still open. |
 | L-013 | Bare grouped aggregations over `fact_bookings` (shapes like "total revenue by city", "bookings by month", "revenue by customer segment", "average nights stayed by season") intermittently drop the `WHERE NOT b.is_cancelled` filter on Qwen-7B. Stronger cues — `LIMIT`, explicit `WHERE` filters on star_category / city / etc. — usually keep the filter (Tests 6 and 7 in the verification suite). Bare grouped shapes do not. **Confirmed not promptable** at this model size: two prompt rewrites attempted — a single-bullet "applies ONLY when fact_bookings is in FROM/JOIN" version (the current text) and a two-bullet universal-rule-plus-illustrations version. Neither resolves the bare-grouped cases. The two-bullet version improved "by month" and "by segment" to 3/3 but degraded an unnamed-shape generalisation ("average nights stayed by season") and added marginal noise on the LIMIT-bearing cases. Root cause: Qwen 7B underweights universal/conditional rules in the system prompt relative to attention pull from concrete examples in the same prompt — a small-model attention budget limit, not a prompt-wording bug. Same family as L-010 and L-011 (capability ceiling, not prompt tuning). **Safeguard:** B-022 freezes generated SQL at pin time, so a missing cancellation filter is a one-time review failure at pin, not a per-refresh data integrity bug — the read path never runs unverified SQL. **Fix path:** B-017 (model tiering — Gemma 12B or similar holds rule discipline better in early testing) is the real remediation. | Phase 4 | B-017 (larger model for SQL) — B-022 pin-time review is the meanwhile safeguard |
-| L-014 | CHECKIN / CHECKOUT (and PRICE_CHANGE) events are silently filtered at the consumer's Gate 3 — not aggregated, not counted, not stored. So the monitor (B-027) cannot show "customers checked in / out" counts; the data is never captured. Surfacing it would require instrumenting `stream_consumer.py` to count/persist these event types — a change to a FROZEN Phase-2 file. | Phase 7 | Deferred — needs consumer instrumentation (frozen file) |
-| L-015 | No live "events received / sec" throughput metric. The consumer's `run_metrics` counters (events_consumed, malformed_dropped, late_dropped) live in memory and print only at shutdown — they are not written to a queryable table mid-run. The monitor (B-027) therefore infers activity from what landed (processed in `agg_hourly_city_stats` + quarantine objects in MinIO), not from a live rate. A true throughput gauge would need a metrics table the consumer writes to — a change to a FROZEN Phase-2 file. | Phase 7 | Deferred — needs a consumer-written metrics table |
+| L-014 | ~~CHECKIN / CHECKOUT (and PRICE_CHANGE) events are silently filtered at the consumer's Gate 3 — not aggregated, not counted, not stored.~~ — **RESOLVED (B-032 Chunks 2 + 3).** `PROCESSED_EVENT_TYPES` now spans `BOOKING, CANCELLATION, CHECKIN, CHECKOUT`; the consumer counts each per window and writes `total_checkins / total_checkouts / total_cancellations` to `agg_hourly_city_stats` (migration 007 columns). The producer (Chunk 3) now actually emits both CHECKIN and CHECKOUT at design weights (0.18 / 0.12), so both columns read non-zero on every recent window — verified end-to-end. PRICE_CHANGE is still silently filtered at Gate 3 (valid event type, just not in `PROCESSED_EVENT_TYPES`) — out of scope for this item. **Note:** these counts live ONLY in the stream aggregate (`agg_hourly_city_stats`); they are NOT in `fact_bookings` or any revenue path. Anything that wants a checkin-aware booking model (e.g. tying CHECKIN/CHECKOUT events to specific bookings) still has to be designed separately. | Phase 7 | RESOLVED by B-032 Chunks 2 + 3. |
+| L-015 | ~~No live "events received / sec" throughput metric. The consumer's `run_metrics` counters live in memory and print only at shutdown — not written to a queryable table mid-run.~~ — **RESOLVED in full (B-032 Chunks 1+2+4).** Consumer writes a `pipeline_metrics` heartbeat row every `FLUSH_CHECK_SECONDS` (~10s) with cumulative `events_consumed / bookings / cancellations / malformed / late / active_windows / max_event_ts` (plus reserved-NULL `consumer_lag`). The `/monitor` header pulse reads the latest two heartbeat rows and surfaces events/sec as the delta divided by interval, with `alive = age < 15s` driving a green/grey dot. Verified end-to-end against a 50 evt/s producer: computed rate 49.6–50.2 evt/s mid-run; dot goes grey within one tick when the consumer stops. | Phase 7 | RESOLVED by B-032 (all 4 chunks). |
+| L-016 | Consumer never flushes under sustained load → monitor stays Stale / agg table frozen. TWO compounding root causes, both confirmed by reading `scripts/stream_consumer.py`: **(A) flush-check starvation** — the main loop was `while running: for msg in consumer:`, and the flush check + max-runtime check live OUTSIDE the inner `for`. The inner loop only exits after `consumer_timeout_ms` (1s) of SILENCE; under a continuous stream (esp. `--chaos`, where every bad event does a blocking `S3.put_object`) the topic never goes quiet for a full second, so the inner loop never ended and neither check ever ran. `--max-runtime` therefore also never fired. **(B) broker eviction** — `session_timeout_ms` / `heartbeat_interval_ms` / `max_poll_interval_ms` were UNSET (kafka-python defaults 10s / 3s / 5min); slow chaos batches between polls exceeded the interval, so the broker evicted the consumer ("no active members"), lag ballooned, and because the loop never exited cleanly the graceful-shutdown flush never fired either. NOTE: the earlier cp1252-crash hypothesis was a RED HERRING — `stream_consumer.py` already had `sys.stdout.reconfigure(encoding="utf-8")` (line 111); the consumer's own logging was never the cause. **Why the 44 existing windows exist anyway:** earlier runs were low/no-chaos (inner loop idled → flushed) and/or Ctrl-C'd (graceful force-flush). | Phase 2 / Phase 7 | **Fix SHIPPED via scoped frozen-file exception** (see "Phase 2 hardening" note below) — pending live verification (Tests A no-chaos flush / B chaos no-eviction). Until verified, B-027 Test 2's live stream-increment stays open. |
 
 ---
 
@@ -453,3 +618,5 @@ orphaned processes.
 | ✓ | B-018 — CLAUDE.md at repo root | Phase 5 |
 | ✓ | B-019 — File-tree + Claude Code instructions in all phase docs | Phase 5 |
 | ✓ | B-027 — Pipeline monitor dashboard (/monitor): 3 sections (stream activity / review embeddings / pipeline health), date+city filter, guarded Airflow+MinIO deps, honest empty-states | Phase 7 |
+| ✓ | B-029 — `/monitor` in-place auto-refresh: `GET /monitor/data` JSON sidecar + 10s `setInterval` poll patching live pulse + EVENTS + QUARANTINE via `textContent`. Scroll position and filter focus preserved. Skipped B-029a's full-page-reload variant — shipped straight at B-029b alongside B-032 Chunk 4. | Phase 7 |
+| ✓ | B-032 — Live pipeline metrics + lifecycle counts. Migration 007 (`pipeline_metrics` + 4 count cols on `agg_hourly_city_stats`); consumer heartbeat + per-type counting; producer CHECKOUT emission; `/monitor` redesigned with header live pulse (events/sec from heartbeat deltas, alive=age<15s), default-today filter, EVENTS / QUARANTINE / HEALTH sections, SOON tiles for Review / Embedded / Sentiment with blocking backlog IDs. Revenue removed (business → Explorer). Retires L-015; resolves L-014 for counting (CHECKIN/CHECKOUT now in `agg_hourly_city_stats` though not in `fact_bookings`). | Phase 7 |

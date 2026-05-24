@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>TravelLens India | Technical Blueprint</title>
+  <title>TravelLens India | Technical Overview</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><rect width='24' height='24' rx='3' fill='%231e1e1e'/><path d='M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z' fill='%2300B140'/><circle cx='12' cy='9' r='2.5' fill='%231e1e1e'/></svg>">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -150,6 +150,10 @@
     @keyframes glossary-nudge{0%,100%{transform:rotate(0deg) translateX(0);}15%{transform:rotate(-4deg) translateX(-2px);}30%{transform:rotate(4deg) translateX(2px);}45%{transform:rotate(-3deg) translateX(-1px);}60%{transform:rotate(3deg) translateX(1px);}75%{transform:rotate(-1deg) translateX(0);}}
     details:not([open]).glossary-in-view summary .gl-cta{animation:glossary-nudge 1.4s ease-in-out infinite;transform-origin:center;}
     details:not([open]) summary:hover .gl-cta{animation:none;background:#00B140;color:#fff;border-color:#00B140;}
+    /* attention wiggle for the vector-store links in the limitations table */
+    @keyframes vs-wiggle{0%,88%,100%{transform:rotate(0deg) translateX(0);}90%{transform:rotate(-5deg) translateX(-1px);}93%{transform:rotate(5deg) translateX(1px);}96%{transform:rotate(-3deg) translateX(-1px);}98%{transform:rotate(2deg);}}
+    .vs-link{font-weight:800;color:#007A2C;text-decoration:underline;text-underline-offset:2px;display:inline-block;animation:vs-wiggle 3s ease-in-out infinite;transform-origin:center;}
+    .vs-link:hover{animation:none;background:#00B140;color:#fff;text-decoration:none;padding:0 4px;}
 
     /* ARCH CANVAS */
     .cfa-wrap{width:100%;overflow-x:auto;}
@@ -294,7 +298,7 @@
       </div>
       <span style="font-family:'Fraunces',serif;font-size:1.6rem;font-weight:700;letter-spacing:-.02em;color:#00B140;">TravelLens</span>
     </div>
-    <span style="font-family:'JetBrains Mono',monospace;font-size:.6rem;font-weight:800;text-transform:uppercase;letter-spacing:.1em;color:#595959;">India · Technical Blueprint v1.0</span>
+    <span style="font-family:'JetBrains Mono',monospace;font-size:.6rem;font-weight:800;text-transform:uppercase;letter-spacing:.1em;color:#595959;">India · Technical Overview</span>
   </div>
   <div style="flex:1;overflow-y:auto;padding:.75rem 0;">
     <div style="padding:.25rem 1.5rem .5rem;font-family:'JetBrains Mono',monospace;font-size:.6rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:#D4D4D8;">Overview</div>
@@ -431,7 +435,7 @@
     </div>
   </details>
 
-  <p style="font-size:.9rem;color:#595959;line-height:1.8;max-width:660px;margin-bottom:1.5rem;">India's tourism sector is worth ₹2.3 lakh crore. It spans 10,000+ registered hotels and 1.4 billion domestic tourist trips annually. A single peak-season weekend at a coastal destination like Goa generates more booking and pricing events than most mid-size SaaS companies handle in a month. Yet the people who run these properties — revenue managers, GMs, state tourism boards — are making billion-rupee decisions from <strong style="color:#000;">last night's Excel export</strong>. The data exists. The answers don't.</p>
+  <p style="font-size:.9rem;color:#595959;line-height:1.8;max-width:660px;margin-bottom:1.5rem;">India's tourism sector is worth ₹2.3 lakh crore — 10,000+ hotels, 1.4 billion domestic trips a year. A single peak weekend in Goa generates more booking and pricing events than most mid-size SaaS handles in a month. Yet revenue managers, GMs, and tourism boards make billion-rupee calls from <strong style="color:#000;">last night's Excel export</strong>. The data exists. The answers don't.</p>
 
   <h3 style="font-family:'Fraunces',serif;font-size:1.1rem;font-weight:700;color:#000;margin:0 0 .75rem;">1.1 Who needs answers — and what happens when they can't get them</h3>
   <div style="display:grid;grid-template-columns:repeat(3,1fr);border:2px solid #000;box-shadow:4px 4px 0 #000;overflow:hidden;margin-bottom:1.75rem;">
@@ -490,7 +494,7 @@
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1.25rem;margin-bottom:2rem;">
     <div class="card" style="padding:1.25rem;border-top:6px solid #00B140;">
       <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.625rem;"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><h4 style="font-family:'Fraunces',serif;font-size:.975rem;font-weight:700;color:#000;margin:0;">What it is</h4></div>
-      <p style="font-size:.82rem;color:#595959;line-height:1.65;margin:0;">A real-time hotel intelligence platform covering the full data engineering stack: event streaming (Kafka + Python consumer), a 14-table star schema warehouse (Postgres + pgvector), an S3 data lake with hotel CSVs and 30K+ review JSONs, a Text-to-SQL engine running a local LLM (Ollama + Qwen2.5-Coder-7B), and an HTML dashboard output layer. <strong>Fully offline — no API dependencies.</strong></p>
+      <p style="font-size:.82rem;color:#595959;line-height:1.65;margin:0;">A real-time hotel intelligence platform covering the full data engineering stack: event streaming (Kafka + Python consumer), a 15-table star schema warehouse (Postgres + pgvector), an S3 data lake with hotel CSVs and 30K+ review JSONs, a Text-to-SQL engine running a local LLM (Ollama + Qwen2.5-Coder-7B), and an HTML dashboard output layer. <strong>Fully offline — no API dependencies.</strong></p>
     </div>
     <div class="card surf" style="padding:1.25rem;border-top:6px solid #000;">
       <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.625rem;"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg><h4 style="font-family:'Fraunces',serif;font-size:.975rem;font-weight:700;color:#000;margin:0;">What problem it solves</h4></div>
@@ -503,8 +507,8 @@
   </div>
   <!-- Key metrics -->
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));border:2px solid #000;box-shadow:4px 4px 0 #000;overflow:hidden;margin-bottom:2rem;">
-    <div style="padding:1rem;border-right:1px solid #E4E4E7;text-align:center;"><div style="font-family:'Fraunces',serif;font-size:2rem;font-weight:700;color:#00B140;line-height:1;">14</div><div style="font-family:'JetBrains Mono',monospace;font-size:.6rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#595959;margin-top:.25rem;">Schema tables</div></div>
-    <div style="padding:1rem;border-right:1px solid #E4E4E7;text-align:center;"><div style="font-family:'Fraunces',serif;font-size:2rem;font-weight:700;color:#000;line-height:1;">4</div><div style="font-family:'JetBrains Mono',monospace;font-size:.6rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#595959;margin-top:.25rem;">S3 Buckets</div></div>
+    <div style="padding:1rem;border-right:1px solid #E4E4E7;text-align:center;"><div style="font-family:'Fraunces',serif;font-size:2rem;font-weight:700;color:#00B140;line-height:1;">15</div><div style="font-family:'JetBrains Mono',monospace;font-size:.6rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#595959;margin-top:.25rem;">Schema tables</div></div>
+    <div style="padding:1rem;border-right:1px solid #E4E4E7;text-align:center;"><div style="font-family:'Fraunces',serif;font-size:2rem;font-weight:700;color:#000;line-height:1;">6</div><div style="font-family:'JetBrains Mono',monospace;font-size:.6rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#595959;margin-top:.25rem;">S3 prefixes</div></div>
     <div style="padding:1rem;border-right:1px solid #E4E4E7;text-align:center;"><div style="font-family:'Fraunces',serif;font-size:2rem;font-weight:700;color:#000;line-height:1;">30K+</div><div style="font-family:'JetBrains Mono',monospace;font-size:.6rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#595959;margin-top:.25rem;">Real reviews</div></div>
     <div style="padding:1rem;border-right:1px solid #E4E4E7;text-align:center;"><div style="font-family:'Fraunces',serif;font-size:2rem;font-weight:700;color:#00B140;line-height:1;">&lt;2s</div><div style="font-family:'JetBrains Mono',monospace;font-size:.6rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#595959;margin-top:.25rem;">SQL path latency</div></div>
     <div style="padding:1rem;text-align:center;"><div style="font-family:'Fraunces',serif;font-size:2rem;font-weight:700;color:#000;line-height:1;">~1hr</div><div style="font-family:'JetBrains Mono',monospace;font-size:.6rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#595959;margin-top:.25rem;">Stream window</div></div>
@@ -527,38 +531,38 @@
 <section id="philosophy" style="margin-bottom:4rem;" class="reveal">
   <h2 style="font-family:'Fraunces',serif;font-size:1.75rem;font-weight:700;color:#000;display:flex;align-items:center;gap:.875rem;margin-bottom:.75rem;"><span class="section-num">03</span> Design Philosophy</h2>
   <p style="font-size:.875rem;color:#595959;line-height:1.7;max-width:620px;margin-bottom:1.5rem;">Three principles that shaped every architectural decision in TravelLens.</p>
-  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:.875rem;margin-bottom:1.75rem;">
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:.875rem;margin-bottom:1.75rem;align-items:stretch;">
     <div class="card reveal d1" style="padding:1.125rem;display:flex;gap:.875rem;align-items:flex-start;">
       <div style="border:2px solid #00B140;padding:6px;background:#EDFAF2;flex-shrink:0;"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#00B140" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></div>
-      <div><div style="font-family:'JetBrains Mono',monospace;font-size:.7rem;font-weight:800;text-transform:uppercase;text-decoration:underline;text-underline-offset:3px;margin-bottom:.4rem;">Naturally streaming domain</div><p style="font-size:.8rem;color:#595959;line-height:1.5;margin:0;">Booking events, check-ins, price changes happen <em>continuously</em>. The streaming layer is not forced here — a hotel in peak season generates 200–500 events per hour. Tumbling windows turn that into actionable occupancy aggregates without batch delay. This is the domain that makes a real-time pipeline genuine, not bolted-on.</p></div>
+      <div><div style="font-family:'JetBrains Mono',monospace;font-size:.7rem;font-weight:800;text-transform:uppercase;text-decoration:underline;text-underline-offset:3px;margin-bottom:.4rem;">Naturally streaming domain</div><p style="font-size:.8rem;color:#595959;line-height:1.5;margin:0;">Bookings, check-ins, and price changes happen continuously — a hotel in peak season generates hundreds of events an hour. Tumbling windows turn that into live occupancy aggregates without batch delay. The streaming layer is genuine to the domain, not bolted on.</p></div>
     </div>
     <div class="card surf reveal d2" style="padding:1.125rem;display:flex;gap:.875rem;align-items:flex-start;">
       <div style="border:2px solid #000;padding:6px;background:#fff;flex-shrink:0;"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg></div>
-      <div><div style="font-family:'JetBrains Mono',monospace;font-size:.7rem;font-weight:800;text-transform:uppercase;text-decoration:underline;text-underline-offset:3px;margin-bottom:.4rem;">Two AI query paths, not one</div><p style="font-size:.8rem;color:#595959;line-height:1.5;margin:0;">Structured questions ("top 5 cities by RevPAR") route to Text-to-SQL — a local Qwen2.5-Coder-7B model generates SQL, the DB returns rows. Review qualitative questions ("what do guests complain about?") bypass SQL entirely and use pgvector cosine similarity over embeddings, then the same local LLM summarises the matching reviews. One system demonstrates two fundamentally different AI patterns, both running offline.</p></div>
+      <div><div style="font-family:'JetBrains Mono',monospace;font-size:.7rem;font-weight:800;text-transform:uppercase;text-decoration:underline;text-underline-offset:3px;margin-bottom:.4rem;">Two AI query paths, not one</div><p style="font-size:.8rem;color:#595959;line-height:1.5;margin:0;">Structured questions route to Text-to-SQL; qualitative review questions bypass SQL and use pgvector cosine similarity, then the same local LLM summarises the matches. One system, two fundamentally different AI patterns — both fully offline.</p></div>
     </div>
     <div class="card reveal d3" style="padding:1.125rem;display:flex;gap:.875rem;align-items:flex-start;">
       <div style="border:2px solid #000;padding:6px;background:#000;flex-shrink:0;"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19H9a7 7 0 107-7h1.5a4.5 4.5 0 110 9z"/></svg></div>
-      <div><div style="font-family:'JetBrains Mono',monospace;font-size:.7rem;font-weight:800;text-transform:uppercase;text-decoration:underline;text-underline-offset:3px;margin-bottom:.4rem;">Output that travels without infrastructure</div><p style="font-size:.8rem;color:#595959;line-height:1.5;margin:0;">A revenue manager in Jaipur shouldn't need Tableau or a VPN to read a report. Every query result is a self-contained HTML file — opens on any device, shareable over WhatsApp. This is the right output format for India's hospitality market, not a dashboard requiring internet and login.</p></div>
+      <div><div style="font-family:'JetBrains Mono',monospace;font-size:.7rem;font-weight:800;text-transform:uppercase;text-decoration:underline;text-underline-offset:3px;margin-bottom:.4rem;">Output that travels without infrastructure</div><p style="font-size:.8rem;color:#595959;line-height:1.5;margin:0;">A revenue manager shouldn't need Tableau or a VPN to read a report. Every result is a self-contained HTML file — opens on any device, shareable over WhatsApp. The right output format for India's hospitality market.</p></div>
     </div>
   </div>
 
   <h3 style="font-family:'Fraunces',serif;font-size:1.1rem;font-weight:700;color:#000;margin:0 0 .875rem;">Hybrid infrastructure — why each component earns its place</h3>
-  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:.875rem;">
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:.875rem;align-items:stretch;">
     <div class="card reveal d1" style="padding:1.125rem;display:flex;gap:.875rem;align-items:flex-start;">
       <div style="border:2px solid #000;padding:6px;background:#F4F4F5;flex-shrink:0;"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19H9a7 7 0 107-7h1.5a4.5 4.5 0 110 9z"/></svg></div>
-      <div><div style="font-family:'JetBrains Mono',monospace;font-size:.7rem;font-weight:800;text-transform:uppercase;text-decoration:underline;text-underline-offset:3px;margin-bottom:.4rem;">AWS S3 (Data Lake)</div><p style="font-size:.8rem;color:#595959;line-height:1.5;margin:0;">One bucket <code style="font-family:'JetBrains Mono',monospace;font-size:.72rem;">travellens-data</code> with 4 logical prefixes: <code>raw/</code> hotel CSVs, <code>reviews/</code> JSONs + embeddings, <code>reference/</code> lookups, and <code>processed/</code> stream Parquet archives + dashboard HTML. Immutable, versioned, cheap. Bronze→Silver ETL produces Parquet that gets loaded into Postgres for fast querying.</p></div>
+      <div><div style="font-family:'JetBrains Mono',monospace;font-size:.7rem;font-weight:800;text-transform:uppercase;text-decoration:underline;text-underline-offset:3px;margin-bottom:.4rem;">AWS S3 (Data Lake)</div><p style="font-size:.8rem;color:#595959;line-height:1.5;margin:0;">One bucket <code style="font-family:'JetBrains Mono',monospace;font-size:.72rem;">travellens-data</code> with logical prefixes for raw CSVs, reviews + embeddings, reference lookups, stream Parquet archives, and event quarantine. Immutable, versioned, cheap — the Bronze→Silver source that feeds Postgres.</p></div>
     </div>
     <div class="card surf reveal d2" style="padding:1.125rem;display:flex;gap:.875rem;align-items:flex-start;">
       <div style="border:2px solid #000;padding:6px;background:#fff;flex-shrink:0;"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3"/></svg></div>
-      <div><div style="font-family:'JetBrains Mono',monospace;font-size:.7rem;font-weight:800;text-transform:uppercase;text-decoration:underline;text-underline-offset:3px;margin-bottom:.4rem;">Postgres + pgvector (Warehouse)</div><p style="font-size:.8rem;color:#595959;line-height:1.5;margin:0;">Production-grade relational database — handles concurrent writers (streaming consumer + Airflow batch jobs + ad-hoc queries) without lock contention. pgvector extension stores 384-dim review embeddings natively with cosine similarity indexing. JSONB handles amenities arrays with indexed queries.</p></div>
+      <div><div style="font-family:'JetBrains Mono',monospace;font-size:.7rem;font-weight:800;text-transform:uppercase;text-decoration:underline;text-underline-offset:3px;margin-bottom:.4rem;">Postgres + pgvector (Warehouse)</div><p style="font-size:.8rem;color:#595959;line-height:1.5;margin:0;">Production-grade relational store handling concurrent writers — streaming consumer, batch jobs, ad-hoc queries — without lock contention. pgvector holds 384-dim review embeddings with cosine indexing; JSONB handles amenities arrays.</p></div>
     </div>
     <div class="card reveal d3" style="padding:1.125rem;display:flex;gap:.875rem;align-items:flex-start;">
       <div style="border:2px solid #000;padding:6px;background:#F4F4F5;flex-shrink:0;"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></div>
-      <div><div style="font-family:'JetBrains Mono',monospace;font-size:.7rem;font-weight:800;text-transform:uppercase;text-decoration:underline;text-underline-offset:3px;margin-bottom:.4rem;">Python Stream Consumer</div><p style="font-size:.8rem;color:#595959;line-height:1.5;margin:0;">A ~500-line Python consumer reads Kafka events through a six-gate validator (JSON parse, schema checks, late-event guard), maintains in-memory windowed state keyed by city, and flushes closed windows to a dual sink (Postgres upsert + S3 Parquet archive). Failed events are quarantined to dedicated S3 prefixes (malformed_events/, late_events/) for operational triage. Event-time watermark grace absorbs network delay from rural hotel properties. Originally prototyped with PyFlink — see "Streaming Implementation" note in the datamodel doc.</p></div>
+      <div><div style="font-family:'JetBrains Mono',monospace;font-size:.7rem;font-weight:800;text-transform:uppercase;text-decoration:underline;text-underline-offset:3px;margin-bottom:.4rem;">Python Stream Consumer</div><p style="font-size:.8rem;color:#595959;line-height:1.5;margin:0;">A pure-Python consumer reads Kafka events through a six-gate validator, maintains in-memory windowed state keyed by city, and flushes closed windows to a dual sink (Postgres upsert + S3 Parquet). Failed events are quarantined to dedicated S3 prefixes. Event-time watermark grace absorbs network delay from remote properties.</p></div>
     </div>
     <div class="card reveal d4" style="padding:1.125rem;display:flex;gap:.875rem;align-items:flex-start;">
       <div style="border:2px solid #000;padding:6px;background:#000;flex-shrink:0;"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg></div>
-      <div><div style="font-family:'JetBrains Mono',monospace;font-size:.7rem;font-weight:800;text-transform:uppercase;text-decoration:underline;text-underline-offset:3px;margin-bottom:.4rem;">Ollama + Qwen2.5-Coder-7B (AI Layer)</div><p style="font-size:.8rem;color:#595959;line-height:1.5;margin:0;">A 7B-parameter code-specialized LLM runs locally via Ollama, GPU-accelerated on Nvidia/Metal. Generates SQL from natural language using a system prompt with full schema DDL, India context, and few-shot examples. Same model summarises top-K reviews after pgvector retrieval. Zero API cost, sub-second latency on RTX 3070, fully offline.</p></div>
+      <div><div style="font-family:'JetBrains Mono',monospace;font-size:.7rem;font-weight:800;text-transform:uppercase;text-decoration:underline;text-underline-offset:3px;margin-bottom:.4rem;">Ollama + Qwen2.5-Coder-7B (AI Layer)</div><p style="font-size:.8rem;color:#595959;line-height:1.5;margin:0;">A 7B code-specialized LLM runs locally via Ollama, GPU-accelerated. Generates SQL from a system prompt of full schema + India context + join/column rules, and summarises retrieved reviews. Zero API cost, sub-second latency on RTX 3070, fully offline.</p></div>
     </div>
   </div>
 </section>
@@ -643,7 +647,7 @@
         </div>
 
         <!-- Warehouse (center) — holds Silver + Gold + Vector -->
-        <div class="cfa-node" style="left:360px;top:142px;" data-tip="Postgres 16 with pgvector extension. Holds 14 tables: 4 reference, 5 dimensions, 3 facts, 2 aggregate tables (stream + batch), plus Gold roll-ups (Airflow) and 384-dim review embeddings.">
+        <div class="cfa-node" style="left:360px;top:142px;" data-tip="Postgres 16 with pgvector extension. Holds 15 tables: 4 reference, 5 dimensions, 3 facts, 3 operational tables (2 stream/batch aggregates + a live pipeline_metrics heartbeat), plus 384-dim review embeddings.">
           <div class="cfa-icon"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg></div>
           <div class="cfa-txt"><div class="cfa-name">Postgres + pgvector</div><div class="cfa-meta">dim · fact · gold · vector(384)</div></div>
         </div>
@@ -684,7 +688,7 @@
         <tr><td style="font-weight:700;">Message broker</td><td><code>Kafka (Docker)</code></td><td style="font-size:.82rem;color:#595959;">Local Kafka via Docker for dev; production swap is Kafka Connect from hotel PMS webhooks — consumer logic unchanged.</td></tr>
         <tr><td style="font-weight:700;">Data warehouse</td><td><code>Postgres 16 + pgvector</code></td><td style="font-size:.82rem;color:#595959;">Handles three concurrent writers (stream consumer, Airflow batch, live queries) plus 384-dim vector search in one DB — no separate vector store.</td></tr>
         <tr><td style="font-weight:700;">Data lake</td><td><code>AWS S3 / MinIO</code></td><td style="font-size:.82rem;color:#595959;">S3-protocol object store with one bucket and six logical prefixes. MinIO locally, AWS/R2 in prod — same boto3 code, only endpoint changes.</td></tr>
-        <tr><td style="font-weight:700;">Text-to-SQL</td><td><code>Ollama + Qwen2.5-Coder-7B</code></td><td style="font-size:.82rem;color:#595959;">Local 7B code LLM, GPU-accelerated. ~85–92% accuracy, &lt;1s latency, zero API cost, fully offline.</td></tr>
+        <tr><td style="font-weight:700;">Text-to-SQL</td><td><code>Ollama + Qwen2.5-Coder-7B</code></td><td style="font-size:.82rem;color:#595959;">Local 7B code LLM, GPU-accelerated. Reliable on common structured queries; &lt;1s latency, zero API cost, fully offline.</td></tr>
         <tr><td style="font-weight:700;">Review NLP</td><td><code>sentence-transformers + pgvector</code></td><td style="font-size:.82rem;color:#595959;"><code>all-MiniLM-L6-v2</code> embeds reviews into pgvector(384); cosine search finds semantically similar reviews that FTS would miss.</td></tr>
         <tr><td style="font-weight:700;">Dashboard output</td><td><code>Jinja2 + Chart.js (inline HTML)</code></td><td style="font-size:.82rem;color:#595959;">Result shape auto-picks chart type. All CSS/JS inlined — opens offline, no Tableau, no Streamlit, no login.</td></tr>
       </tbody>
@@ -696,8 +700,14 @@
 
 <!-- ══ 05 SCHEMA ══ -->
 <section id="schema" style="margin-bottom:4rem;" class="reveal">
-  <h2 style="font-family:'Fraunces',serif;font-size:1.75rem;font-weight:700;color:#000;display:flex;align-items:center;gap:.875rem;margin-bottom:.75rem;"><span class="section-num">05</span> Data Schema — 14 Tables</h2>
-  <p style="font-size:.875rem;color:#595959;line-height:1.7;max-width:620px;margin-bottom:1.25rem;">3 fact tables, 5 dimension tables, 4 reference tables, 2 aggregation tables written by the stream consumer and Airflow batch jobs. Every table has a reason to exist. Card view here; <code>datamodel.md</code> has the full column-by-column spec.</p>
+  <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:1rem;margin-bottom:.75rem;">
+    <h2 style="font-family:'Fraunces',serif;font-size:1.75rem;font-weight:700;color:#000;display:flex;align-items:center;gap:.875rem;margin:0;"><span class="section-num">05</span> Data Schema — 15 Tables</h2>
+    <a href="https://github.com/bh00t/travellens/blob/main/datamodel.md" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:.5rem;font-family:'JetBrains Mono',monospace;font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:#fff;background:#000;border:2px solid #000;box-shadow:3px 3px 0 #00B140;padding:.5rem 1rem;text-decoration:none;white-space:nowrap;transition:transform .15s,box-shadow .15s;" onmouseover="this.style.transform='translate(-2px,-2px)';this.style.boxShadow='5px 5px 0 #00B140';" onmouseout="this.style.transform='';this.style.boxShadow='3px 3px 0 #00B140';">
+      <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3"/></svg>
+      View Data Model &#8599;
+    </a>
+  </div>
+  <p style="font-size:.875rem;color:#595959;line-height:1.7;max-width:620px;margin-bottom:1.25rem;">3 fact tables, 5 dimension tables, 4 reference tables, 3 operational tables written by the stream consumer and Airflow batch jobs (two aggregates plus a live <code>pipeline_metrics</code> heartbeat). Every table has a reason to exist. Card view here; <code>datamodel.md</code> has the full column-by-column spec.</p>
 
   <h3 style="font-family:'Fraunces',serif;font-size:1.1rem;font-weight:700;color:#000;margin:0 0 .75rem;">Why Star Schema — not a flat table, not a document store</h3>
   <div style="border:2px solid #000;box-shadow:4px 4px 0 #000;overflow:hidden;margin-bottom:1.5rem;">
@@ -714,7 +724,7 @@
       <button class="sch-tab sch-active" onclick="schTab(this,'sf')">Facts (3)</button>
       <button class="sch-tab" onclick="schTab(this,'sd')">Dimensions (5)</button>
       <button class="sch-tab" onclick="schTab(this,'sr')">Reference (4)</button>
-      <button class="sch-tab" onclick="schTab(this,'sa')">Stream Agg (2)</button>
+      <button class="sch-tab" onclick="schTab(this,'sa')">Stream Agg (3)</button>
       <button class="sch-tab" onclick="schTab(this,'ss')">S3 Partitioning</button>
     </div>
     </div>
@@ -723,7 +733,7 @@
       <div class="sch-divider-bar">3 fact tables — append-only event records · see datamodel.md for full column specs</div>
       <div class="dim-grid">
         <div class="dim-card"><div class="dim-name">fact_bookings</div><div class="dim-meta">Bookings · 1M rows · Jan 2024 → May 2026</div><div class="dim-fields"><span class="dim-field">booking_id PK</span><span class="dim-field">hotel_id FK</span><span class="dim-field">customer_id FK</span><span class="dim-field">date_id FK</span><span class="dim-field">revenue_inr</span><span class="dim-field">nights_stayed</span><span class="dim-field">is_cancelled</span></div><div class="dim-note">Central fact table. ADR = revenue ÷ nights_stayed. Cancellation rate (11.8% observed) is a leading demand signal. 90% of queries touch this table with 1–2 dim joins.</div></div>
-        <div class="dim-card"><div class="dim-name">fact_price_events</div><div class="dim-meta">Price changes · 86K rows · written by stream consumer</div><div class="dim-fields"><span class="dim-field">event_id PK</span><span class="dim-field">hotel_id FK</span><span class="dim-field">room_type_id FK</span><span class="dim-field">old_price_inr</span><span class="dim-field">new_price_inr</span><span class="dim-field">change_reason</span></div><div class="dim-note">One row per price change. change_reason enum (DEMAND_SURGE / SEASONAL / COMPETITOR_MATCH / MANUAL / EVENT_NEARBY) powers "why did prices spike in Goa last weekend?" analysis.</div></div>
+        <div class="dim-card"><div class="dim-name">fact_price_events</div><div class="dim-meta">Price changes · 86K rows · historical load</div><div class="dim-fields"><span class="dim-field">event_id PK</span><span class="dim-field">hotel_id FK</span><span class="dim-field">room_type_id FK</span><span class="dim-field">old_price_inr</span><span class="dim-field">new_price_inr</span><span class="dim-field">change_reason</span></div><div class="dim-note">One row per price change. change_reason enum (DEMAND_SURGE / SEASONAL / COMPETITOR_MATCH / MANUAL / EVENT_NEARBY) powers "why did prices spike in Goa last weekend?" analysis. Populated by the Phase 1 load; PRICE_CHANGE stream events are a valid type but are not aggregated by the consumer (dropped past Gate 3).</div></div>
         <div class="dim-card"><div class="dim-name">reviews_raw</div><div class="dim-meta">Guest reviews · 30K rows · pgvector</div><div class="dim-fields"><span class="dim-field">review_id PK</span><span class="dim-field">hotel_id FK</span><span class="dim-field">review_text TEXT</span><span class="dim-field">rating</span><span class="dim-field">source</span><span class="dim-field">embedding vector(384)</span></div><div class="dim-note">Real MakeMyTrip/OYO reviews from Kaggle. Embeddings populated by sentence-transformers/all-MiniLM-L6-v2 at load time. Cosine similarity via pgvector's <code>&lt;=&gt;</code> operator.</div></div>
       </div>
     </div>
@@ -731,7 +741,7 @@
     <div id="sd" class="sch-pane">
       <div class="sch-divider-bar">5 dimension tables — context for every fact row · see datamodel.md for full column specs</div>
       <div class="dim-grid">
-        <div class="dim-card"><div class="dim-name">dim_hotel</div><div class="dim-meta">Hotel master · 2,000 rows · SCD Type 1</div><div class="dim-fields"><span class="dim-field">hotel_name</span><span class="dim-field">chain_name</span><span class="dim-field">star_category</span><span class="dim-field">total_rooms</span><span class="dim-field">amenities JSONB</span><span class="dim-field">avg_rating</span></div><div class="dim-note">Chain affiliation (OYO / Taj / Independent) enables brand-level analysis. avg_rating updated weekly from reviews_raw. SCD Type 1 — overwrite on change.</div></div>
+        <div class="dim-card"><div class="dim-name">hotel_master</div><div class="dim-meta">Hotel master · 2,000 rows · SCD Type 1</div><div class="dim-fields"><span class="dim-field">hotel_name</span><span class="dim-field">chain_name</span><span class="dim-field">star_category</span><span class="dim-field">total_rooms</span><span class="dim-field">amenities JSONB</span><span class="dim-field">avg_rating</span></div><div class="dim-note">Chain affiliation (OYO / Taj / Independent) enables brand-level analysis. avg_rating updated weekly from reviews_raw. SCD Type 1 — overwrite on change.</div></div>
         <div class="dim-card"><div class="dim-name">dim_date</div><div class="dim-meta">Date spine · 2,557 rows · 2020–2026</div><div class="dim-fields"><span class="dim-field">full_date</span><span class="dim-field">day_of_week</span><span class="dim-field">quarter</span><span class="dim-field">is_weekend</span><span class="dim-field">is_holiday</span><span class="dim-field">season</span></div><div class="dim-note">India tourism calendar built in: peak Dec–Jan, shoulder Oct/Feb–Mar, monsoon trough Jun–Sep. is_holiday from public_holidays.</div></div>
         <div class="dim-card"><div class="dim-name">dim_location</div><div class="dim-meta">Geography · 44 cities · 28 states + UTs</div><div class="dim-fields"><span class="dim-field">city</span><span class="dim-field">state</span><span class="dim-field">region</span><span class="dim-field">latitude</span><span class="dim-field">longitude</span><span class="dim-field">tourism_zone</span></div><div class="dim-note">Zones: Heritage, Beach, Hill, Pilgrimage, Wildlife, Metro. Enables geo-heatmap dashboard output. lat/long for map queries.</div></div>
         <div class="dim-card"><div class="dim-name">dim_room_type</div><div class="dim-meta">Room classification · 5,542 rows</div><div class="dim-fields"><span class="dim-field">type_name</span><span class="dim-field">capacity</span><span class="dim-field">has_ac</span><span class="dim-field">has_breakfast</span><span class="dim-field">price_tier_id FK</span></div><div class="dim-note">price_tier_id links to ref_price_tiers: Budget &lt;₹2k, Mid ₹2–5k, Premium ₹5–10k, Luxury &gt;₹10k. Makes "budget hotels in Goa" queries resolve naturally.</div></div>
@@ -750,10 +760,11 @@
     </div>
 
     <div id="sa" class="sch-pane">
-      <div class="sch-divider-bar">2 aggregation tables — written continuously by the stream consumer · see datamodel.md for full schemas</div>
+      <div class="sch-divider-bar">3 operational tables — written by the stream consumer + Airflow · see datamodel.md for full schemas</div>
       <div class="dim-grid">
-        <div class="dim-card"><div class="dim-name">agg_hourly_city_stats</div><div class="dim-meta">Tumbling event-time window · keyed by city</div><div class="dim-fields"><span class="dim-field">city PK</span><span class="dim-field">window_start PK</span><span class="dim-field">window_end</span><span class="dim-field">total_bookings</span><span class="dim-field">total_revenue_inr</span><span class="dim-field">avg_occupancy_rate</span><span class="dim-field">cancellation_rate</span><span class="dim-field">ingestion_ts</span></div><div class="dim-note">Composite PK (city, window_start). One row per city per window. Written at-least-once by the stream consumer via Postgres upsert (ON CONFLICT DO UPDATE) + S3 Parquet archive for replay. Column `avg_occupancy_rate` holds a percentage (0–100) despite the "rate" suffix — historical naming.</div></div>
+        <div class="dim-card"><div class="dim-name">agg_hourly_city_stats</div><div class="dim-meta">Tumbling event-time window · keyed by city</div><div class="dim-fields"><span class="dim-field">city PK</span><span class="dim-field">window_start PK</span><span class="dim-field">window_end</span><span class="dim-field">total_bookings</span><span class="dim-field">total_revenue_inr</span><span class="dim-field">avg_occupancy_rate</span><span class="dim-field">cancellation_rate</span><span class="dim-field">total_checkins</span><span class="dim-field">total_checkouts</span><span class="dim-field">total_cancellations</span><span class="dim-field">ingestion_ts</span></div><div class="dim-note">Composite PK (city, window_start). One row per city per window. Written at-least-once by the stream consumer via Postgres upsert (ON CONFLICT DO UPDATE) + S3 Parquet archive for replay. Per-event-type counts (checkins/checkouts/cancellations) added in migration 007. Column `avg_occupancy_rate` holds a percentage (0–100) despite the "rate" suffix — historical naming.</div></div>
         <div class="dim-card"><div class="dim-name">agg_daily_hotel_kpi</div><div class="dim-meta">Daily roll-up · written by Airflow</div><div class="dim-fields"><span class="dim-field">hotel_id PK</span><span class="dim-field">date_id PK</span><span class="dim-field">occupancy_pct</span><span class="dim-field">adr_inr</span><span class="dim-field">revpar_inr</span><span class="dim-field">cancellation_pct</span></div><div class="dim-note">Per-hotel daily summary. Airflow DAG runs at 02:00 IST, reads fact_bookings + agg_hourly_city_stats, materializes into Gold. 10–100× faster than recomputing from facts.</div></div>
+        <div class="dim-card"><div class="dim-name">pipeline_metrics</div><div class="dim-meta">Live heartbeat · ~10s cadence · written by consumer</div><div class="dim-fields"><span class="dim-field">metric_ts PK</span><span class="dim-field">events_consumed</span><span class="dim-field">bookings</span><span class="dim-field">cancellations</span><span class="dim-field">malformed</span><span class="dim-field">late</span><span class="dim-field">active_windows</span><span class="dim-field">max_event_ts</span></div><div class="dim-note">Operational telemetry, not business data. The consumer writes one cumulative-counter row every ~10s on the flush tick. The live monitor reads the latest two rows and derives events/sec from the delta — the real-time pulse that the hourly aggregate can't provide. Added in migration 007 (B-032).</div></div>
       </div>
     </div>
 
@@ -812,7 +823,7 @@
 <!-- ══ 06 STREAMING ══ -->
 <section id="streaming" style="margin-bottom:4rem;" class="reveal">
   <h2 style="font-family:'Fraunces',serif;font-size:1.75rem;font-weight:700;color:#000;display:flex;align-items:center;gap:.875rem;margin-bottom:.75rem;"><span class="section-num">06</span> Streaming Pipeline</h2>
-  <p style="font-size:.875rem;color:#595959;line-height:1.7;max-width:620px;margin-bottom:.75rem;">The stream consumer reads the <code>booking-events</code> Kafka topic, validates every event through a six-gate validator, keys the stream by city, applies tumbling event-time windows, and writes city stats to both Postgres and S3. Failed events (malformed schema or late arrivals) are quarantined to dedicated S3 prefixes for operational triage. This is the speed layer — live data, updated every window, with explicit failure observability.</p>
+  <p style="font-size:.875rem;color:#595959;line-height:1.7;max-width:620px;margin-bottom:.75rem;">The consumer reads the <code>booking-events</code> topic, validates each event through a six-gate validator, keys by city, applies tumbling event-time windows, and dual-sinks city stats to Postgres + S3. Failed events are quarantined to dedicated S3 prefixes. This is the speed layer — live data, updated every window, with explicit failure observability.</p>
 
   <!-- Mini streaming flow diagram -->
   <div style="border:2px solid #000;box-shadow:4px 4px 0 #000;background:#fff;padding:1rem 1.25rem;margin-bottom:1.25rem;overflow:hidden;">
@@ -864,36 +875,36 @@
 
   <div style="border:2px dashed #000;box-shadow:4px 4px 0 #000;background:#EDFAF2;padding:1.125rem 1.375rem;display:flex;gap:1rem;align-items:flex-start;margin-bottom:1.75rem;">
     <div style="flex-shrink:0;margin-top:2px;"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#00B140" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></div>
-    <div><div style="font-family:'JetBrains Mono',monospace;font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:#007A2C;margin-bottom:.4rem;">Why event time, not processing time?</div><p style="font-size:.82rem;color:#595959;line-height:1.7;margin:0;">A hotel in rural Rajasthan may have intermittent connectivity. A burst of 40 booking events generated at 14:00 might reach the Kafka broker at 14:23. Processing-time windows would assign these to the wrong hour — or split them across two windows. Event-time watermarks tell the consumer: wait a configurable grace period (5 min in production, 30s in dev) after the window closes before producing the aggregate, to absorb late arrivals. The output is correct. The latency cost is the grace period — acceptable for hourly aggregates.</p></div>
+    <div><div style="font-family:'JetBrains Mono',monospace;font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:#007A2C;margin-bottom:.4rem;">Why event time, not processing time?</div><p style="font-size:.82rem;color:#595959;line-height:1.7;margin:0;">A burst of events generated at 14:00 might reach Kafka at 14:23 (intermittent connectivity). Processing-time windows would file them in the wrong hour. Event-time watermarks wait a short grace period (5 min prod, 30s dev) after a window closes to absorb late arrivals — correct output, at the cost of that grace period.</p></div>
   </div>
 
   <div style="border:2px solid #000;box-shadow:4px 4px 0 #000;background:#fff;padding:1.125rem 1.375rem;margin-bottom:1.75rem;">
     <div style="font-family:'JetBrains Mono',monospace;font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:#000;margin-bottom:.6rem;">Six-gate failure handling — nothing is silently dropped</div>
-    <p style="font-size:.82rem;color:#595959;line-height:1.7;margin:0 0 .75rem;">Every event passes through six explicit gates. Anything that fails a gate is routed to a dedicated S3 prefix with full diagnostic context (raw value, Kafka offset/partition, consumer timestamp). Per-reason counters surface non-zero malformed totals in the consumer's shutdown summary as explicit team TODOs.</p>
+    <p style="font-size:.82rem;color:#595959;line-height:1.7;margin:0 0 .75rem;">Every event passes through six explicit gates. Anything that fails is routed to a dedicated S3 prefix with full diagnostic context, and per-reason counters surface malformed totals in the consumer's shutdown summary.</p>
     <div style="display:grid;grid-template-columns:auto 1fr auto;gap:.4rem .9rem;font-family:'JetBrains Mono',monospace;font-size:.7rem;align-items:center;">
       <span style="font-weight:800;color:#000;">1</span><span style="color:#595959;">Unparseable JSON</span><code style="font-size:.65rem;background:#F4F4F5;padding:1px 6px;">malformed_events/</code>
       <span style="font-weight:800;color:#000;">2</span><span style="color:#595959;">Missing required field</span><code style="font-size:.65rem;background:#F4F4F5;padding:1px 6px;">malformed_events/</code>
-      <span style="font-weight:800;color:#000;">3</span><span style="color:#595959;">Unknown event_type (not BOOKING/CANCELLATION/CHECKIN/PRICE_CHANGE)</span><code style="font-size:.65rem;background:#F4F4F5;padding:1px 6px;">malformed_events/</code>
+      <span style="font-weight:800;color:#000;">3</span><span style="color:#595959;">Unknown event_type (not BOOKING/CANCELLATION/CHECKIN/CHECKOUT/PRICE_CHANGE)</span><code style="font-size:.65rem;background:#F4F4F5;padding:1px 6px;">malformed_events/</code>
       <span style="font-weight:800;color:#000;">4</span><span style="color:#595959;">Unknown city (not in dim_location)</span><code style="font-size:.65rem;background:#F4F4F5;padding:1px 6px;">malformed_events/</code>
       <span style="font-weight:800;color:#000;">5</span><span style="color:#595959;">Unparseable event_ts (not ISO 8601)</span><code style="font-size:.65rem;background:#F4F4F5;padding:1px 6px;">malformed_events/</code>
       <span style="font-weight:800;color:#00B140;">6</span><span style="color:#595959;">Late event (window already closed past watermark)</span><code style="font-size:.65rem;background:#EDFAF2;padding:1px 6px;color:#007A2C;">late_events/</code>
     </div>
-    <p style="font-size:.78rem;color:#595959;line-height:1.6;margin:.85rem 0 0;"><strong style="color:#000;">Why two prefixes:</strong> malformed events need human triage (someone broke the producer schema); late events are mechanically recoverable (Phase 6 reconciler will additively merge them back into <code>agg_hourly_city_stats</code>). Different recovery paths, different sinks.</p>
+    <p style="font-size:.78rem;color:#595959;line-height:1.6;margin:.85rem 0 0;"><strong style="color:#000;">Why two prefixes:</strong> malformed events need human triage; late events are mechanically recoverable (the Phase 6 reconciler merges them back into <code>agg_hourly_city_stats</code>). Different recovery paths, different sinks.</p>
   </div>
 
   <div class="pipe-step reveal d1">
     <div class="pipe-head"><div class="pipe-num">1</div><div class="pipe-title">Kafka Source — consume booking events</div></div>
-    <div class="pipe-body">A Python producer publishes JSON events to the <code>booking-events</code> topic at a configurable rate (default 50 evt/sec, configurable via <code>--rate</code>). Each event carries <code>event_id</code>, <code>event_type</code> (BOOKING / CANCELLATION / CHECKIN / PRICE_CHANGE), <code>hotel_id</code>, <code>city</code>, <code>revenue_inr</code>, and <code>event_ts</code>. Hotel IDs are seeded from Phase 1's <code>hotel_master</code> so joins resolve. The producer can inject chaos (<code>--malformed-pct</code>, <code>--late-pct</code>, <code>--chaos-seed</code>) for reproducible failure testing.</div>
+    <div class="pipe-body">A Python producer publishes JSON events to the <code>booking-events</code> topic (default 50 evt/sec). Each carries <code>event_id</code>, <code>event_type</code> (BOOKING / CHECKIN / CHECKOUT / CANCELLATION / PRICE_CHANGE), <code>hotel_id</code>, <code>city</code>, <code>revenue_inr</code>, <code>event_ts</code>. Hotel IDs come from <code>hotel_master</code> so joins resolve. It can inject malformed and late events (<code>CHAOS_*</code> env vars) for reproducible failure testing.</div>
   </div>
 
   <div class="pipe-step reveal d2">
     <div class="pipe-head"><div class="pipe-num">2</div><div class="pipe-title">Validate, accumulate, watermark — in-memory windowed state</div></div>
-    <div class="pipe-body">Each event passes through the six-gate validator. Valid BOOKING / CANCELLATION events accumulate into a dict keyed by <code>(window_start, city)</code>. Each city accumulates independently. The watermark (<code>max_event_ts − 5 min</code>) advances as new events arrive. When a window's end falls below the watermark, the consumer flushes one row per city: <strong>total_bookings, total_revenue_inr, avg_occupancy_rate, cancellation_rate</strong>.</div>
+    <div class="pipe-body">Valid BOOKING / CHECKIN / CHECKOUT / CANCELLATION events accumulate into a dict keyed by <code>(window_start, city)</code>, each city independent (PRICE_CHANGE is valid but not aggregated). The watermark (<code>max_event_ts − grace</code>) advances with arrivals; when a window closes past it, the consumer flushes one row per city with per-type counts. It also writes a <code>pipeline_metrics</code> heartbeat every ~10s for the live monitor.</div>
   </div>
 
   <div class="pipe-step reveal d3">
     <div class="pipe-head"><div class="pipe-num">3</div><div class="pipe-title">Dual sink — Postgres agg table + S3 Parquet archive</div></div>
-    <div class="pipe-body">Every flushed window writes to <strong>both</strong> sinks. Postgres receives an UPSERT on <code>agg_hourly_city_stats(city, window_start)</code> — what the Text-to-SQL engine queries for live data. S3 receives a Parquet file at a Hive-partitioned key — the immutable archive for downstream batch consumers (DuckDB, Spark, Athena). Both sinks are idempotent (Postgres <code>ON CONFLICT</code>, deterministic S3 keys), so re-flushes don't double-count.</div>
+    <div class="pipe-body">Every flushed window writes to <strong>both</strong> sinks: an UPSERT on <code>agg_hourly_city_stats(city, window_start)</code> in Postgres (what Text-to-SQL queries for live data) and a Parquet file at a Hive-partitioned S3 key (the immutable archive). Both are idempotent — <code>ON CONFLICT</code> + deterministic S3 keys — so re-flushes don't double-count.</div>
   </div>
 
   <!-- S3 prefix layout — the bucket map -->
@@ -906,7 +917,7 @@
 ├── processed/           <span style="color:#007A2C;font-weight:700;">← Phase 2 consumer output (Parquet, Hive-partitioned)</span>
 ├── malformed_events/    <span style="color:#007A2C;font-weight:700;">← Phase 2 quarantine (JSON, human triage)</span>
 └── late_events/         <span style="color:#007A2C;font-weight:700;">← Phase 2 quarantine (JSON, Phase 6 reconcile)</span></pre>
-    <p style="font-size:.78rem;color:#595959;line-height:1.6;margin:0;"><strong style="color:#000;">Hive partitioning</strong> on <code>processed/</code>: <code style="font-size:.66rem;">year=YYYY/month=MM/day=DD/hour=HH_{city}.parquet</code>. Auto-detected by DuckDB, Spark, Athena, Trino — partition pruning works without configuration.</p>
+    <p style="font-size:.78rem;color:#595959;line-height:1.6;margin:0;"><strong style="color:#000;">Hive partitioning</strong> on <code>processed/</code>: <code style="font-size:.66rem;">year=YYYY/month=MM/day=DD/hour=HH_{city}.parquet</code>. Any Parquet-aware query engine can prune partitions from the path without extra configuration.</p>
   </div>
 
   <!-- Tape-on-top callout — Phase 2's key architectural pivot -->
@@ -917,22 +928,10 @@
         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-top:1px;"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
         <div class="tape-callout-label">Architect's Note — Why pure Python, not PyFlink?</div>
       </div>
-      <p style="font-size:.82rem;color:#595959;line-height:1.7;margin:0 0 .65rem;">The original blueprint specified <strong style="color:#000;">PyFlink</strong>. We pivoted after PyFlink 1.18's Python DataStream API showed serialization issues on Windows + Python 3.11 (apache-beam coder errors, JNI gateway crashes during graceful shutdown). Three iterations of type-system patches did not resolve them.</p>
-      <p style="font-size:.82rem;color:#595959;line-height:1.7;margin:0;">At 50 events/sec on a single node, the full Flink runtime is over-provisioned anyway. The architectural pattern stays identical — Kafka source, keyed-by-city aggregation, event-time watermarking, dual sink, side-output for late events. We just implement it in pure Python instead of routing through Flink's Python wrapper. <strong style="color:#000;">Production path</strong> at 5K+ evt/sec: AWS Managed Flink with the Table API. Same shape, different runtime.</p>
+      <p style="font-size:.82rem;color:#595959;line-height:1.7;margin:0;">PyFlink 1.18 hit serialization issues on Windows + Python 3.11, and at 50 evt/sec the full Flink runtime is over-provisioned anyway — so the same pattern (Kafka source, keyed aggregation, event-time watermarking, dual sink) runs in pure Python. <strong style="color:#000;">Production path</strong> at 5K+ evt/sec: AWS Managed Flink, Table API — same shape, different runtime.</p>
     </div>
   </div>
 
-  <!-- Deliverables — filenames only, no code -->
-  <div style="border:2px solid #000;box-shadow:4px 4px 0 #000;background:#fff;padding:1.125rem 1.375rem;margin-bottom:1.75rem;">
-    <div style="font-family:'JetBrains Mono',monospace;font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:#000;margin-bottom:.6rem;display:flex;align-items:center;justify-content:space-between;gap:.5rem;flex-wrap:wrap;"><span>Phase 2 deliverables</span></div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:.55rem;font-size:.78rem;color:#595959;line-height:1.55;">
-      <div><span class="cf-file">scripts/stream_consumer.py</span><br><span style="margin-top:.25rem;display:inline-block;">Kafka consumer with six-gate validator, late-event guard, dual sink.</span></div>
-      <div><span class="cf-file">scripts/kafka_event_producer.py</span><br><span style="margin-top:.25rem;display:inline-block;">Event generator with chaos-injection CLI for failure testing.</span></div>
-      <div><span class="cf-file">scripts/init_s3_buckets.py</span><br><span style="margin-top:.25rem;display:inline-block;">Idempotent MinIO bucket + prefix bootstrap.</span></div>
-      <div><span class="cf-file">docker/docker-compose.yml</span><br><span style="margin-top:.25rem;display:inline-block;">Extended with Kafka + Zookeeper + MinIO services.</span></div>
-      <div><span class="cf-file">docs/phase-2-streaming.md</span><br><span style="margin-top:.25rem;display:inline-block;">Executable spec — prerequisites, steps, acceptance tests.</span></div>
-    </div>
-  </div>
 </section>
 
 <hr class="sec-divider">
@@ -1021,22 +1020,22 @@
   <!-- Sample SQL -->
   <div style="font-family:'JetBrains Mono',monospace;font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:#595959;margin-bottom:.875rem;">Sample — natural language → LLM-generated SQL</div>
   <div style="border:2px solid #000;box-shadow:3px 3px 0 #000;margin-bottom:.875rem;overflow:hidden;">
-    <div style="background:#000;padding:.625rem 1rem;display:flex;align-items:center;gap:.5rem;"><span style="color:#00B140;font-size:.9rem;">▶</span><span style="font-family:'JetBrains Mono',monospace;font-size:.7rem;font-weight:800;color:#fff;">"Which cities had occupancy above 80% last December?"</span></div>
+    <div style="background:#000;padding:.625rem 1rem;display:flex;align-items:center;gap:.5rem;"><span style="color:#00B140;font-size:.9rem;">▶</span><span style="font-family:'JetBrains Mono',monospace;font-size:.7rem;font-weight:800;color:#fff;">"Top 5 cities by revenue this year"</span></div>
     <div class="code-block-header" style="border-top:1px solid #333;"><span class="code-block-label">Generated SQL</span></div>
-<pre><code><span class="kw">SELECT</span> l.city, <span class="fn">AVG</span>(k.occupancy_rate) <span class="kw">AS</span> avg_occ
-<span class="kw">FROM</span> agg_daily_hotel_kpi k
-<span class="kw">JOIN</span> dim_hotel h <span class="kw">ON</span> k.hotel_id = h.hotel_id
+<pre><code><span class="kw">SELECT</span> l.city, <span class="fn">ROUND</span>(<span class="fn">SUM</span>(b.revenue_inr) / <span class="num">1e7</span>, <span class="num">2</span>) <span class="kw">AS</span> revenue_crore
+<span class="kw">FROM</span> fact_bookings b
+<span class="kw">JOIN</span> hotel_master h <span class="kw">ON</span> b.hotel_id = h.hotel_id
 <span class="kw">JOIN</span> dim_location l <span class="kw">ON</span> h.location_id = l.location_id
-<span class="kw">JOIN</span> dim_date d <span class="kw">ON</span> k.kpi_date = d.full_date
-<span class="kw">WHERE</span> d.month_name = <span class="str">'December'</span> <span class="kw">AND</span> <span class="fn">EXTRACT</span>(<span class="kw">YEAR FROM</span> d.full_date) = <span class="num">2024</span>
-<span class="kw">GROUP BY</span> l.city <span class="kw">HAVING AVG</span>(k.occupancy_rate) &gt; <span class="num">80</span>
-<span class="kw">ORDER BY</span> avg_occ <span class="kw">DESC</span>;</code></pre>
+<span class="kw">JOIN</span> dim_date d <span class="kw">ON</span> b.date_id = d.date_id
+<span class="kw">WHERE</span> d.year = <span class="fn">EXTRACT</span>(<span class="kw">YEAR FROM</span> <span class="fn">CURRENT_DATE</span>)
+<span class="kw">GROUP BY</span> l.city
+<span class="kw">ORDER BY</span> revenue_crore <span class="kw">DESC</span> <span class="kw">LIMIT</span> <span class="num">5</span>;</code></pre>
   </div>
   <div style="border:2px solid #000;box-shadow:3px 3px 0 #000;margin-bottom:1.75rem;overflow:hidden;">
     <div style="background:#000;padding:.625rem 1rem;display:flex;align-items:center;gap:.5rem;"><span style="color:#00B140;font-size:.9rem;">▶</span><span style="font-family:'JetBrains Mono',monospace;font-size:.7rem;font-weight:800;color:#fff;">"Show budget hotels in Goa with rating above 4.0"</span></div>
     <div class="code-block-header" style="border-top:1px solid #333;"><span class="code-block-label">Generated SQL (joins ref_price_tiers)</span></div>
 <pre><code><span class="kw">SELECT</span> h.hotel_name, h.avg_rating, h.total_rooms, pt.tier_name
-<span class="kw">FROM</span> dim_hotel h
+<span class="kw">FROM</span> hotel_master h
 <span class="kw">JOIN</span> dim_location l <span class="kw">ON</span> h.location_id = l.location_id
 <span class="kw">JOIN</span> dim_room_type rt <span class="kw">ON</span> h.hotel_id = rt.hotel_id
 <span class="kw">JOIN</span> ref_price_tiers pt <span class="kw">ON</span> rt.price_tier = pt.tier_id
@@ -1047,7 +1046,7 @@
 
   <div style="border:2px dashed #000;padding:1.125rem 1.375rem;background:#F4F4F5;display:flex;gap:.875rem;align-items:flex-start;">
     <div style="flex-shrink:0;margin-top:2px;"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></div>
-    <div><div style="font-family:'JetBrains Mono',monospace;font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:#000;margin-bottom:.4rem;">What the system prompt must contain — and why it matters</div><p style="font-size:.82rem;color:#595959;line-height:1.7;margin:0;">Every LLM call to Qwen2.5-Coder-7B includes: (1) <strong style="color:#000;">Full schema DDL</strong> — every table, column, type, and FK relationship. (2) <strong style="color:#000;">India-specific context</strong> — currency as INR, common city names, that "budget" means under ₹2,000/night. (3) <strong style="color:#000;">5 few-shot examples</strong> of natural language → correct SQL pairs. (4) A hard constraint: <em>only generate SELECT statements</em>. Without the schema DDL, the model invents column names. Without few-shot examples, it gets JOIN direction wrong for FKs. Without the India context, "budget hotel" generates an arbitrary price filter. Prompt engineering is what makes Text-to-SQL reliable — not the model alone. After generation, every query is parsed with <code>sqlparse</code> and validated against the live schema before execution.</p></div>
+    <div><div style="font-family:'JetBrains Mono',monospace;font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:#000;margin-bottom:.4rem;">What the system prompt must contain — and why it matters</div><p style="font-size:.82rem;color:#595959;line-height:1.7;margin:0;">Every LLM call to Qwen2.5-Coder-7B includes: (1) <strong style="color:#000;">Full schema</strong> — every table, column, type, and FK relationship. (2) <strong style="color:#000;">India-specific context</strong> — currency as INR, common city names, that "budget" means under ₹2,000/night. (3) <strong style="color:#000;">Explicit join maps + column-location rules</strong> — which columns live on which table and how to reach city/date through the dimension chain, written as general schema rules rather than per-query examples (so they generalise instead of overfitting). (4) A hard constraint: <em>only generate SELECT statements</em>. Without the schema, the model invents column names. Without the join rules, it gets JOIN direction wrong for FKs. Without the India context, "budget hotel" generates an arbitrary price filter. Prompt engineering is what makes Text-to-SQL reliable — not the model alone. After generation, every query is parsed with <code>sqlparse</code> and validated against the live schema before execution.</p></div>
   </div>
 </section>
 
@@ -1197,77 +1196,70 @@
 
 <!-- ══ 10 IMPLEMENTATION PLAN ══ -->
 <section id="plan" style="margin-bottom:4rem;" class="reveal">
-  <h2 style="font-family:'Fraunces',serif;font-size:1.75rem;font-weight:700;color:#000;display:flex;align-items:center;gap:.875rem;margin-bottom:.75rem;"><span class="section-num">10</span> Implementation Plan — 24 Days</h2>
-  <p style="font-size:.875rem;color:#595959;line-height:1.7;max-width:620px;margin-bottom:1.5rem;">Day 0 covers prerequisites. Seven build phases follow, each with a clear objective. Click <strong>View Guide ↗</strong> on any phase to open its full runbook — prerequisites, steps, and acceptance tests — on GitHub.</p>
+  <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:1rem;margin-bottom:.75rem;">
+    <h2 style="font-family:'Fraunces',serif;font-size:1.75rem;font-weight:700;color:#000;display:flex;align-items:center;gap:.875rem;margin:0;"><span class="section-num">10</span> Build Phases</h2>
+  </div>
+  <p style="font-size:.875rem;color:#595959;line-height:1.7;max-width:620px;margin-bottom:1.5rem;">The project is built in phases, each with a clear objective. Phase 00 sets up the toolchain; the phases that follow layer the warehouse, streaming, embeddings, AI query engine, dashboards, orchestration, and monitoring. Click <strong>View Guide ↗</strong> on any phase to open its full runbook on GitHub.</p>
   <div style="border:2px solid #000;box-shadow:4px 4px 0 #000;overflow-x:auto;margin-bottom:2rem;">
-    <div style="background:#F4F4F5;border-bottom:2px solid #000;display:grid;grid-template-columns:90px 160px 1fr 140px;gap:0;min-width:780px;">
-      <div style="padding:.65rem 1rem;font-family:'JetBrains Mono',monospace;font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:#000;border-right:1px solid #D4D4D8;">Timeline</div>
+    <div style="background:#F4F4F5;border-bottom:2px solid #000;display:grid;grid-template-columns:110px 1fr 140px;gap:0;min-width:720px;">
       <div style="padding:.65rem 1rem;font-family:'JetBrains Mono',monospace;font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:#000;border-right:1px solid #D4D4D8;">Phase</div>
       <div style="padding:.65rem 1rem;font-family:'JetBrains Mono',monospace;font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:#000;border-right:1px solid #D4D4D8;">Objective</div>
       <div style="padding:.65rem 1rem;font-family:'JetBrains Mono',monospace;font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:#000;text-align:center;">Guide</div>
     </div>
 
-    <!-- Day 0 — Setup prerequisites -->
-    <div style="display:grid;grid-template-columns:90px 160px 1fr 140px;border-bottom:1px solid #E4E4E7;min-width:780px;">
-      <div style="padding:.875rem 1rem;font-family:'JetBrains Mono',monospace;font-size:.75rem;font-weight:800;border-right:1px solid #E4E4E7;display:flex;align-items:center;color:#595959;">Day 0</div>
-      <div style="padding:.875rem 1rem;font-weight:700;font-size:.85rem;border-right:1px solid #E4E4E7;display:flex;align-items:center;">Before You Begin</div>
+    <!-- Phase 00 — Setup -->
+    <div style="display:grid;grid-template-columns:110px 1fr 140px;border-bottom:1px solid #E4E4E7;min-width:720px;">
+      <div style="padding:.875rem 1rem;font-family:'JetBrains Mono',monospace;font-size:.75rem;font-weight:800;border-right:1px solid #E4E4E7;display:flex;align-items:center;color:#595959;">Phase 00<br>Setup</div>
       <div style="padding:.875rem 1rem;color:#595959;font-size:.8rem;line-height:1.55;border-right:1px solid #E4E4E7;">Install the toolchain (Docker, Python 3.11, Git, Ollama) and pull <code>qwen2.5-coder:7b</code>. Clone the repo, create the venv, configure <code>.env</code>, and stage the dataset — the clean baseline every later phase builds on.</div>
       <div style="padding:.875rem 1rem;display:flex;align-items:center;justify-content:center;"><a href="https://github.com/bh00t/travellens/blob/main/docs/phase-0-setup.md" target="_blank" rel="noopener" class="phase-btn" style="text-decoration:none;">View Guide &#8599;</a></div>
     </div>
 
-    <!-- Phase 1 — Postgres -->
-    <div style="display:grid;grid-template-columns:90px 160px 1fr 140px;border-bottom:1px solid #E4E4E7;background:#FAFAFA;min-width:780px;">
-      <div style="padding:.875rem 1rem;font-family:'JetBrains Mono',monospace;font-size:.75rem;font-weight:800;color:#00B140;border-right:1px solid #E4E4E7;display:flex;align-items:center;">Days 1–4</div>
-      <div style="padding:.875rem 1rem;font-weight:700;font-size:.85rem;border-right:1px solid #E4E4E7;display:flex;align-items:center;">Foundation — Postgres schema + data load</div>
-      <div style="padding:.875rem 1rem;color:#595959;font-size:.8rem;line-height:1.55;border-right:1px solid #E4E4E7;">Stand up Postgres 16 + pgvector and load the warehouse: a 14-table star schema, ~1M bookings, and 30K reviews, with idempotent loaders and integrity checks guarding every foreign key.</div>
+    <!-- Phase 01 — Postgres -->
+    <div style="display:grid;grid-template-columns:110px 1fr 140px;border-bottom:1px solid #E4E4E7;background:#FAFAFA;min-width:720px;">
+      <div style="padding:.875rem 1rem;font-family:'JetBrains Mono',monospace;font-size:.75rem;font-weight:800;color:#00B140;border-right:1px solid #E4E4E7;display:flex;align-items:center;">Phase 01<br>Foundation</div>
+      <div style="padding:.875rem 1rem;color:#595959;font-size:.8rem;line-height:1.55;border-right:1px solid #E4E4E7;">Stand up Postgres 16 + pgvector and load the warehouse: a star schema, ~1M bookings, and 30K reviews, with idempotent loaders and integrity checks guarding every foreign key.</div>
       <div style="padding:.875rem 1rem;display:flex;align-items:center;justify-content:center;"><a href="https://github.com/bh00t/travellens/blob/main/docs/phase-1-postgres.md" target="_blank" rel="noopener" class="phase-btn" style="text-decoration:none;">View Guide &#8599;</a></div>
     </div>
 
-    <!-- Phase 2 — Streaming -->
-    <div style="display:grid;grid-template-columns:90px 160px 1fr 140px;border-bottom:1px solid #E4E4E7;min-width:780px;">
-      <div style="padding:.875rem 1rem;font-family:'JetBrains Mono',monospace;font-size:.75rem;font-weight:800;color:#00B140;border-right:1px solid #E4E4E7;display:flex;align-items:center;">Days 5–9</div>
-      <div style="padding:.875rem 1rem;font-weight:700;font-size:.85rem;border-right:1px solid #E4E4E7;display:flex;align-items:center;">Streaming — Kafka + Python consumer with failure handling</div>
+    <!-- Phase 02 — Streaming -->
+    <div style="display:grid;grid-template-columns:110px 1fr 140px;border-bottom:1px solid #E4E4E7;min-width:720px;">
+      <div style="padding:.875rem 1rem;font-family:'JetBrains Mono',monospace;font-size:.75rem;font-weight:800;color:#00B140;border-right:1px solid #E4E4E7;display:flex;align-items:center;">Phase 02<br>Streaming</div>
       <div style="padding:.875rem 1rem;color:#595959;font-size:.8rem;line-height:1.55;border-right:1px solid #E4E4E7;">Stream booking events through Kafka into a pure-Python consumer with six-gate validation, event-time windows, and a dual sink to Postgres + S3 Parquet — every malformed or late event quarantined, nothing silently dropped.</div>
       <div style="padding:.875rem 1rem;display:flex;align-items:center;justify-content:center;"><a href="https://github.com/bh00t/travellens/blob/main/docs/phase-2-streaming.md" target="_blank" rel="noopener" class="phase-btn" style="text-decoration:none;">View Guide &#8599;</a></div>
     </div>
 
-    <!-- Phase 3 — Embeddings -->
-    <div style="display:grid;grid-template-columns:90px 160px 1fr 140px;border-bottom:1px solid #E4E4E7;background:#FAFAFA;min-width:780px;">
-      <div style="padding:.875rem 1rem;font-family:'JetBrains Mono',monospace;font-size:.75rem;font-weight:800;color:#00B140;border-right:1px solid #E4E4E7;display:flex;align-items:center;">Days 10–12</div>
-      <div style="padding:.875rem 1rem;font-weight:700;font-size:.85rem;border-right:1px solid #E4E4E7;display:flex;align-items:center;">Embeddings — pgvector + semantic search</div>
+    <!-- Phase 03 — Embeddings -->
+    <div style="display:grid;grid-template-columns:110px 1fr 140px;border-bottom:1px solid #E4E4E7;background:#FAFAFA;min-width:720px;">
+      <div style="padding:.875rem 1rem;font-family:'JetBrains Mono',monospace;font-size:.75rem;font-weight:800;color:#00B140;border-right:1px solid #E4E4E7;display:flex;align-items:center;">Phase 03<br>Embeddings</div>
       <div style="padding:.875rem 1rem;color:#595959;font-size:.8rem;line-height:1.55;border-right:1px solid #E4E4E7;">Embed all 30K reviews with <code>all-MiniLM-L6-v2</code> into a 384-dim vector column and build an IVFFlat cosine index, so reviews become searchable by meaning rather than keywords.</div>
       <div style="padding:.875rem 1rem;display:flex;align-items:center;justify-content:center;"><a href="https://github.com/bh00t/travellens/blob/main/docs/phase-3-embeddings.md" target="_blank" rel="noopener" class="phase-btn" style="text-decoration:none;">View Guide &#8599;</a></div>
     </div>
 
-    <!-- Phase 4 — Text-to-SQL -->
-    <div style="display:grid;grid-template-columns:90px 160px 1fr 140px;border-bottom:1px solid #E4E4E7;min-width:780px;">
-      <div style="padding:.875rem 1rem;font-family:'JetBrains Mono',monospace;font-size:.75rem;font-weight:800;color:#00B140;border-right:1px solid #E4E4E7;display:flex;align-items:center;">Days 13–20</div>
-      <div style="padding:.875rem 1rem;font-weight:700;font-size:.85rem;border-right:1px solid #E4E4E7;display:flex;align-items:center;">AI Layer — Text-to-SQL + semantic router</div>
+    <!-- Phase 04 — AI Layer -->
+    <div style="display:grid;grid-template-columns:110px 1fr 140px;border-bottom:1px solid #E4E4E7;min-width:720px;">
+      <div style="padding:.875rem 1rem;font-family:'JetBrains Mono',monospace;font-size:.75rem;font-weight:800;color:#00B140;border-right:1px solid #E4E4E7;display:flex;align-items:center;">Phase 04<br>AI Layer</div>
       <div style="padding:.875rem 1rem;color:#595959;font-size:.8rem;line-height:1.55;border-right:1px solid #E4E4E7;">Turn plain-English questions into answers via two paths: a keyword router sends structured queries to local Text-to-SQL (validated, SELECT-only) and qualitative ones to pgvector semantic search, both summarised by the local LLM.</div>
       <div style="padding:.875rem 1rem;display:flex;align-items:center;justify-content:center;"><a href="https://github.com/bh00t/travellens/blob/main/docs/phase-4-ai-layer.md" target="_blank" rel="noopener" class="phase-btn" style="text-decoration:none;">View Guide &#8599;</a></div>
     </div>
 
-    <!-- Phase 5 — Dashboards -->
-    <div style="display:grid;grid-template-columns:90px 160px 1fr 140px;border-bottom:1px solid #E4E4E7;background:#FAFAFA;min-width:780px;">
-      <div style="padding:.875rem 1rem;font-family:'JetBrains Mono',monospace;font-size:.75rem;font-weight:800;color:#00B140;border-right:1px solid #E4E4E7;display:flex;align-items:center;">Days 21–23</div>
-      <div style="padding:.875rem 1rem;font-weight:700;font-size:.85rem;border-right:1px solid #E4E4E7;display:flex;align-items:center;">Output — HTML dashboard renderer</div>
+    <!-- Phase 05 — Dashboards -->
+    <div style="display:grid;grid-template-columns:110px 1fr 140px;border-bottom:1px solid #E4E4E7;background:#FAFAFA;min-width:720px;">
+      <div style="padding:.875rem 1rem;font-family:'JetBrains Mono',monospace;font-size:.75rem;font-weight:800;color:#00B140;border-right:1px solid #E4E4E7;display:flex;align-items:center;">Phase 05<br>Output</div>
       <div style="padding:.875rem 1rem;color:#595959;font-size:.8rem;line-height:1.55;border-right:1px solid #E4E4E7;">Serve a Flask dashboard where plain-English questions become pinned, refreshable Chart.js widgets. SQL is frozen at pin time and re-run on refresh; the read path serves a JSONB cache, so loads never wait on the LLM.</div>
       <div style="padding:.875rem 1rem;display:flex;align-items:center;justify-content:center;"><a href="https://github.com/bh00t/travellens/blob/main/docs/phase-5-dashboard.md" target="_blank" rel="noopener" class="phase-btn" style="text-decoration:none;">View Guide &#8599;</a></div>
     </div>
 
-    <!-- Phase 6 — Airflow -->
-    <div style="display:grid;grid-template-columns:90px 160px 1fr 140px;border-bottom:1px solid #E4E4E7;min-width:780px;">
-      <div style="padding:.875rem 1rem;font-family:'JetBrains Mono',monospace;font-size:.75rem;font-weight:800;color:#00B140;border-right:1px solid #E4E4E7;display:flex;align-items:center;">Day 24</div>
-      <div style="padding:.875rem 1rem;font-weight:700;font-size:.85rem;border-right:1px solid #E4E4E7;display:flex;align-items:center;">Orchestration — Airflow batch DAGs</div>
-      <div style="padding:.875rem 1rem;color:#595959;font-size:.8rem;line-height:1.55;border-right:1px solid #E4E4E7;">Orchestrate the batch layer with Airflow (LocalExecutor, isolated metadata): scheduled DAGs to reconcile late events, roll up Gold KPI tables, and track run history. Infrastructure is up; the DAGs are being built.</div>
+    <!-- Phase 06 — Airflow -->
+    <div style="display:grid;grid-template-columns:110px 1fr 140px;border-bottom:1px solid #E4E4E7;min-width:720px;">
+      <div style="padding:.875rem 1rem;font-family:'JetBrains Mono',monospace;font-size:.75rem;font-weight:800;color:#00B140;border-right:1px solid #E4E4E7;display:flex;align-items:center;">Phase 06<br>Orchestration</div>
+      <div style="padding:.875rem 1rem;color:#595959;font-size:.8rem;line-height:1.55;border-right:1px solid #E4E4E7;">Orchestrate the batch layer with Airflow (LocalExecutor, isolated metadata): scheduled DAGs to reconcile late events, roll up Gold KPI tables, and track run history.</div>
       <div style="padding:.875rem 1rem;display:flex;align-items:center;justify-content:center;"><a href="https://github.com/bh00t/travellens/blob/main/docs/phase-6-airflow.md" target="_blank" rel="noopener" class="phase-btn" style="text-decoration:none;">View Guide &#8599;</a></div>
     </div>
 
-    <!-- Phase 7 — Pipeline Monitor -->
-    <div style="display:grid;grid-template-columns:90px 160px 1fr 140px;min-width:780px;">
-      <div style="padding:.875rem 1rem;font-family:'JetBrains Mono',monospace;font-size:.75rem;font-weight:800;color:#00B140;border-right:1px solid #E4E4E7;display:flex;align-items:center;">Day 26</div>
-      <div style="padding:.875rem 1rem;font-weight:700;font-size:.85rem;border-right:1px solid #E4E4E7;display:flex;align-items:center;">Pipeline Monitor — operational dashboard</div>
-      <div style="padding:.875rem 1rem;color:#595959;font-size:.8rem;line-height:1.55;border-right:1px solid #E4E4E7;">An operational <code style="font-family:'JetBrains Mono',monospace;font-size:.92em;background:#F4F4F5;border:1px solid #D4D4D8;padding:1px 4px;">/monitor</code> view answering "is the pipeline processing data correctly?" — stream activity, review-embedding coverage, and pipeline health (Airflow, quarantine, freshness), with date + city filters. Every external dependency is guarded, so the page renders even when one is down. Shipped.</div>
+    <!-- Phase 07 — Pipeline Monitor -->
+    <div style="display:grid;grid-template-columns:110px 1fr 140px;min-width:720px;">
+      <div style="padding:.875rem 1rem;font-family:'JetBrains Mono',monospace;font-size:.75rem;font-weight:800;color:#00B140;border-right:1px solid #E4E4E7;display:flex;align-items:center;">Phase 07<br>Monitoring</div>
+      <div style="padding:.875rem 1rem;color:#595959;font-size:.8rem;line-height:1.55;border-right:1px solid #E4E4E7;">An operational <code style="font-family:'JetBrains Mono',monospace;font-size:.92em;background:#F4F4F5;border:1px solid #D4D4D8;padding:1px 4px;">/monitor</code> view answering "is the pipeline processing data correctly?" — stream activity, review-embedding coverage, and pipeline health (Airflow, quarantine, freshness), with date + city filters. Every external dependency is guarded, so the page renders even when one is down.</div>
       <div style="padding:.875rem 1rem;display:flex;align-items:center;justify-content:center;"><a href="https://github.com/bh00t/travellens/blob/main/docs/phase-7-monitor.md" target="_blank" rel="noopener" class="phase-btn" style="text-decoration:none;">View Guide &#8599;</a></div>
     </div>
 
@@ -1279,7 +1271,7 @@
 <!-- ══ 11 SUCCESS METRICS ══ -->
 <section id="metrics" style="margin-bottom:4rem;" class="reveal">
   <h2 style="font-family:'Fraunces',serif;font-size:1.75rem;font-weight:700;color:#000;display:flex;align-items:center;gap:.875rem;margin-bottom:.75rem;"><span class="section-num">11</span> Success Metrics</h2>
-  <p style="font-size:.875rem;color:#595959;line-height:1.7;max-width:620px;margin-bottom:1.5rem;">How you know the project is working — before you call it done. Six checkpoints, each with a numeric pass condition and a one-line verification command.</p>
+  <p style="font-size:.875rem;color:#595959;line-height:1.7;max-width:620px;margin-bottom:1.5rem;">How you know the project is working — before you call it done. Five checkpoints, each with a clear pass condition and a one-line verification command.</p>
 
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1rem;margin-bottom:1rem;">
 
@@ -1302,7 +1294,7 @@
       </div>
       <div style="font-family:'Fraunces',serif;font-size:1.5rem;font-weight:700;color:#000;line-height:1.15;margin-bottom:.45rem;">0 orphan FK rows</div>
       <p style="font-size:.74rem;color:#595959;line-height:1.5;margin:0 0 .55rem;">All FK joins resolve. No orphaned hotel_id, no null location_id, no broken date_id in any fact table.</p>
-      <div style="font-family:'JetBrains Mono',monospace;font-size:.65rem;color:#000;background:#F4F4F5;padding:.4rem .55rem;border:1px solid #E4E4E7;">SELECT COUNT(*) FROM fact_bookings b LEFT JOIN dim_hotel h ON b.hotel_id=h.hotel_id WHERE h.hotel_id IS NULL;</div>
+      <div style="font-family:'JetBrains Mono',monospace;font-size:.65rem;color:#000;background:#F4F4F5;padding:.4rem .55rem;border:1px solid #E4E4E7;">SELECT COUNT(*) FROM fact_bookings b LEFT JOIN hotel_master h ON b.hotel_id=h.hotel_id WHERE h.hotel_id IS NULL;</div>
     </div>
 
     <!-- Card 3: Text-to-SQL -->
@@ -1311,9 +1303,9 @@
         <span style="font-family:'JetBrains Mono',monospace;font-size:.6rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#595959;">Text-to-SQL</span>
         <span style="font-family:'JetBrains Mono',monospace;font-size:.55rem;font-weight:800;padding:.15rem .45rem;background:#000;color:#fff;text-transform:uppercase;letter-spacing:.05em;">Pass</span>
       </div>
-      <div style="font-family:'Fraunces',serif;font-size:1.5rem;font-weight:700;color:#000;line-height:1.15;margin-bottom:.45rem;">10 / 10 test queries</div>
-      <p style="font-size:.74rem;color:#595959;line-height:1.5;margin:0 0 .55rem;">Hand-curated golden set. Includes "budget hotels in Goa" — must resolve to &lt;₹2,000 via ref_price_tiers join.</p>
-      <div style="font-family:'JetBrains Mono',monospace;font-size:.65rem;color:#000;background:#F4F4F5;padding:.4rem .55rem;border:1px solid #E4E4E7;">pytest tests/test_queries.py -v</div>
+      <div style="font-family:'Fraunces',serif;font-size:1.5rem;font-weight:700;color:#000;line-height:1.15;margin-bottom:.45rem;">Routes to the right table + path</div>
+      <p style="font-size:.74rem;color:#595959;line-height:1.5;margin:0 0 .55rem;">Structured questions generate SQL against fact_bookings + dimensions (never the operational agg tables); review questions route to semantic search. Hard grouped aggregations are a known 7B ceiling — model tiering planned.</p>
+      <div style="font-family:'JetBrains Mono',monospace;font-size:.65rem;color:#000;background:#F4F4F5;padding:.4rem .55rem;border:1px solid #E4E4E7;">python -m ai.main "top 5 cities by bookings"</div>
     </div>
 
     <!-- Card 4: Semantic search -->
@@ -1322,20 +1314,9 @@
         <span style="font-family:'JetBrains Mono',monospace;font-size:.6rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#595959;">Semantic search</span>
         <span style="font-family:'JetBrains Mono',monospace;font-size:.55rem;font-weight:800;padding:.15rem .45rem;background:#000;color:#fff;text-transform:uppercase;letter-spacing:.05em;">Pass</span>
       </div>
-      <div style="font-family:'Fraunces',serif;font-size:1.5rem;font-weight:700;color:#000;line-height:1.15;margin-bottom:.45rem;">Top 10 all relevant</div>
-      <p style="font-size:.74rem;color:#595959;line-height:1.5;margin:0 0 .55rem;">"Cleanliness" query returns reviews about hygiene — not food, not WiFi. Manual inspection of top-10 per test query.</p>
-      <div style="font-family:'JetBrains Mono',monospace;font-size:.65rem;color:#000;background:#F4F4F5;padding:.4rem .55rem;border:1px solid #E4E4E7;">SELECT review_text FROM reviews_raw ORDER BY embedding &lt;=&gt; :q LIMIT 10;</div>
-    </div>
-
-    <!-- Card 5: HTML output -->
-    <div class="card" style="padding:1rem 1.15rem;border-top:5px solid #00B140;">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:.45rem;gap:.5rem;">
-        <span style="font-family:'JetBrains Mono',monospace;font-size:.6rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#595959;">HTML output</span>
-        <span style="font-family:'JetBrains Mono',monospace;font-size:.55rem;font-weight:800;padding:.15rem .45rem;background:#000;color:#fff;text-transform:uppercase;letter-spacing:.05em;">Pass</span>
-      </div>
-      <div style="font-family:'Fraunces',serif;font-size:1.5rem;font-weight:700;color:#000;line-height:1.15;margin-bottom:.45rem;">Works offline · &lt; 50 KB</div>
-      <p style="font-size:.74rem;color:#595959;line-height:1.5;margin:0 0 .55rem;">File opens in any browser, chart renders without internet, table is sortable. CSS + JS fully inlined.</p>
-      <div style="font-family:'JetBrains Mono',monospace;font-size:.65rem;color:#000;background:#F4F4F5;padding:.4rem .55rem;border:1px solid #E4E4E7;">disable wifi → open query_result.html → verify chart + table</div>
+      <div style="font-family:'Fraunces',serif;font-size:1.5rem;font-weight:700;color:#000;line-height:1.15;margin-bottom:.45rem;">Top 20 all relevant</div>
+      <p style="font-size:.74rem;color:#595959;line-height:1.5;margin:0 0 .55rem;">"Cleanliness" query returns reviews about hygiene — not food, not WiFi. Manual inspection of the top-20 retrieved per test query.</p>
+      <div style="font-family:'JetBrains Mono',monospace;font-size:.65rem;color:#000;background:#F4F4F5;padding:.4rem .55rem;border:1px solid #E4E4E7;">SELECT review_text FROM reviews_raw ORDER BY embedding &lt;=&gt; :q LIMIT 20;</div>
     </div>
 
     <!-- Card 6: End-to-end latency -->
@@ -1357,7 +1338,7 @@
 <!-- ══ 12 KNOWN LIMITATIONS ══ -->
 <section id="limits" style="margin-bottom:5rem;" class="reveal">
   <h2 style="font-family:'Fraunces',serif;font-size:1.75rem;font-weight:700;color:#000;display:flex;align-items:center;gap:.875rem;margin-bottom:.75rem;"><span class="section-num">12</span> Known Limitations &amp; What I'd Do Differently</h2>
-  <p style="font-size:.875rem;color:#595959;line-height:1.7;max-width:620px;margin-bottom:2rem;">Honest technical self-critique. A portfolio project built alone in 21 days trades completeness for demonstrability. These are the known gaps:</p>
+  <p style="font-size:.875rem;color:#595959;line-height:1.7;max-width:620px;margin-bottom:2rem;">Honest technical self-critique. A portfolio project built alone in ~24 days trades completeness for demonstrability. These are the known gaps:</p>
 
   <table style="width:100%;border-collapse:collapse;border:2px solid #000;box-shadow:4px 4px 0 #000;font-size:.82rem;margin-bottom:3.5rem;">
     <thead>
@@ -1374,14 +1355,14 @@
         <td style="padding:.75rem .875rem;color:#595959;vertical-align:top;">Replace the simulator with Kafka Connect connectors pulling from actual hotel PMS webhook APIs (OYO, MakeMyTrip partner APIs). The stream consumer is unchanged — only the producer differs. For higher event rates (5K+/sec) the production path moves to AWS Managed Flink with Table API.</td>
       </tr>
       <tr style="border-bottom:1px solid #E4E4E7;background:#FAFAFA;">
-        <td style="padding:.75rem .875rem;font-weight:700;border-right:1px solid #E4E4E7;vertical-align:top;">No SQL hallucination guard</td>
-        <td style="padding:.75rem .875rem;color:#595959;border-right:1px solid #E4E4E7;vertical-align:top;">Qwen2.5-Coder-7B occasionally generates plausible-but-wrong column names for ambiguous queries — more often than Claude would. The system prompt has a hard SELECT-only constraint, but no schema validation on the output by default.</td>
-        <td style="padding:.75rem .875rem;color:#595959;vertical-align:top;">Parse the generated SQL with <code style="font-size:.72rem;background:#F4F4F5;padding:1px 4px;border:1px solid #E4E4E7;">sqlparse</code>, validate all table and column references against the live schema, and reject the query before execution if any reference is invalid.</td>
+        <td style="padding:.75rem .875rem;font-weight:700;border-right:1px solid #E4E4E7;vertical-align:top;">7B model hits a ceiling on hard queries</td>
+        <td style="padding:.75rem .875rem;color:#595959;border-right:1px solid #E4E4E7;vertical-align:top;">Qwen2.5-Coder-7B occasionally generates plausible-but-wrong column names or omits filters on harder grouped aggregations. Generated SQL is parsed with <code style="font-size:.72rem;background:#F4F4F5;padding:1px 4px;border:1px solid #E4E4E7;">sqlparse</code> and validated against the live schema before execution, so invalid references are caught — but a syntactically-valid-but-semantically-off query (e.g. a dropped cancellation filter) still slips through.</td>
+        <td style="padding:.75rem .875rem;color:#595959;vertical-align:top;">Model tiering: route hard queries to a larger local model (e.g. a 12B+), keeping the 7B for the common cases. Add a golden-query regression suite so semantic regressions are caught automatically, not just invalid-reference ones.</td>
       </tr>
       <tr style="border-bottom:1px solid #E4E4E7;">
         <td style="padding:.75rem .875rem;font-weight:700;border-right:1px solid #E4E4E7;vertical-align:top;">pgvector with IVFFlat index (not HNSW)</td>
         <td style="padding:.75rem .875rem;color:#595959;border-right:1px solid #E4E4E7;vertical-align:top;">Review embeddings sit in Postgres as <code style="font-size:.72rem;background:#F4F4F5;padding:1px 4px;border:1px solid #E4E4E7;">vector(384)</code> columns. IVFFlat indexing is fast enough at 30K reviews. Recall and latency degrade past ~1M vectors.</td>
-        <td style="padding:.75rem .875rem;color:#595959;vertical-align:top;">Switch to <code style="font-size:.72rem;background:#F4F4F5;padding:1px 4px;border:1px solid #E4E4E7;">HNSW</code> indexing (pgvector 0.5+) for better recall at scale, or move to a dedicated vector store (Pinecone, Weaviate) past 5M+ vectors.</td>
+        <td style="padding:.75rem .875rem;color:#595959;vertical-align:top;">Switch to <code style="font-size:.72rem;background:#F4F4F5;padding:1px 4px;border:1px solid #E4E4E7;">HNSW</code> indexing (pgvector 0.5+) for better recall at scale, or move to a dedicated vector store (<a href="https://www.pinecone.io/" target="_blank" rel="noopener noreferrer" class="vs-link">Pinecone</a>, <a href="https://weaviate.io/" target="_blank" rel="noopener noreferrer" class="vs-link">Weaviate</a>) past 5M+ vectors.</td>
       </tr>
       <tr>
         <td style="padding:.75rem .875rem;font-weight:700;border-right:1px solid #E4E4E7;vertical-align:top;">No Airflow DAG in the first build</td>
@@ -1398,7 +1379,7 @@
       <!-- Branding block -->
       <div>
         <div style="font-family:'Fraunces',serif;font-size:1.25rem;font-weight:700;color:#000;margin-bottom:.4rem;">TravelLens.</div>
-        <p style="font-size:.775rem;color:#595959;line-height:1.6;margin:0 0 .75rem;">India Hotel &amp; Tourism Intelligence Blueprint — a 21-day data engineering portfolio project. 30K+ real reviews · Kafka + Python consumer · Postgres + pgvector · S3 · Ollama (Qwen2.5-Coder-7B) · Jinja2 HTML. Fully offline.</p>
+        <p style="font-size:.775rem;color:#595959;line-height:1.6;margin:0 0 .75rem;">India Hotel &amp; Tourism Intelligence Blueprint — a ~24-day data engineering portfolio project. 30K+ real reviews · Kafka + Python consumer · Postgres + pgvector · S3 · Ollama (Qwen2.5-Coder-7B) · Jinja2 HTML. Fully offline.</p>
         <span style="font-family:'JetBrains Mono',monospace;font-size:.6rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:#595959;">v1.0 · 2026</span>
       </div>
 
@@ -1749,7 +1730,7 @@
       <div class="cf-section">
         <div class="cf-h2">Build Steps</div>
         <div class="cf-h3"><span class="cf-step-num">1</span> Write ai/prompts/text_to_sql_system.txt</div>
-        <p class="cf-p">SELECT-only constraint + full schema DDL from <code class="cf-ic">db/schema.sql</code> + India context + 5 few-shot examples. End with "Return only the SQL. No markdown. No backticks."</p>
+        <p class="cf-p">SELECT-only constraint + full schema from <code class="cf-ic">db/schema.sql</code> + India context + explicit join/column-location rules. End with "Return only the SQL. No markdown. No backticks."</p>
         <div class="cf-h3"><span class="cf-step-num">2</span> Copy the four ai/ scripts and parse-check</div>
         <p class="cf-p"><code class="cf-ic">python -c "import ast; ast.parse(open('ai/main.py').read()); print('OK')"</code> for each file.</p>
         <div class="cf-h3"><span class="cf-step-num">3</span> Run router self-test</div>

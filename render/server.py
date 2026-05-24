@@ -668,15 +668,23 @@ def _monitor_stream_activity(conn, date_from, date_to, city) -> dict:
     """
     Section 1 — stream activity from agg_hourly_city_stats, date+city filtered.
 
-    Returns counts that prove the consumer is processing events:
-      bookings, revenue, windows (rows flushed), and cancellations.
+    Returns counts that prove the consumer is processing events. PIPELINE
+    HEALTH ONLY — no revenue. Revenue is a business answer (Explorer); the
+    monitor reports event throughput per lifecycle type:
+      bookings, checkins, checkouts, cancellations(≈), windows, cities.
 
-    Cancellations: the agg table stores cancellation_rate (a fraction), NOT a
-    raw count. When the column exists we reconstruct the count algebraically —
-    rate = cancels / (bookings + cancels)  =>  cancels = rate*bookings/(1-rate)
-    — and sum it per window. Labelled "≈" in the UI because the stored rate is
-    NUMERIC(5,4), so rounding introduces a tiny error. When the column is
-    absent (per schema.sql), cancellations is None and the card shows "—".
+    checkins / checkouts (B-032 Chunk 2 columns) are exact event counts the
+    consumer now writes per window. checkouts will read 0 until the producer
+    emits CHECKOUT (B-032 Chunk 3) — UI surfaces that as "0", not "—".
+
+    cancellations: the agg table stores cancellation_rate (a fraction) AS
+    WELL AS the new total_cancellations raw count column. We keep using the
+    rate-derived algebraic estimate here for back-compat with old window rows
+    written before migration 007 (where total_cancellations is NULL) —
+    rate = cancels / (bookings + cancels) => cancels = rate*bookings/(1-rate)
+    — summed per window. Labelled "≈" in the UI because NUMERIC(5,4)
+    rounding introduces a tiny error. When the column is absent (per
+    schema.sql), cancellations is None and the card shows "—".
     """
     has_cancel = _column_exists(conn, "agg_hourly_city_stats", "cancellation_rate")
 
@@ -700,10 +708,11 @@ def _monitor_stream_activity(conn, date_from, date_to, city) -> dict:
         )
 
     sql = (
-        "SELECT COALESCE(SUM(total_bookings), 0) AS bookings, "
-        "       COALESCE(SUM(total_revenue_inr), 0) AS revenue, "
-        "       COUNT(*) AS windows, "
-        "       COUNT(DISTINCT city) AS cities"
+        "SELECT COALESCE(SUM(total_bookings), 0)  AS bookings, "
+        "       COALESCE(SUM(total_checkins), 0)  AS checkins, "
+        "       COALESCE(SUM(total_checkouts), 0) AS checkouts, "
+        "       COUNT(*)                          AS windows, "
+        "       COUNT(DISTINCT city)              AS cities"
         f"      {cancel_select} "
         f"FROM agg_hourly_city_stats{where_sql}"
     )
@@ -714,17 +723,101 @@ def _monitor_stream_activity(conn, date_from, date_to, city) -> dict:
             row = cur.fetchone()
     except Exception as exc:
         log.warning("monitor: stream activity query failed: %s", exc)
-        return {"bookings": 0, "revenue": 0, "windows": 0, "cities": 0,
-                "cancellations": None}
+        return {"bookings": 0, "checkins": 0, "checkouts": 0,
+                "windows": 0, "cities": 0, "cancellations": None}
 
-    bookings, revenue, windows, cities = row[0], row[1], row[2], row[3]
-    cancellations = round(float(row[4])) if has_cancel else None
+    bookings, checkins, checkouts, windows, cities = (
+        row[0], row[1], row[2], row[3], row[4]
+    )
+    cancellations = round(float(row[5])) if has_cancel else None
     return {
         "bookings":      int(bookings),
-        "revenue":       float(revenue),
+        "checkins":      int(checkins),
+        "checkouts":     int(checkouts),
         "windows":       int(windows),
         "cities":        int(cities),
         "cancellations": cancellations,
+    }
+
+
+def _monitor_live(conn) -> dict:
+    """
+    Live throughput from the pipeline_metrics heartbeat table (B-032 Chunk 4).
+
+    The consumer writes one cumulative-counter snapshot every
+    FLUSH_CHECK_SECONDS (~10s). We take the latest TWO rows and derive
+    events/sec as the delta between them:
+
+        events_per_sec = (latest.events_consumed - prev.events_consumed)
+                       / max(epoch_diff_seconds, 1)
+
+    max(..., 1) protects against a zero/negative interval (two heartbeats
+    landing in the same second after a clock skew). A negative delta —
+    consumer restart reset the counter — would yield a misleading negative
+    rate; we clamp to 0 in that case.
+
+    alive: heartbeat age < 15s (a bit more than one FLUSH_CHECK_SECONDS tick
+    of slack). Older than that and the consumer has gone silent.
+
+    Guarded like every other _monitor_* helper — if the table is missing,
+    empty, or has <2 rows, return {has_data: False, ...} so the route never
+    raises and the page always renders.
+    """
+    fallback = {
+        "has_data":       False,
+        "events_per_sec": 0,
+        "alive":          False,
+        "latest_ts":      None,
+        "age_secs":       None,
+    }
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT metric_ts, events_consumed
+                FROM pipeline_metrics
+                ORDER BY metric_ts DESC
+                LIMIT 2
+                """
+            )
+            rows = cur.fetchall()
+    except Exception as exc:
+        log.warning("monitor: pipeline_metrics query failed: %s", exc)
+        return fallback
+
+    if not rows:
+        return fallback
+
+    latest_ts, latest_ev = rows[0]
+    # metric_ts is TIMESTAMP WITHOUT TIME ZONE in migration 007, stored as
+    # UTC by the consumer. Compare with a naive utcnow() to match.
+    now = datetime.utcnow() if latest_ts.tzinfo is None else datetime.now(timezone.utc)
+    age_secs = (now - latest_ts).total_seconds()
+    alive    = age_secs < 15
+
+    if len(rows) < 2:
+        # One heartbeat only — can't derive a rate, but we still know the
+        # consumer wrote something. has_data=True; rate stays 0.
+        return {
+            "has_data":       True,
+            "events_per_sec": 0,
+            "alive":          alive,
+            "latest_ts":      latest_ts,
+            "age_secs":       age_secs,
+        }
+
+    prev_ts, prev_ev = rows[1]
+    epoch_diff = max((latest_ts - prev_ts).total_seconds(), 1)
+    raw_delta  = int(latest_ev) - int(prev_ev)
+    # Clamp restart-resets to 0 instead of reporting a negative rate.
+    eps        = max(raw_delta, 0) / epoch_diff
+
+    return {
+        "has_data":       True,
+        "events_per_sec": round(eps, 1),
+        "alive":          alive,
+        "latest_ts":      latest_ts,
+        "age_secs":       round(age_secs, 1),
     }
 
 
@@ -847,22 +940,39 @@ def monitor():
     """
     Pipeline monitor — "is the solution processing data correctly?"
 
-    Three sections, one filter bar (date + city):
-      1. Stream activity   — agg_hourly_city_stats, date+city filtered.
-      2. Review embeddings — reviews_raw, NOT filtered (reviews are static).
-      3. Pipeline health   — Airflow + quarantine + freshness, NOT filtered.
+    Layout (Chunk 4): a live-throughput pulse in the header (reads
+    pipeline_metrics, ignores the filter), then four filtered sections —
+    EVENTS (per-type counts + SOON placeholders), QUARANTINE (malformed /
+    late), HEALTH (freshness + Airflow). Business analytics live in the
+    Explorer, not here.
 
-    Every external dependency (DB, MinIO, Airflow) is guarded so the page
-    renders even when something is down. Default range = all stream data
-    (synthetic data may have nothing dated today).
+    Filter bar: date range + city.
+
+    DEFAULT DATE BEHAVIOUR (Chunk 4 change): when neither `from` nor `to`
+    is supplied in the query string, BOTH default to TODAY (UTC). This is
+    fixed — we do NOT fall back to "all data" when today is empty. A cold
+    system showing zeros for today is the correct answer; the empty-state
+    banner explains how to start the simulator. The user can widen the
+    range manually via the filter bar.
+
+    Every external dependency (DB, MinIO, Airflow, pipeline_metrics) is
+    guarded so the page renders even when something is down.
     """
     date_from = _valid_date(request.args.get("from"))
     date_to   = _valid_date(request.args.get("to"))
     city      = (request.args.get("city") or "").strip()
 
+    # Default-today: when no date filter was supplied, pin BOTH endpoints to
+    # today (UTC). We do NOT fall back to "all data" — see docstring.
+    if not date_from and not date_to:
+        today     = datetime.now(timezone.utc).date().isoformat()
+        date_from = today
+        date_to   = today
+
     conn = get_conn()
     try:
         cities    = _monitor_cities(conn)
+        live      = _monitor_live(conn)
         stream    = _monitor_stream_activity(conn, date_from, date_to, city)
         embed     = _monitor_embeddings(conn)
         freshness = _monitor_freshness(conn)
@@ -879,12 +989,60 @@ def monitor():
         sel_from=date_from or "",
         sel_to=date_to or "",
         sel_city=city,
+        live=live,
         stream=stream,
         embed=embed,
         freshness=freshness,
         quarantine=quarantine,
         airflow=airflow,
     )
+
+
+@app.route("/monitor/data")
+def monitor_data():
+    """
+    JSON sidecar for the /monitor page (Chunk 4).
+
+    Returns the subset of monitor state that changes second-to-second:
+      live       — pipeline_metrics-derived events/sec + alive signal
+      stream     — agg_hourly_city_stats counts (date+city filtered)
+      quarantine — MinIO malformed / late counts
+
+    Excluded on purpose: cities list (changes only on schema change),
+    embeddings coverage (changes on the embedding job, not stream activity),
+    freshness/airflow (rendered server-side, refreshed by polling reload).
+
+    Same query-string contract as /monitor — `from`, `to`, `city`. Same
+    default-today behaviour, so an empty client request (no params) shows
+    today's data, not lifetime totals.
+    """
+    date_from = _valid_date(request.args.get("from"))
+    date_to   = _valid_date(request.args.get("to"))
+    city      = (request.args.get("city") or "").strip()
+
+    if not date_from and not date_to:
+        today     = datetime.now(timezone.utc).date().isoformat()
+        date_from = today
+        date_to   = today
+
+    conn = get_conn()
+    try:
+        live   = _monitor_live(conn)
+        stream = _monitor_stream_activity(conn, date_from, date_to, city)
+    finally:
+        conn.close()
+
+    quarantine = _monitor_quarantine()
+
+    # latest_ts is a datetime — serialise for JSON.
+    if live.get("latest_ts"):
+        live = {**live, "latest_ts": live["latest_ts"].isoformat()}
+
+    return jsonify({
+        "live":       live,
+        "stream":     stream,
+        "quarantine": quarantine,
+    })
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

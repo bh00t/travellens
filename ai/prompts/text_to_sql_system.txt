@@ -215,8 +215,10 @@ OUTPUT RULES
 - Revenue in crore: ROUND(SUM(b.revenue_inr) / 1e7, 2)
 - ADR (average daily rate): ROUND(AVG(b.revenue_inr / NULLIF(b.nights_stayed, 0)), 0)
 - Cancellation rate: ROUND(100.0 * SUM(CASE WHEN b.is_cancelled THEN 1 ELSE 0 END) / COUNT(*), 2)
-- For booking counts and revenue ALWAYS use fact_bookings. The tables
-  agg_daily_hotel_kpi and agg_hourly_city_stats are empty — do not use them.
+- For booking counts and revenue ALWAYS use fact_bookings. Do NOT use agg_daily_hotel_kpi,
+  agg_hourly_city_stats, or pipeline_metrics — those are operational/streaming aggregate tables,
+  not the booking analytics source. fact_bookings is the source of truth for all booking, revenue,
+  and cancellation analytics.
 - City, state, and region live in dim_location (reached via the hotel_master chain).
   For "by city" GROUP BY l.city. For "statewise"/"by state" GROUP BY l.state with NO
   WHERE filter on location. Only add a location filter when the user names ONE specific

@@ -4,31 +4,73 @@ run.py — TravelLens dev launcher
 ================================
 One command to bring the whole local stack up, and a clean teardown on Ctrl-C.
 
-    python run.py                 # full stack: docker + consumer + simulator + dashboard
-    python run.py --no-sim        # skip the event simulator
-    python run.py --sim-rate 5    # pass a rate arg to the simulator (see SIMULATOR below)
-    python run.py --no-docker     # assume docker is already up; just start the python processes
-    python run.py --chaos         # simulator injects malformed + late events (5%/2%, seed 42)
-    python run.py --down          # tear everything down and exit
+WHAT PLAIN `python run.py` DOES
+    Brings the docker stack up (Postgres, Kafka, Zookeeper, MinIO, Airflow), then
+    starts THREE host Python processes: the Kafka consumer, the event simulator,
+    and the Flask dashboard at http://localhost:5000. Ctrl-C tears it all down
+    cleanly. If docker was already up before you ran this, it is LEFT up.
 
-WHAT IT MANAGES
-    - Docker stack (Postgres, Kafka, Zookeeper, MinIO, Airflow) via `docker compose up -d`.
-      Airflow's scheduler runs its DAGs on its own inside its container — this script does
-      NOT schedule or trigger Airflow jobs. It only brings the containers up.
+FLAGS — pick the smallest mode that lets you do what you need
+  --window MINUTES   Override the consumer's tumbling-window size for THIS run
+                     only (e.g. --window 2 flushes aggregates in ~2 min, useful
+                     for fast monitor testing). Scoped to the consumer subprocess;
+                     never touches .env or your shell. Omit for the 60-min
+                     production default.
+                       python run.py --window 2
+
+  --no-sim           Bring up docker + consumer + dashboard, but DON'T start the
+                     event simulator. The monitor is still live (the consumer is
+                     up), so you can send your own events from another terminal.
+                       python run.py --no-sim
+                       # then, in another shell:
+                       python -m scripts.kafka_event_producer --rate 50 --duration 60
+
+  --server-only      Start ONLY the Flask dashboard. No consumer, no simulator,
+                     and no docker bring-up — assumes the stack (and Postgres)
+                     is already up. For fast UI iteration when you don't care
+                     about live streaming. If Postgres isn't reachable you get
+                     ONE warning line, not a traceback, and the server still
+                     starts (data calls just fail until the DB comes back).
+                       python run.py --server-only
+
+  --no-docker        Assume docker is already up; start only the python procs
+                     (consumer + simulator + dashboard).
+  --sim-rate N       Pass --rate N to the simulator (events per second).
+  --chaos            Simulator injects malformed + late events at the bundled
+                     5% / 2% / seed=42 testing defaults. Populates the monitor's
+                     quarantine cards.
+  --malformed-pct N  Custom malformed % (implies chaos; overrides --chaos default).
+  --late-pct N       Custom late % (implies chaos; overrides --chaos default).
+  --chaos-seed N     Reproducible chaos seed (default 42 when chaos is on).
+  --down             Tear the docker stack down and exit.
+
+PRECEDENCE
+    --server-only is the most stripped mode and wins over --no-sim if BOTH are
+    passed (server-only already implies no simulator AND no consumer).
+    --window only matters when the consumer actually starts; under --server-only
+    there is no consumer to receive it, so it becomes a no-op — the launcher
+    will say so in the banner when both are given.
+
+WHAT THIS SCRIPT MANAGES
+    - Docker stack via `docker compose up -d`. Airflow's scheduler runs its DAGs
+      on its own inside its container — this script does NOT schedule or trigger
+      Airflow jobs. It only brings the containers up.
     - Three host Python processes that are NOT containerised:
         consumer  — drains the Kafka topic
         simulator — produces booking events
         dashboard — the Flask render server
 
 DESIGN DECISIONS (so future-you knows why)
-    - Idempotent: `docker compose up -d` is safe to run whether containers are up or down.
-      The script also pre-checks the Docker daemon and polls health before starting Python.
-    - Least-surprise teardown: on exit it only runs `docker compose down` IF THIS SCRIPT
-      started Docker. If Docker was already up before you ran this, it's left running.
-    - The teardown always fires (signal handler + finally), even on crash or double Ctrl-C,
-      so you never end up with orphaned host processes.
-    - Port/duplicate check: if the dashboard port is already bound, the script won't start a
-      second dashboard — it warns and continues with the rest.
+    - Idempotent: `docker compose up -d` is safe to run whether containers are up
+      or down. The script also pre-checks the Docker daemon and polls health
+      before starting Python.
+    - Least-surprise teardown: on exit it only runs `docker compose down` IF THIS
+      SCRIPT started Docker. If Docker was already up before you ran this, it's
+      left running.
+    - The teardown always fires (signal handler + finally), even on crash or
+      double Ctrl-C, so you never end up with orphaned host processes.
+    - Port/duplicate check: if the dashboard port is already bound, the script
+      won't start a second dashboard — it warns and continues with the rest.
 
 ------------------------------------------------------------------------------------
 CONFIG — EDIT THESE THREE COMMANDS TO MATCH YOUR REPO IF THEY ARE WRONG.
@@ -84,6 +126,10 @@ DASHBOARD = {
 # These are the docker compose SERVICE names — adjust to match your compose file.
 HEALTH_WAIT_SERVICES = ["postgres", "kafka"]
 HEALTH_TIMEOUT_SEC = 90
+
+# Postgres TCP port — probed under --server-only so a clearly-down DB shows up
+# as ONE warning line instead of a wall of dashboard tracebacks.
+POSTGRES_PORT = 5432
 
 # ----------------------------------------------------------------------------------
 # Below here is generic machinery — you shouldn't need to edit it.
@@ -223,6 +269,21 @@ class Launcher:
 
     # -- Docker -------------------------------------------------------------------
     def bring_up_docker(self):
+        # --server-only: we do NOT bring docker up. The whole point of this mode
+        # is fast UI iteration against an already-running stack — running
+        # `docker compose up -d` here would slow startup for nothing. Instead we
+        # do a single TCP probe on Postgres: if it answers, great; if it doesn't,
+        # print ONE clear warning line (no traceback) and continue — the dashboard
+        # itself will surface friendlier errors per request than we can here.
+        if self.args.server_only:
+            log("system", "--server-only set; skipping docker bring-up.")
+            if not port_in_use(POSTGRES_PORT):
+                log("system",
+                    f"Postgres is not reachable on localhost:{POSTGRES_PORT} — "
+                    f"dashboard will still start, but data queries will fail until "
+                    f"the DB is up. Bring docker up (or omit --server-only).",
+                    "error")
+            return
         if self.args.no_docker:
             log("system", "--no-docker set; assuming the stack is already up.")
             return
@@ -273,7 +334,11 @@ class Launcher:
         self.threads.append(t)
 
     def start_python(self):
-        # Dashboard — skip if its port is already bound (a dashboard is already running)
+        # --------------------------------------------------------------------
+        # Dashboard — always started (it is the user-facing thing every mode
+        # wants). Skip only if its port is already bound by something else,
+        # in which case we warn and continue with the rest.
+        # --------------------------------------------------------------------
         if port_in_use(DASHBOARD["port"]):
             log("system",
                 f"port {DASHBOARD['port']} already in use — NOT starting a second dashboard.",
@@ -281,12 +346,66 @@ class Launcher:
         else:
             self.start_process(DASHBOARD)
 
-        # Consumer
-        self.start_process(CONSUMER)
+        # --------------------------------------------------------------------
+        # --server-only: we are done. No consumer, no simulator. This is the
+        # stripped-down mode for fast UI work against an already-running stack.
+        # If --window was also passed it has nothing to act on (no consumer),
+        # so we call that out explicitly rather than silently dropping it —
+        # otherwise a user might wonder why their window override "didn't work".
+        # --------------------------------------------------------------------
+        if self.args.server_only:
+            banner = "SERVER ONLY — no consumer, no simulator (dashboard only)"
+            if self.args.window is not None:
+                banner += f"  |  --window {self.args.window}m is a NO-OP here (no consumer to receive it)"
+            log("system", banner, "error")  # red so the abnormal mode is unmissable
+            return
 
-        # Simulator (optional, with optional rate + optional chaos)
+        # --------------------------------------------------------------------
+        # Consumer — started in every mode EXCEPT --server-only. We need it
+        # under --no-sim too so the monitor stays live while the user sends
+        # their own events from another terminal.
+        #
+        # --window N: inject a smaller tumbling window into THIS consumer
+        # subprocess ONLY (via env_extra, the same scoped mechanism used for
+        # chaos). It never touches .env or the parent shell, so the production
+        # default (60m / 300s) is restored the moment this run exits — it
+        # cannot leak into a later "real" run. Omit --window for production
+        # shape. When set below 5 min, grace is also lowered to 30s so a small
+        # window actually closes during the run. A loud banner makes a
+        # non-production window unmistakable.
+        # --------------------------------------------------------------------
+        consumer_env = None
+        if self.args.window is not None:
+            win = str(self.args.window)
+            grace = "30" if self.args.window < 5 else "300"
+            consumer_env = {
+                "WINDOW_SIZE_MINUTES":     win,
+                "WATERMARK_GRACE_SECONDS": grace,
+            }
+            log("system",
+                f"--window {win}m (grace {grace}s) — NON-PRODUCTION window, scoped to this "
+                f"run only, .env untouched. Omit --window for the 60m production default.",
+                "error")  # 'error' colour = stands out; deliberate warning, not a fault
+        self.start_process(CONSUMER, env_extra=consumer_env)
+
+        # --------------------------------------------------------------------
+        # Simulator — skipped under --no-sim. The consumer above keeps running
+        # so the /monitor page is still live; you generate events yourself.
+        # We print a loud, multi-line banner with the exact command to copy
+        # because a quiet "skipping simulator" log gets lost in startup noise
+        # and the most common follow-up question is "ok, how do I send events?".
+        # --------------------------------------------------------------------
         if self.args.no_sim:
-            log("system", "--no-sim set; not starting the event simulator.")
+            log("system",
+                "--no-sim: running WITHOUT the event simulator. Consumer is still "
+                "up, so the monitor will reflect whatever events you send.",
+                "error")
+            log("system",
+                "  send events manually, e.g.:",
+                "error")
+            log("system",
+                "    python -m scripts.kafka_event_producer --rate 50 --duration 60",
+                "error")
         else:
             extra = []
             if self.args.sim_rate is not None:
@@ -345,7 +464,12 @@ class Launcher:
                         log("system", f"{name} exited (code {code}).", "error")
                         self.procs.remove((name, proc))
                         break
-                if not self.procs and not self.args.no_docker:
+                # Exit the watch loop when nothing is left to watch. Originally
+                # this only fired when docker was OURS (i.e. not --no-docker), so
+                # the script stayed alive holding the docker stack open. Under
+                # --server-only there is only one process (the dashboard); if it
+                # dies, there is genuinely nothing to do, so we break out too.
+                if not self.procs and (not self.args.no_docker or self.args.server_only):
                     log("system", "all host processes have exited.", "error")
                     break
                 time.sleep(2)
@@ -355,7 +479,25 @@ class Launcher:
 
 def main():
     p = argparse.ArgumentParser(description="TravelLens dev launcher")
-    p.add_argument("--no-sim", action="store_true", help="don't start the event simulator")
+
+    # --no-sim: bring docker + consumer + dashboard up, but skip the event
+    # simulator subprocess. The monitor stays live because the consumer is
+    # still running; the user is expected to send events from another shell.
+    p.add_argument("--no-sim", action="store_true",
+                   help="Skip the event simulator. Docker + consumer + dashboard still "
+                        "start; you send events yourself, e.g. "
+                        "`python -m scripts.kafka_event_producer --rate 50 --duration 60`.")
+
+    # --server-only: skip docker bring-up, skip consumer, skip simulator. Start
+    # ONLY the Flask dashboard. Most-stripped mode; assumes the stack is
+    # already up. Wins over --no-sim when both are passed (server-only is
+    # strictly more restrictive — it already implies no simulator).
+    p.add_argument("--server-only", action="store_true",
+                   help="Start ONLY the Flask dashboard. No consumer, no simulator, no "
+                        "docker bring-up (assumes the stack/DB is already up). Beats "
+                        "--no-sim if both are passed. --window is a no-op under this mode "
+                        "(no consumer to receive it).")
+
     p.add_argument("--sim-rate", type=int, default=None,
                    help="events/sec passed to the simulator")
     p.add_argument("--no-docker", action="store_true",
@@ -372,6 +514,14 @@ def main():
                    help="reproducible chaos seed (default 42 when chaos is on)")
     p.add_argument("--down", action="store_true",
                    help="tear the docker stack down and exit")
+    p.add_argument("--window", type=int, default=None, metavar="MINUTES",
+                   help="Override the consumer's tumbling-window size for THIS run only "
+                        "(e.g. --window 2 flushes aggregates in ~2 min for fast monitor "
+                        "testing). Omit for the production default (60 min) — plain "
+                        "`python run.py` is unchanged. Scoped to the consumer subprocess "
+                        "this script launches: it does NOT touch your .env or shell, so it "
+                        "can never leak into a later run. When set below 5, grace is also "
+                        "lowered to 30s so a small window actually closes during the run.")
     args = p.parse_args()
 
     if args.down:

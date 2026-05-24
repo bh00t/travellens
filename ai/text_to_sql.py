@@ -9,7 +9,10 @@ What this file does:
 
     Flow:
       1. Load the system prompt from ai/prompts/text_to_sql_system.txt
-         (contains schema DDL + India context + few-shot examples)
+         (contains a SCHEMA listing, a JOIN MAP with copy-paste FROM/JOIN
+         blocks, a COLUMN LOCATION rule, an ENTITY COUNT RULE, and OUTPUT
+         RULES — general rules over the data model, NOT few-shot
+         question→SQL pairs)
       2. Send user query + system prompt to Ollama (Qwen2.5-Coder-7B)
       3. Ollama returns a SQL string
       4. Validate the SQL — must be SELECT only, must be parseable
@@ -85,11 +88,22 @@ log = logging.getLogger(__name__)
 
 # ── System prompt ─────────────────────────────────────────────────────────────
 # Loaded once at module import — not on every call.
-# Contains: SELECT-only constraint, full schema with exact column names,
-# India context, and few-shot examples covering common TravelLens patterns.
+# Contains: SELECT-only constraint at the top, then five general-rules
+# sections — SCHEMA (table/column listing), JOIN MAP (copy-paste FROM/JOIN
+# blocks + DATE HANDLING + HARD JOIN RULES), COLUMN LOCATION (which
+# columns live on which tables, e.g. is_cancelled is fact_bookings-only),
+# ENTITY COUNT RULE (count from dimensions, not fact_bookings), and
+# OUTPUT RULES (cancellation filter, revenue-in-crore, ADR, by-city
+# grouping, LIMIT for top-N, DISTINCT for listings).
 #
-# To fix a bad query: add a corrected few-shot example to this file.
-# That's the primary tuning lever — no Python changes needed.
+# Tuning lever: when a query shape misbehaves, tighten the matching RULE
+# section above — not by adding a one-off few-shot example for that query.
+# CLAUDE.md's hard rule on this is explicit: "Examples in a prompt are a
+# last resort, not a patch."
+#
+# This file deliberately holds NO question→SQL example pairs. An earlier
+# example-driven version drifted on every new query shape; the rewrite to
+# general rules is what closed that gap. Keep it that way.
 _PROMPT_PATH   = Path(__file__).parent / "prompts" / "text_to_sql_system.txt"
 _SYSTEM_PROMPT = _PROMPT_PATH.read_text(encoding="utf-8")
 

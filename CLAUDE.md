@@ -211,6 +211,11 @@ travellens/
 │   │                                  events, and advances the real `sim_open_bookings` backlog through
 │   │                                  CHECKIN/CHECKOUT/CANCELLATION at the real dates. B-030: emits REVIEW events
 │   │                                  at CHECKOUT (lifecycle_status=COMPLETED) and CANCELLATION (CANCELLED/same-day);
+│   │                                  all 4 review_stages possible via review_generator.pick_stage()
+│   │                                  (COMPLETED→checked_out/checked_in/booked; CANCELLED→cancelled/booked).
+│   │                                  make_review_event_dict is pure (no event_ts); producer stamps
+│   │                                  _rv["event_ts"] = _now_iso_utc() at all 3 emission sites — required or
+│   │                                  Gate 2 quarantines every REVIEW as missing_field.
 │   │                                  hotel_rating_map loaded at startup from hotel_master. Sim-clock persisted at
 │   │                                  scripts/.sim_clock.json (gitignored); resume = saved+1. Wire types and
 │   │                                  Kafka config UNCHANGED. New ADDITIVE wire field `event_date` (sim-day)

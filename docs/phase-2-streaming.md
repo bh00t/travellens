@@ -853,6 +853,20 @@ this try/except and are unaffected.
 
 ---
 
+### B-030 / B-030a — REVIEW as a booking-tied stream event
+
+REVIEW became a first-class stream event. The producer emits it at CHECKOUT and
+CANCELLATION lifecycle events; the consumer intercepts it after Gate 4 and routes it
+to `reviews_raw` via `review_flush()`, bypassing silver/agg/gold entirely.
+`scripts/review_generator.py` (pure — no I/O) handles generation; history was seeded
+by `scripts/generate_review_backfill.py` (90,980 reviews at ~15% rate).
+`scripts/review_stats.py` is the read-only diagnostic. Migration 010 extended
+`reviews_raw` with 7 new columns. For current wire format, Gate-2 field set, and
+routing rules see [CLAUDE.md](../CLAUDE.md) · [datamodel.md](../datamodel.md) ·
+[backlog.md](backlog.md) (B-030 completed entry).
+
+---
+
 ## NEXT
 
 Phase 3 — `docs/phase-3-embeddings.md`

@@ -1647,9 +1647,9 @@ For each hotel, every "tick" (e.g. every second):
 | `CHECKOUT` | `booking_id`, `customer_id`, `event_date` | Same `booking_id` as matching CHECKIN. |
 | `CANCELLATION` | `booking_id`, `customer_id`, `cancellation_reason` (`customer_cancelled` or `no_show`), `event_date` | Reason is deterministic from `booking_id + chaos_seed`. |
 | `PRICE_CHANGE` | `room_type_id`, `old_price_inr`, `new_price_inr` (NO `booking_id`) | Stateless operational event. Passes Gate 2 but silently filtered at Gate 3 (not bronzed). |
-| `REVIEW` | — | **Not yet emitted (B-030).** Deferred to Phase C (B-037). |
+| `REVIEW` | `review_id` (uuid5 deterministic — `uuid5(REVIEW_NS, booking_id)`), `booking_id`, `customer_id`, `review_stage` (`booked` / `checked_in` / `checked_out` / `cancelled`), `rating` (1–5), `review_text`, `review_channel`, `event_date` | Emitted at CHECKOUT (lifecycle_status=`COMPLETED`) and CANCELLATION (`CANCELLED` / same-day). No `city` field. `event_ts` is stamped by the producer at each emission site — `review_generator.make_review_event_dict` is pure (no I/O, no timestamps); callers add `_rv["event_ts"] = _now_iso_utc()`. Routed to `reviews_raw` only; never enters `fact_booking_events`, agg, or gold. |
 
-**Base envelope** (every event): `event_id` (uuid4), `event_type`, `hotel_id`, `city`, `event_ts` (ISO 8601 UTC wall-clock), `event_date` (sim-day).
+**Base envelope** (BOOKING / CHECKIN / CHECKOUT / CANCELLATION / PRICE_CHANGE): `event_id` (uuid4), `event_type`, `hotel_id`, `city`, `event_ts` (ISO 8601 UTC wall-clock), `event_date` (sim-day). REVIEW omits `city` — `hotel_id` is the routing anchor.
 
 #### Producer & consumer CLI
 
@@ -1803,6 +1803,7 @@ the source of truth.
 | 007 | `pipeline_metrics` heartbeat table + 4 new count columns on `agg_hourly_city_stats` (checkins/checkouts/cancellations/reviews) | Phase 7 / Phase 2 hardening      | B-032      |
 | 008 | Lifecycle event tables (`fact_booking_events` + `sim_open_bookings`) for the streaming redesign        | Phase 2 — Streaming lifecycle    | B-035      |
 | 009 | Gold lifecycle layer: `ingest_seq` cursor column on `fact_booking_events` + `fact_booking_lifecycle` gold table (one row per booking_id, forward-only status machine, `illegal_transition_flag`, `source_mix`) + `gold_watermark` single-row cursor table | Phase 2 — Gold layer | B-040      |
+| 010 | 7 new nullable columns on `reviews_raw` for booking-tied stream reviews (`booking_id UUID`, `customer_id VARCHAR(12)`, `review_stage VARCHAR(20)`, `review_channel VARCHAR(100)`, `event_ts TIMESTAMPTZ`, `event_date DATE`) + `record_source VARCHAR(10) NOT NULL DEFAULT 'seed'`; 2 new indexes (`idx_reviews_raw_booking_id` partial, `idx_reviews_raw_record_source`) | Phase 2 — REVIEW stream | B-030      |
 
 ---
 

@@ -129,6 +129,7 @@ from pathlib import Path
 import psycopg2
 from dotenv import load_dotenv
 from kafka import KafkaProducer
+from scripts.review_generator import make_review_event_dict as _make_review
 
 sys.stdout.reconfigure(encoding="utf-8")
 
@@ -429,6 +430,32 @@ def has_open_bookings(conn):
         return cur.fetchone()[0]
 
 
+def _load_hotel_rating_map(conn):
+    """Return {hotel_id: (avg_rating, star_category)} from hotel_master."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT hotel_id, avg_rating, star_category FROM hotel_master")
+        return {row[0]: (row[1], row[2]) for row in cur.fetchall()}
+
+
+def _fetch_sim_booking_for_review(conn, booking_id):
+    """
+    Return (booking_source, checkin_date, checkout_date, booking_ts_date)
+    from sim_open_bookings for use in review generation, or None if not found.
+    booked_event_ts is used as an approximation of booking_ts.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT booking_source, checkin_date, checkout_date,
+                   booked_event_ts::date
+            FROM   sim_open_bookings
+            WHERE  booking_id = %s
+            """,
+            (booking_id,),
+        )
+        return cur.fetchone()
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # CANCELLATION PLAN — deterministic from booking_id + chaos-seed
 # ══════════════════════════════════════════════════════════════════════════════
@@ -614,12 +641,13 @@ def make_price_change_event(hotel, sim_day):
 
 def collect_day_events(conn, hotels, day, sim_start, plan_seed,
                         num_prices, pending_cancellations, cancellation_plans,
-                        day_rng, wire_counts):
+                        day_rng, wire_counts, hotel_rating_map):
     """
     Build the full event list for sim-day `day`, mutating sim_open_bookings
     in the same transaction (NOT committed here — caller commits at end
     of day so the day is atomic).
     Returns the list of (event_dict, partition_city) tuples.
+    hotel_rating_map: {hotel_id: (avg_rating, star_category)} loaded at startup.
     """
     events = []
 
@@ -641,6 +669,22 @@ def collect_day_events(conn, hotels, day, sim_start, plan_seed,
         )
         events.append((evt, city))
         wire_counts["CANCELLATION"] += 1
+        # B-030: emit REVIEW before row is deleted (need checkin/out dates).
+        _rev_ex = _fetch_sim_booking_for_review(conn, booking_id)
+        if _rev_ex is not None:
+            _bsrc, _cin, _cout, _bts_d = _rev_ex
+            _avg, _star = hotel_rating_map.get(hotel_id, (3.0, "budget"))
+            _rv = _make_review(
+                booking_id=booking_id, customer_id=customer_id,
+                hotel_id=hotel_id, booking_source=_bsrc,
+                hotel_avg_rating=float(_avg or 3.0), star_category=_star,
+                lifecycle_status="CANCELLED", sim_day=day,
+                booking_ts_date=_bts_d, checkin_date=_cin, checkout_date=_cout,
+            )
+            if _rv is not None:
+                _rv["event_ts"] = _now_iso_utc()
+                events.append((_rv, city))
+                wire_counts["REVIEW"] += 1
         delete_open_booking(conn, booking_id)
         del cancellation_plans[booking_id]
 
@@ -667,6 +711,20 @@ def collect_day_events(conn, hotels, day, sim_start, plan_seed,
                 )
                 events.append((cancel_evt, city))
                 wire_counts["CANCELLATION"] += 1
+                # B-030: same-day cancel review — data from fb_row directly.
+                _avg, _star = hotel_rating_map.get(hotel_id, (3.0, "budget"))
+                _rv = _make_review(
+                    booking_id=str(booking_id), customer_id=customer_id,
+                    hotel_id=hotel_id, booking_source=booking_source,
+                    hotel_avg_rating=float(_avg or 3.0), star_category=_star,
+                    lifecycle_status="CANCELLED", sim_day=day,
+                    booking_ts_date=booking_ts.date(),
+                    checkin_date=checkin_date, checkout_date=checkout_date,
+                )
+                if _rv is not None:
+                    _rv["event_ts"] = _now_iso_utc()
+                    events.append((_rv, city))
+                    wire_counts["REVIEW"] += 1
             else:
                 insert_sim_open_bookings(
                     conn, fb_row, booking_evt["event_ts"],
@@ -696,6 +754,22 @@ def collect_day_events(conn, hotels, day, sim_start, plan_seed,
         )
         events.append((evt, city))
         wire_counts["CHECKOUT"] += 1
+        # B-030: emit REVIEW before row is deleted (need booking dates).
+        _rev_ex = _fetch_sim_booking_for_review(conn, booking_id)
+        if _rev_ex is not None:
+            _bsrc, _cin, _cout, _bts_d = _rev_ex
+            _avg, _star = hotel_rating_map.get(hotel_id, (3.0, "budget"))
+            _rv = _make_review(
+                booking_id=str(booking_id), customer_id=customer_id,
+                hotel_id=hotel_id, booking_source=_bsrc,
+                hotel_avg_rating=float(_avg or 3.0), star_category=_star,
+                lifecycle_status="COMPLETED", sim_day=day,
+                booking_ts_date=_bts_d, checkin_date=_cin, checkout_date=_cout,
+            )
+            if _rv is not None:
+                _rv["event_ts"] = _now_iso_utc()
+                events.append((_rv, city))
+                wire_counts["REVIEW"] += 1
         delete_open_booking(conn, booking_id)
 
     # ── 5. Stateless PRICE_CHANGE
@@ -714,7 +788,7 @@ def collect_day_events(conn, hotels, day, sim_start, plan_seed,
 def run_one_day(conn, producer, topic, hotels, day, sim_start, plan_seed,
                 num_prices, pending_cancellations, cancellation_plans,
                 sim_speed, day_rng, chaos_args, chaos_stats, wire_counts,
-                chaos_seed_for_clock):
+                chaos_seed_for_clock, hotel_rating_map):
     """
     Execute one sim-day atomically: build events, throttle-send, flush
     Kafka, commit DB, save clock. A graceful Ctrl-C that lands mid-day
@@ -724,7 +798,7 @@ def run_one_day(conn, producer, topic, hotels, day, sim_start, plan_seed,
     events = collect_day_events(
         conn, hotels, day, sim_start, plan_seed,
         num_prices, pending_cancellations, cancellation_plans,
-        day_rng, wire_counts,
+        day_rng, wire_counts, hotel_rating_map,
     )
 
     n = len(events)
@@ -870,6 +944,8 @@ def main():
     # ── DB. autocommit=False; we commit at end of every sim-day.
     conn = psycopg2.connect(**DB_PARAMS)
     conn.autocommit = False
+    # B-030: hotel rating map loaded once at startup for review generation.
+    hotel_rating_map = _load_hotel_rating_map(conn)
 
     # ── Graceful shutdown — stops AFTER the current day's commit.
     running = True
@@ -919,7 +995,7 @@ def main():
             conn, producer, topic, hotels, day, sim_start, plan_seed,
             args.num_prices_per_day, pending_cancellations, cancellation_plans,
             args.sim_speed, day_rng, chaos_args, chaos_stats, wire_counts,
-            chaos_seed,
+            chaos_seed, hotel_rating_map,
         )
         total_events += n
         days_run += 1
@@ -947,7 +1023,7 @@ def main():
 
     if total_events > 0:
         print(f"\nWire-type counts (pre-chaos selection):")
-        for et in ("BOOKING", "CHECKIN", "CHECKOUT", "CANCELLATION", "PRICE_CHANGE"):
+        for et in ("BOOKING", "CHECKIN", "CHECKOUT", "CANCELLATION", "PRICE_CHANGE", "REVIEW"):
             n = wire_counts.get(et, 0)
             pct = (n / total_events) * 100.0
             print(f"  {et:13s}: {n:7,}  ({pct:5.2f}%)")

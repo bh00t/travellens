@@ -31,12 +31,12 @@ carry context only.
 - B-025 — fixed-height scrollable table / review widgets
 - B-026 — sentiment classification for reviews (resolves L-012)
 - B-028 — `run.py` dev launcher (built; not yet committed / verified)
-- B-030 — REVIEW as a stream event (feature gap; not urgent)
+- ~~B-030 — REVIEW as a stream event~~ ✓ Done
 - B-031 — consumer resilience fix (L-016; fix shipped, pending live verification)
 - B-033 — `quarantine_daily_rollup` DAG (Phase 6; self-healing daily summary)
 - B-034 — stateful lifecycle simulator — step 1 shipped, superseded by B-035 + B-036/B-037 (kept for context)
 - B-036 — calendar simulator Phase B (net-new synthetic + 10–25% long-stay tail)
-- B-037 — calendar simulator Phase C (REVIEW emission)
+- ~~B-037 — calendar simulator Phase C (REVIEW emission)~~ ✓ Absorbed into B-030
 - ~~B-040 — gold layer (per-booking lifecycle reconstruction + transition flags)~~ ✓ Done
 - B-041 — producer rate-flag migration (run.py / README:101 `--rate` → `--sim-speed`; phase-7-monitor.md CHECKOUT "design weight 0.12" copy → calendar-replay language)
 
@@ -58,10 +58,10 @@ carry context only.
 ### DONE
 
 See the [Completed](#completed) table at the bottom of this file. Currently
-holds B-001..B-004, B-007..B-012, B-018, B-019, B-027, B-029, B-032, B-035,
-B-034A (calendar simulator Phase A), B-038 (bronze sink), B-039 (silver
-sink), B-040 (gold lifecycle layer), B-042 (monitor quarantine date scoping),
-plus the unnumbered Phase 1–5 foundation items.
+holds B-001..B-004, B-007..B-012, B-018, B-019, B-027, B-029, B-030, B-032,
+B-035, B-034A (calendar simulator Phase A), B-038 (bronze sink), B-039
+(silver sink), B-040 (gold lifecycle layer), B-042 (monitor quarantine date
+scoping), plus the unnumbered Phase 1–5 foundation items.
 
 ### ABANDONED
 
@@ -1214,3 +1214,4 @@ The old design weights stay documented in `docs/phase-2-streaming.md` as histori
 | ✓ | B-038 — Bronze sink: durable raw-event archive in `scripts/stream_consumer.py`. New `bronze_flush()` batches every accepted event (post-Gate-4) to S3 under `raw_events/year=YYYY/month=MM/day=DD/hour=HH/HHMMSS_<uuid8>.jsonl` (JSONL, ingest-time partitioned, many events per file). Flush triggers: `BRONZE_BUFFER_CAP` (default 500) OR `FLUSH_CHECK_SECONDS` tick OR graceful shutdown. Wrapped in its own try/except; failures log + increment `bronze_failures` + drop the batch — never crash the consumer, never block agg or heartbeat. Acceptance 7/7 PASS — counts reconcile (bronze 11,912 = accepted events across both test runs; per-type agg sums match bronze exactly); chaos test: 0 quarantined events in `raw_events/`; isolation test (bogus bucket): 6 bronze flushes failed, all 44 Postgres agg upserts still succeeded + 6 heartbeats wrote + consumer exited cleanly. Foundation for B-039 (silver) and B-040 (gold). | Phase 2 |
 | ✓ | B-034A — Calendar simulator Phase A (replay engine). `scripts/kafka_event_producer.py` rewritten as a calendar-driven REPLAY of `fact_bookings WHERE booking_ts >= --sim-start` + advancement of the real `sim_open_bookings` backlog. Sim-clock in `scripts/.sim_clock.json`; resume = saved + 1. New wire field `event_date` (sim-day) alongside wall-clock `event_ts`. Same Kafka config / partition key / wire types as before. Cancellation timing + reasons keyed deterministically off `booking_id + chaos-seed`. 21 / 21 acceptance — 0 quarantine on clean run, exact agg-vs-producer sum match, 0 dangling booking_ids, 0 is_cancelled bookings checked in, restart re-emits 0 events, chaos reproducible. Phases B (B-036 net-new + long-stay) and C (B-037 REVIEW) explicitly deferred. | Phase 2 / Phase 6 |
 | ✓ | B-040 — Gold lifecycle layer. Migration 009 (`ingest_seq` cursor column on `fact_booking_events` + `fact_booking_lifecycle` one-row-per-booking gold table + `gold_watermark` single-row cursor). `scripts/gold_lifecycle_updater.py` decoupled ~1-min micro-batch: reads silver `WHERE ingest_seq > watermark`, groups by booking_id, intra-batch lifecycle sort, forward-only status machine, business-timestamp-based `illegal_transition_flag` (NOT processing-order). 7/7 acceptance: 624,388 gold rows = 624,388 distinct silver booking_ids; illegal_flag=0 across all 606,463 history + 5,917 mixed + 12,008 stream rows; outcome completed 85.4%/cancelled 8.0%/no_show 3.4%/in_progress 3.2%; watermark==max_seq 1,763,493; 0 status inconsistencies; idempotent. | Phase 2 / Phase 6 |
+| ✓ | B-030 — REVIEW as a booking-tied stream event (absorbs B-037). Migration 010 (`reviews_raw` extended with 7 new columns: `booking_id`, `customer_id`, `review_stage`, `review_channel`, `event_ts`, `event_date`, `record_source NOT NULL DEFAULT 'seed'`; 2 new indexes). Shared generation library `scripts/review_generator.py` (rating anchored on hotel avg_rating + stage adj + Gaussian noise; negativity bias shape _P_REVIEW_BASE={1:0.75,2:0.65,3:0.40,4:0.25,5:0.20} scaled by REVIEW_PROPENSITY_SCALE=0.47 → effective p={1:0.35,2:0.31,3:0.19,4:0.12,5:0.09}; overall rate ~15%; OTA channel constraint; India reason bank + 40/35/25 blend with Kaggle seed texts; deterministic uuid5 review_id). `scripts/generate_review_backfill.py` backfills 90,980 history reviews from 612,380 bookings (14.9%). `scripts/stream_consumer.py` gains REVIEW branch (intercepts after Gate 4, before silver buffer — routes to bronze + reviews_raw, skips silver/agg/gold), `review_flush()` sink, and review metrics in run summary. `scripts/kafka_event_producer.py` emits REVIEW events at CHECKOUT (lifecycle_status=COMPLETED) and CANCELLATION (lifecycle_status=CANCELLED/same-day). `scripts/review_stats.py` — read-only diagnostic: counts by source/stage, overall rate, hotel_id consistency, no_show check, avg rating by star_category gradient. B-030a: REVIEW_PROPENSITY_SCALE tuned to 0.47 for ~15% rate (down from original 31.6%). 6/6 acceptance: A (90,980 history rows, all fields populated) B (0 orphan booking_ids) C (0 wrong OTA channels) D (negativity gradient intact) E (sentiment gradient 0★2.89→5★3.94 monotone) F (30K seed rows unchanged). Diagnostic write-nothing verified (two runs → identical counts). | Phase 2 / Phase 6 |

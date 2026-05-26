@@ -101,10 +101,11 @@ Current phase: **6** — Phase 7 shipped (monitor redesign done end-to-end). Rea
   `render/server.py` and `render/templates/dashboard.html` (B-022 cache, Show SQL,
   rename),
   `scripts/stream_consumer.py` (B-031 resilience, B-032 heartbeat + per-type counts,
-  B-038 bronze sink, B-039 silver sink; B-037 next for REVIEW accept),
+  B-038 bronze sink, B-039 silver sink, B-030 REVIEW accept done; B-031 next),
   `scripts/gold_lifecycle_updater.py` (B-040 done — gold lifecycle reconstruction),
   `scripts/kafka_event_producer.py` (B-032 CHECKOUT emission, B-034 stateful
-  lifecycle simulator, B-034A calendar replay simulator; B-036 / B-037 next).
+  lifecycle simulator, B-034A calendar replay simulator, B-030 REVIEW emission done;
+  B-036 next).
   When editing these, scope the change to the named backlog item — do not
   refactor adjacent code.
 - **Always create `__init__.py`** in every new Python package folder — without it,
@@ -187,7 +188,7 @@ travellens/
 │   ├── semantic_playground.py       ← Phase 3: interactive semantic search test
 │   ├── load_to_postgres.py          ← Phase 1: bulk loader
 │   ├── validate_load.py             ← Phase 1: 20-check validator
-│   ├── stream_consumer.py           ← Phase 2 + B-032 Ch.2: four parallel sinks off the accept path:
+│   ├── stream_consumer.py           ← Phase 2 + B-032 Ch.2 + B-030: five parallel sinks off the accept path:
 │   │                                  (1) Postgres agg UPSERT to agg_hourly_city_stats per window flush;
 │   │                                  (2) S3 agg Parquet to processed/agg/hourly_city_stats/...;
 │   │                                  (3) B-038 bronze: raw JSONL to s3://.../raw_events/year=/month=/day=/hour=/,
@@ -197,21 +198,27 @@ travellens/
 │   │                                      via execute_values + ON CONFLICT (event_id) DO NOTHING, page_size=len
 │   │                                      (so cur.rowcount is honest), pre-Gate-3 so ALL 5 event types land
 │   │                                      including PRICE_CHANGE (booking_id/customer_id NULL on those).
+│   │                                  (5) B-030 REVIEW: intercepts AFTER Gate 4, BEFORE silver buffer append;
+│   │                                      routes to bronze (raw archive) + reviews_raw (record_source='stream')
+│   │                                      via review_flush(); ON CONFLICT (review_id) DO NOTHING; then `continue`
+│   │                                      — REVIEW never touches silver/agg/gold.
 │   │                                  Plus pipeline_metrics heartbeat every ~10s. Each sink wrapped in its own
 │   │                                  try/except so any one failure logs + drops the batch + bumps a counter,
 │   │                                  never crashes the consumer. Gate order: 1 (JSON) → 2 (schema) →
-│   │                                  parse-ts → 4 (late) → SILVER → 3 (type filter) → BRONZE → accumulator.
-│   ├── kafka_event_producer.py      ← Phase 2 + B-034A: CALENDAR REPLAY SIMULATOR — walks a sim-clock day by day,
-│   │                                  REPLAYS `fact_bookings WHERE booking_ts >= --sim-start` as BOOKING events,
-│   │                                  and advances the real `sim_open_bookings` backlog through
-│   │                                  CHECKIN/CHECKOUT/CANCELLATION at the real dates. Sim-clock persisted at
+│   │                                  parse-ts → 4 (late) → REVIEW → SILVER → 3 (type filter) → BRONZE → accumulator.
+│   ├── kafka_event_producer.py      ← Phase 2 + B-034A + B-030: CALENDAR REPLAY SIMULATOR — walks a sim-clock day
+│   │                                  by day, REPLAYS `fact_bookings WHERE booking_ts >= --sim-start` as BOOKING
+│   │                                  events, and advances the real `sim_open_bookings` backlog through
+│   │                                  CHECKIN/CHECKOUT/CANCELLATION at the real dates. B-030: emits REVIEW events
+│   │                                  at CHECKOUT (lifecycle_status=COMPLETED) and CANCELLATION (CANCELLED/same-day);
+│   │                                  hotel_rating_map loaded at startup from hotel_master. Sim-clock persisted at
 │   │                                  scripts/.sim_clock.json (gitignored); resume = saved+1. Wire types and
 │   │                                  Kafka config UNCHANGED. New ADDITIVE wire field `event_date` (sim-day)
 │   │                                  alongside wall-clock `event_ts`. Outcome (is_cancelled) comes from
 │   │                                  fact_bookings, NOT randomised. Cancellation timing + reason are
 │   │                                  deterministic from booking_id + chaos-seed. `--rate` / `--duration` are
-│   │                                  deprecated no-ops for run.py compatibility. REVIEW deferred to B-037
-│   │                                  (Phase C); net-new synthetic + long-stay tail deferred to B-036 (Phase B).
+│   │                                  deprecated no-ops for run.py compatibility. Net-new synthetic + long-stay
+│   │                                  tail deferred to B-036 (Phase B).
 │   ├── generate_lifecycle_history.py ← B-035: TIME-PARTITIONED BACKFILL — one sweep over ALL fact_bookings.
 │   │                                  Routes each row vs --sim-today (default 2025-06-01) into 4 buckets:
 │   │                                  COMPLETED (BOOKING+CI+CO or BOOKING+CANCEL), IN_PROGRESS (BOOKING+CI →
@@ -229,6 +236,23 @@ travellens/
 │   │                                  PRICE_CHANGE + REVIEW (no booking_id / hotel-level not per-booking).
 │   │                                  Atomic commit per batch. Deadlock-resilient (rollback + retry 10s).
 │   │                                  Run ONE instance only: `python -m scripts.gold_lifecycle_updater`.
+│   ├── review_generator.py          ← B-030: SHARED REVIEW GENERATION UTILITIES — pure functions (no I/O),
+│   │                                  deterministically seeded. Used by generate_review_backfill.py (history)
+│   │                                  and kafka_event_producer.py (stream). Implements: generate_rating,
+│   │                                  should_review, pick_stage, pick_channel, pick_event_date, pick_text,
+│   │                                  make_review_event_dict. india-aware reason bank + Kaggle seed text blend.
+│   │                                  REVIEW_PROPENSITY_SCALE=0.47 (B-030a) → ~15% overall review rate.
+│   │                                  Tune this single constant to change the rate; shape is _P_REVIEW_BASE.
+│   ├── generate_review_backfill.py  ← B-030: HISTORY REVIEW BACKFILL — sweeps fact_bookings WHERE booking_ts
+│   │                                  < sim-today (default 2025-06-01), calls make_review_event_dict per
+│   │                                  booking, INSERTs with record_source='history'. 90,980 reviews / 612,380
+│   │                                  bookings (14.9%). Idempotent via uuid5 review_id + ON CONFLICT DO NOTHING.
+│   │                                  --reset deletes WHERE record_source='history' before re-run.
+│   │                                  Run: `python -m scripts.generate_review_backfill`.
+│   ├── review_stats.py              ← B-030a: READ-ONLY REVIEW DIAGNOSTICS — prints counts by source/stage,
+│   │                                  overall review rate, hotel_id consistency (0 mismatches expected),
+│   │                                  no_show stage count (0 expected), avg rating by star_category gradient.
+│   │                                  No writes. Run: `python -m scripts.review_stats`.
 │   └── init_s3_buckets.py           ← Phase 2: MinIO bucket bootstrap
 ├── ai/                              (see above)
 ├── db/
@@ -240,7 +264,8 @@ travellens/
 │       ├── 006_hotel_opened_year.sql      ← hotel_master.opened_year (entity-count queries)
 │       ├── 007_pipeline_live_metrics.sql  ← B-032: pipeline_metrics + 4 new agg_hourly_city_stats count cols
 │       ├── 008_lifecycle_events.sql       ← B-035: fact_booking_events (silver event ledger) + sim_open_bookings (simulator state)
-│       └── 009_gold_lifecycle.sql         ← B-040: ingest_seq cursor on fact_booking_events + fact_booking_lifecycle gold table + gold_watermark cursor
+│       ├── 009_gold_lifecycle.sql         ← B-040: ingest_seq cursor on fact_booking_events + fact_booking_lifecycle gold table + gold_watermark cursor
+│       └── 010_review_stream.sql          ← B-030: 7 new columns on reviews_raw (booking_id, customer_id, review_stage, review_channel, event_ts, event_date, record_source)
 ├── docker/
 │   ├── postgres.Dockerfile          ← Postgres 16 + pgvector
 │   └── docker-compose.yml           ← postgres + kafka + zookeeper + minio
@@ -341,7 +366,7 @@ Full column schemas for all tables below are in `datamodel.md`.
 | Counting entities via `fact_bookings` rows | "How many hotels", "hotels per city", "hotels opened per year" → query `hotel_master` directly. `fact_bookings` is for booking ROWS, not entity counts. |
 | `hotel_master.opened_year` | `opened_year SMALLINT` added in migration 006 (range 1975–2023, correlated with `star_category`). Use directly for "hotels opened per year" — never derive opening year from `fact_bookings` dates. |
 | `is_cancelled` scope | `is_cancelled` lives ONLY on `fact_bookings` — not on dimensions or `reviews_raw`. Exclude cancelled bookings by default (`WHERE NOT b.is_cancelled`) unless the question is specifically about cancellations. |
-| `agg_hourly_city_stats` column drift | Post-migration 007 columns: `city`, `window_start`, `window_end`, `total_bookings`, `total_revenue_inr`, `avg_occupancy_rate`, `cancellation_rate`, `ingestion_ts`, `total_checkins`, `total_checkouts`, `total_cancellations`, `total_reviews`. `total_reviews` stays NULL — REVIEW is not a stream event (B-030). |
+| `agg_hourly_city_stats` column drift | Post-migration 007 columns: `city`, `window_start`, `window_end`, `total_bookings`, `total_revenue_inr`, `avg_occupancy_rate`, `cancellation_rate`, `ingestion_ts`, `total_checkins`, `total_checkouts`, `total_cancellations`, `total_reviews`. `total_reviews` stays NULL — REVIEW events are routed to reviews_raw directly and do NOT feed the city-level agg accumulator. |
 | `pipeline_metrics` table | Append-only heartbeat every ~10s (migration 007). Counters are **cumulative-since-start** — derive events/sec as a delta between adjacent rows. Drop deltas where newer < older (consumer restart reset). `consumer_lag` is reserved/NULL. |
 | `fact_booking_events` / `sim_open_bookings` (migration 008) | Silver ledger spans history AND stream; `source` ('history'\|'stream') is the only separator. BOOKING invariant: `revenue_inr == nightly_rate_inr * nights`. `sim_open_bookings` is mutable simulator state (deleted on CHECKOUT/CANCELLATION); every booking_id is real — no synthesised IDs. |
 | `--sim-today` anchor + FUTURE bucket | Default anchor **`2025-06-01`**. ~388K bookings with `booking_ts >= sim-today` are FUTURE — skip in history generator, reserved for stream replay. Do not write history events for them. |
@@ -350,6 +375,8 @@ Full column schemas for all tables below are in `datamodel.md`.
 | Every emitted event carries TWO timestamps | `event_ts` = wall-clock UTC (consumer windowing/SLOs); `event_date` = sim-day (business analytics). Gate 2 ignores unknown fields — `event_date` passes harmlessly. |
 | Bronze archive — PRICE_CHANGE not bronzed | Accepted events (post-Gate-4) → `s3://.../raw_events/` (INGEST-time partitioned JSONL). PRICE_CHANGE filtered at Gate 3 before bronze. Malformed/late → their own S3 paths. Bronze is best-effort — failure logs and continues. |
 | `fact_booking_lifecycle` / `gold_watermark` (migration 009) | Gold layer — one row per `booking_id`, forward-only machine: BOOKED→CHECKED_IN→COMPLETED/CANCELLED. `illegal_transition_flag` fires on business-timestamp inversions (CHECKOUT before CHECKIN, CANCELLATION after CHECKOUT) — NOT processing-order artifacts. Advisory lock (`pg_try_advisory_lock(7400040)`) prevents duplicate instances; second instance exits code 1. Kill stuck instance: `Get-WmiObject Win32_Process \| Where-Object { $_.CommandLine -like '*gold_lifecycle_updater*' } \| ForEach-Object { Stop-Process -Id $_.ProcessId -Force }`. Full schema: `datamodel.md`. |
+| `reviews_raw` new columns (migration 010 / B-030) | 7 new columns added: `booking_id` (UUID), `customer_id` (VARCHAR(12)), `review_stage` (VARCHAR(20)), `review_channel` (VARCHAR(100)), `event_ts` (TIMESTAMPTZ), `event_date` (DATE), `record_source` (VARCHAR(10) NOT NULL DEFAULT 'seed'). Original 30 K Kaggle rows have `record_source='seed'`, new columns NULL. History backfill wrote 90,980 rows with `record_source='history'` (14.9% of 612,380 eligible bookings — B-030a tuned REVIEW_PROPENSITY_SCALE=0.47). Stream reviews land with `record_source='stream'`. REVIEW never enters `fact_booking_events` or the agg accumulator. |
+| REVIEW routing in consumer | REVIEW is intercepted AFTER Gate 4 (late-guard) and BEFORE the silver buffer append. It is routed to: (a) bronze raw archive, (b) `reviews_raw` via `review_flush()`. After routing, `continue` skips silver/Gate-3/bronze-agg/accumulator. REVIEW validation in `validate_event` requires `hotel_id, review_id, booking_id, customer_id, review_stage, review_channel, rating` — NO city field (REVIEW has no city). |
 
 ---
 

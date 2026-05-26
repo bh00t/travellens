@@ -190,14 +190,19 @@ SILVER_BUFFER_CAP = int(os.getenv("SILVER_BUFFER_CAP", "500"))
 # CHECKOUT joined the family in Chunk 2 of the live-metrics work so the
 # hourly aggregate can count guest arrivals AND departures; it is a
 # valid event even before the producer starts emitting it (Chunk 3).
-VALID_EVENT_TYPES = {"BOOKING", "CANCELLATION", "CHECKIN", "CHECKOUT", "PRICE_CHANGE"}
+VALID_EVENT_TYPES = {
+    "BOOKING", "CANCELLATION", "CHECKIN", "CHECKOUT", "PRICE_CHANGE",
+    "REVIEW",   # B-030: booking-tied review events; routed to bronze + reviews_raw
+}
 
-# Of the five valid types, these four contribute to the city aggregate.
-# Only PRICE_CHANGE is silently filtered after validation — it's valid
-# but irrelevant to the city-revenue rollup, so it's NOT malformed,
-# just out of scope. CHECKIN/CHECKOUT now feed dedicated count columns
-# on agg_hourly_city_stats (total_checkins / total_checkouts).
+# Of the six valid types, these four contribute to the city aggregate.
+# PRICE_CHANGE and REVIEW are both silently filtered at Gate 3 — valid
+# wire types, just not aggregated per (city, window). REVIEW is captured
+# separately via the REVIEW branch between Gate 4 and silver.
 PROCESSED_EVENT_TYPES = {"BOOKING", "CANCELLATION", "CHECKIN", "CHECKOUT"}
+
+# Review sink buffer cap. Same rationale as SILVER_BUFFER_CAP.
+REVIEW_BUFFER_CAP = int(os.getenv("REVIEW_BUFFER_CAP", "500"))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -272,23 +277,40 @@ def validate_event(event, known_cities):
       unknown_event_type    — event_type not in VALID_EVENT_TYPES
       unknown_city          — city not in dim_location
       unparseable_event_ts  — event_ts present but not ISO 8601
+
+    REVIEW events (B-030): different required fields; no city in the wire
+    format (hotel_id is the routing anchor). Validated separately below.
     """
-    # Required-field check. .get() returns None if missing; we also
-    # reject empty string and falsy values (0, [], {}) — none of these
-    # are legitimate for the fields we care about.
-    for f in ("event_type", "event_ts", "city", "hotel_id"):
+    # event_type and event_ts are always required regardless of type.
+    for f in ("event_type", "event_ts"):
         if not event.get(f):
             return "missing_field"
 
-    # event_type allow-list check.
+    # event_type allow-list check — covers all six types including REVIEW.
     if event["event_type"] not in VALID_EVENT_TYPES:
         return "unknown_event_type"
 
-    # City allow-list check.
-    if event["city"] not in known_cities:
-        return "unknown_city"
+    if event["event_type"] == "REVIEW":
+        # REVIEW wire format: no city. Required: hotel_id, review_id,
+        # booking_id, customer_id, review_stage, review_channel, rating.
+        # rating is numeric 1-5; treat as truthy if present and non-zero.
+        for f in ("hotel_id", "review_id", "booking_id", "customer_id",
+                  "review_stage", "review_channel"):
+            if not event.get(f):
+                return "missing_field"
+        if event.get("rating") is None:
+            return "missing_field"
+        # Skip the city allow-list check for REVIEW — city is not in the
+        # wire format. hotel_id is the lookup key instead.
+    else:
+        # All non-REVIEW event types require city and hotel_id.
+        for f in ("city", "hotel_id"):
+            if not event.get(f):
+                return "missing_field"
+        if event["city"] not in known_cities:
+            return "unknown_city"
 
-    # ISO 8601 timestamp parse check.
+    # ISO 8601 timestamp parse check (applies to all types).
     # Two-step: first confirm it's a string (a number or list would crash
     # fromisoformat with TypeError, not ValueError), then try parsing.
     # .replace("Z", "+00:00") normalizes the "Z" suffix that
@@ -716,6 +738,97 @@ def silver_flush(buffer, metrics):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# REVIEW SINK (B-030) — writes REVIEW wire events to reviews_raw
+# ══════════════════════════════════════════════════════════════════════════════
+# REVIEW events must NOT enter fact_booking_events (silver) or the city-revenue
+# aggregate (accumulator). They have their own dedicated Postgres sink here.
+# Same best-effort-durable posture as bronze and silver: failure logs + drops
+# the batch + continues; never crashes the consumer.
+
+def _review_row(event):
+    """
+    Map a REVIEW wire event to a (16-tuple) reviews_raw insert row.
+
+    Column order matches the INSERT below:
+        review_id, hotel_id, reviewer_name, review_text, rating,
+        review_date, source, travel_type, embedding,
+        booking_id, customer_id, review_stage, review_channel,
+        event_ts, event_date, record_source
+    """
+    return (
+        event["review_id"],           # review_id  UUID
+        event["hotel_id"],            # hotel_id   VARCHAR FK
+        None,                         # reviewer_name NULL (not in wire format)
+        event.get("review_text"),     # review_text nullable TEXT
+        event["rating"],              # rating NUMERIC — accepts int 1-5
+        event.get("event_date"),      # review_date DATE (sim-day / calendar day)
+        event.get("review_channel"),  # source (channel doubles as source)
+        None,                         # travel_type NULL (not in wire format; derive from dim_customer in B-030b)
+        None,                         # embedding NULL (B-030b fills via batch embed)
+        event["booking_id"],          # booking_id UUID
+        event["customer_id"],         # customer_id VARCHAR
+        event["review_stage"],        # review_stage
+        event["review_channel"],      # review_channel
+        event.get("event_ts"),        # event_ts TIMESTAMPTZ
+        event.get("event_date"),      # event_date DATE
+        "stream",                     # record_source
+    )
+
+
+def review_flush(buffer, metrics):
+    """
+    Flush the review buffer to reviews_raw.
+
+    ON CONFLICT (review_id) DO NOTHING: deterministic review_id (uuid5 in
+    the producer/generator) makes re-delivery idempotent — the same review
+    is ignored on the second delivery.
+
+    Same isolation posture as silver_flush: any exception logs to stderr,
+    increments review_failures, and returns an empty list; never raises.
+    """
+    if not buffer:
+        return []
+
+    rows     = [_review_row(e) for e in buffer]
+    inserted = 0
+    try:
+        conn = psycopg2.connect(**DB_PARAMS)
+        try:
+            cur = conn.cursor()
+            execute_values(
+                cur,
+                """
+                INSERT INTO reviews_raw
+                    (review_id, hotel_id, reviewer_name, review_text, rating,
+                     review_date, source, travel_type, embedding,
+                     booking_id, customer_id, review_stage, review_channel,
+                     event_ts, event_date, record_source)
+                VALUES %s
+                ON CONFLICT (review_id) DO NOTHING
+                """,
+                rows,
+                page_size=len(rows),
+            )
+            inserted = cur.rowcount
+            conn.commit()
+        finally:
+            conn.close()
+        attempted  = len(buffer)
+        duplicates = attempted - inserted
+        metrics["review_attempted"]  += attempted
+        metrics["review_inserted"]   += inserted
+        metrics["review_duplicates"] += duplicates
+        metrics["review_flushes"]    += 1
+    except Exception as exc:
+        metrics["review_failures"] += 1
+        print(
+            f"  ✗ Review sink error ({len(buffer)} rows dropped): {exc}",
+            file=sys.stderr,
+        )
+    return []
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # WINDOWING HELPERS
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -945,12 +1058,19 @@ def main():
         "silver_duplicates":    0,
         "silver_flushes":       0,
         "silver_failures":      0,
+        # B-030: review sink counters (mirrors silver pattern)
+        "review_attempted":     0,
+        "review_inserted":      0,
+        "review_duplicates":    0,
+        "review_flushes":       0,
+        "review_failures":      0,
     }
 
-    # B-038 / B-039: in-memory buffers for the two parallel sinks. Single-
-    # threaded by design; no locking.
+    # B-038 / B-039 / B-030: in-memory buffers for the three parallel sinks.
+    # Single-threaded by design; no locking.
     bronze_buffer = []
     silver_buffer = []
+    review_buffer = []
 
     # max_event_ts tracks the largest event_ts seen so far (in epoch
     # seconds). This IS the watermark generator — every time we see a
@@ -1086,7 +1206,21 @@ def main():
                 # Helps you see late events without flooding the console
                 # if chaos rate is high.
                 if run_metrics["late_dropped"] % 100 == 1:
-                    print(f"  ⚠ Late event quarantined: {event['city']}@{window_start.isoformat()} (total: {run_metrics['late_dropped']})")
+                    _loc = event.get("city", event.get("hotel_id", "N/A"))
+                    print(f"  ⚠ Late event quarantined: {_loc}@{window_start.isoformat()} (total: {run_metrics['late_dropped']})")
+                continue
+
+            # ── REVIEW routing (B-030) ───────────────────────────────
+            # REVIEW passes Gates 1-2-4 above but must NOT enter silver
+            # (fact_booking_events), agg, or gold — it goes to bronze
+            # raw archive + reviews_raw only, then we skip the rest.
+            if event["event_type"] == "REVIEW":
+                bronze_buffer.append(event)
+                if len(bronze_buffer) >= BRONZE_BUFFER_CAP:
+                    bronze_buffer = bronze_flush(bronze_buffer, run_metrics)
+                review_buffer.append(event)
+                if len(review_buffer) >= REVIEW_BUFFER_CAP:
+                    review_buffer = review_flush(review_buffer, run_metrics)
                 continue
 
             # ── Silver archive (B-039) ────────────────────────────────
@@ -1258,6 +1392,12 @@ def main():
             # own try/except keeps the loop running through DB blips.
             silver_buffer = silver_flush(silver_buffer, run_metrics)
 
+            # ── Periodic review drain (B-030) ─────────────────────────
+            # Mirrors the bronze/silver drain pattern. review_flush
+            # writes to reviews_raw (Postgres); its own try/except
+            # isolates failures from the rest of the flush cycle.
+            review_buffer = review_flush(review_buffer, run_metrics)
+
             watermark_secs = max_event_ts - WATERMARK_GRACE_SECONDS
 
             # Identify all windows whose end is before the watermark —
@@ -1320,6 +1460,11 @@ def main():
         print(f"  → final silver drain: {len(silver_buffer)} events")
     silver_buffer = silver_flush(silver_buffer, run_metrics)
 
+    # B-030: drain review buffer on shutdown.
+    if review_buffer:
+        print(f"  → final review drain: {len(review_buffer)} events")
+    review_buffer = review_flush(review_buffer, run_metrics)
+
     consumer.close()
 
     # ════════════════════════════════════════════════════════════════════
@@ -1352,6 +1497,13 @@ def main():
     if run_metrics["silver_failures"] > 0:
         print(f"     ↑ {run_metrics['silver_failures']} silver flush(es) failed — "
               f"rows dropped; check fact_booking_events for gaps")
+    # B-030: review sink summary.
+    print(f"  Reviews inserted    : {run_metrics['review_inserted']:,} rows"
+          f"  ({run_metrics['review_flushes']} flushes, "
+          f"{run_metrics['review_duplicates']:,} dedup'd)")
+    if run_metrics["review_failures"] > 0:
+        print(f"     ↑ {run_metrics['review_failures']} review flush(es) failed — "
+              f"rows dropped; check reviews_raw for gaps")
 
     if run_metrics["malformed_dropped"] > 0:
         # This is the signal a teammate sees the next morning. They

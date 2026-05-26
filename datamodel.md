@@ -1080,6 +1080,26 @@ Long-form essays. Tests embedding model on longer documents.
 - Every hotel has at least 1 review (no orphans)
 - All reviews ≥42 words
 
+#### Migration 010 — booking-tied stream columns (B-030)
+
+Added by `db/migrations/010_review_stream.sql`. All new columns are nullable
+except `record_source` (NOT NULL DEFAULT `'seed'`). Existing 30 K Kaggle rows
+have `record_source = 'seed'` with the new columns NULL.
+
+| Column | Type | Notes |
+|---|---|---|
+| `booking_id` | UUID | FK semantics → `fact_bookings` (no hard FK for ingest speed). NULL for seed rows. |
+| `customer_id` | VARCHAR(12) | FK semantics → `dim_customer`. NULL for seed rows. |
+| `review_stage` | VARCHAR(20) | Stage at which review was written: `booked`, `checked_in`, `checked_out`, `cancelled`. |
+| `review_channel` | VARCHAR(100) | Where the review was posted. OTA channel MUST equal `booking_source` when used; direct channels (Email/SMS/WhatsApp/Phone·Call/Reception) are free. |
+| `event_ts` | TIMESTAMPTZ | Wall-clock UTC when the event was emitted (consumer windowing). NULL for seed rows. |
+| `event_date` | DATE | Sim-day or calendar day the review represents. NULL for seed rows. |
+| `record_source` | VARCHAR(10) NOT NULL | `'seed'` (30 K Kaggle corpus) · `'history'` (backfill) · `'stream'` (live consumer). |
+
+New indexes: `idx_reviews_raw_booking_id` (partial, WHERE booking_id IS NOT NULL) and `idx_reviews_raw_record_source`.
+
+**Counts as of B-030a backfill:** 30,000 seed + 90,980 history = 120,980 total. History reviews: 14.9% of 612,380 pre-sim-today bookings (REVIEW_PROPENSITY_SCALE=0.47 in `scripts/review_generator.py`; to retune the rate adjust that constant and re-run `generate_review_backfill --reset`).
+
 #### Silver variant — schema changes
 
 When Bronze CSV is processed to Silver Parquet:

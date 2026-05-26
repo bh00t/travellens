@@ -18,23 +18,13 @@
 
 ## REPO STATE AFTER THIS PHASE
 
-```
-travellens/
-├── render/
-│   ├── server.py                ← MODIFY (/monitor + /monitor/data routes + 5 helpers)
-│   └── templates/
-│       ├── base.html            ← LEAVE ALONE
-│       ├── dashboard.html       ← LEAVE ALONE
-│       └── monitor.html         ← CREATE (Chunk 4 layout)
-├── db/migrations/
-│   └── 007_pipeline_live_metrics.sql  ← REQUIRED (creates pipeline_metrics + agg count cols)
-├── scripts/
-│   └── stream_consumer.py       ← writes the heartbeat the monitor reads
-│                                  (touched under B-031 / B-032, see Phase 2 post-acceptance note)
-├── docs/
-│   └── phase-7-monitor.md       ← LEAVE ALONE (this file)
-└── .env                         ← LEAVE ALONE (already has S3/MinIO + Airflow vars)
-```
+Canonical repo layout: see [`CLAUDE.md`](../CLAUDE.md) (root). Files this phase
+creates / touches:
+
+- **MODIFY** `render/server.py` (add `/monitor` + `/monitor/data` routes + 5 helpers)
+- **CREATE** `render/templates/monitor.html` (Chunk 4 layout)
+- **REQUIRED** `db/migrations/007_pipeline_live_metrics.sql` (creates `pipeline_metrics` + agg count cols — applied before the monitor reads anything)
+- **DEPENDS ON** `scripts/stream_consumer.py` writing the heartbeat the monitor reads (the consumer was touched under B-031 / B-032 — see Phase 2 POST-ACCEPTANCE HARDENING)
 
 ---
 
@@ -179,7 +169,7 @@ Context passed to the template:
 | `stream` | `_monitor_stream_activity(conn, from, to, city)` | **Yes** |
 | `embed` | `_monitor_embeddings(conn)` — `reviews_raw` | No |
 | `freshness` | `_monitor_freshness(conn)` — `MAX(window_start)` | No |
-| `quarantine` | `_monitor_quarantine()` — MinIO `list_objects_v2` | No |
+| `quarantine` | `_monitor_quarantine(from, to)` — MinIO `list_objects_v2` per day-prefix | **Yes (date only)** — see Quarantine scoping below |
 | `airflow` | `_monitor_airflow()` — HTTP `/health` | No |
 | `sel_from`, `sel_to`, `sel_city` | echoed back for the filter form | — |
 
@@ -195,12 +185,44 @@ state that changes second-to-second:
                   "latest_ts": "...", "age_secs": 9.3, "has_data": true },
   "stream":     { "bookings": 3383, "checkins": 1033, "checkouts": 691,
                   "cancellations": 598, "windows": 44, "cities": 44 },
-  "quarantine": { "reachable": true, "malformed": 3616, "late": 1088 }
+  "quarantine": { "reachable": true, "date_scoped": true,
+                  "date_from": "2026-05-25", "date_to": "2026-05-25",
+                  "malformed": 678, "late": 279 }
 }
 ```
 
 Excluded on purpose: `cities` (schema-rare), `embed` (embedding-job-rare),
 `freshness` / `airflow` (server-rendered, re-fetched on full reload).
+
+### Quarantine scoping (B-042)
+
+`_monitor_quarantine(date_from, date_to)` is **date-scoped, city-agnostic**.
+
+- **Date** — for each day in `[date_from, date_to]` the function lists
+  `{prefix}/year=YYYY/month=MM/day=DD/` on both `malformed_events/` and
+  `late_events/` and sums `KeyCount`. The keys are partitioned by the
+  consumer's INGEST wall-clock time (`datetime.now(timezone.utc)` at
+  `quarantine_event` write time — see
+  `scripts/stream_consumer.py:_monitor_quarantine` design notes), the
+  same axis the EVENTS section uses against `agg_hourly_city_stats`'s
+  `window_start`. So the two sections stay consistent.
+- **City** — the keys carry NO city segment. Malformed events often
+  can't be parsed for a city (that's why they're malformed), so
+  partitioning by city would silently lose triage data. The function
+  refuses to take a city argument; the UI shows a `date-scoped · all
+  cities` chip + the explicit "city filter doesn't narrow these"
+  caption so the operator isn't confused when they pick a city and
+  the quarantine numbers don't move.
+- **Fallback** — if either date endpoint is missing (only possible
+  via direct calls in tests; the live monitor routes always pass
+  dates thanks to the default-today rule), the function falls back
+  to the legacy bucket-wide count.
+- **Cost** — O(days × 2) `list_objects_v2` calls per render. Each
+  day-prefix call is tiny (MinIO indexes per prefix), so a 30-day
+  range is 60 cheap calls — well under the page-render budget.
+  The eventual replacement is the **B-033** Airflow DAG
+  (`quarantine_daily_rollup`) which materialises per-day counts into
+  Postgres and turns this into a single SUM query.
 
 ### Live throughput math
 
@@ -284,12 +306,16 @@ Output "PHASE 7 ACCEPTED" only after every row passes. Do not auto-proceed.
 
 ## ROLLBACK
 
+If the redesign needs to be reverted (keep B-027's original three-section
+monitor — remove the `/monitor/data` route, the `_monitor_live` helper, the
+live-pulse header markup, the SOON tiles, and the JS poller; restore the
+revenue card), the owner can run:
+
 ```bash
-# Revert the redesign — keep B-027's original three-section monitor.
-# Remove the /monitor/data route, the _monitor_live helper, the live-pulse
-# header markup, the SOON tiles, and the JS poller. Restore the revenue card.
 git diff main -- render/server.py render/templates/monitor.html | git apply -R
 ```
+
+Do not run this from an agent session — it is an owner-driven recovery step.
 
 The Phase 2 / migration changes that the redesign depends on
 (`pipeline_metrics` table, per-type count columns on `agg_hourly_city_stats`,

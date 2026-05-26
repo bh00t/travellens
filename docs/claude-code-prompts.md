@@ -14,6 +14,14 @@ You do **not** need to chain prompts or copy work between phases. Each phase end
 the system in a defined state, and the next phase's spec verifies that state in its
 `PREREQUISITES` section before doing anything new.
 
+> **Phases are not strictly sequential.** Phase 7 (`/monitor`) shipped ahead of
+> Phase 6 (Airflow, still in progress) because the monitor unblocks day-to-day
+> visibility into the stream pipeline without needing the batch DAGs first.
+> A `PREREQUISITES` chain may therefore reference a later-numbered phase
+> (e.g. Phase 7's monitor presumes `pipeline_metrics` from migration 007 that
+> shipped during Phase 7 itself, not as part of any earlier-numbered phase).
+> Trust each spec's own `PREREQUISITES` block over the phase-number ordering.
+
 ---
 
 ## Before you start any phase
@@ -251,12 +259,10 @@ still a pass.
 insert. Index creation uses `IF NOT EXISTS`. Embedding generation skips rows where
 `embedding IS NOT NULL`. Kafka consumer uses `ON CONFLICT` upsert.
 
-**Use git as a checkpoint.** After each `PHASE N ACCEPTED`:
-```bash
-git add -A
-git commit -m "Phase N complete: <one-line summary>"
-```
-If a later phase breaks something, `git reset --hard` to the last known-good state.
+**STOP — the owner commits manually.** After each `PHASE N ACCEPTED`, do not run
+any git commands. The owner reviews the diff and commits themselves. If a later
+phase breaks something, the owner can run `git reset --hard` to the last
+known-good commit; do not invoke `git reset` from an agent session.
 
 **Fix the code, not the test.** If an acceptance test fails, fix the code until the
 test passes. Never modify the acceptance test to make it pass — that defeats the point.
@@ -268,70 +274,10 @@ test passes. Never modify the acceptance test to make it pass — that defeats t
 
 ## File map
 
-> Canonical layout lives in root `CLAUDE.md`. This is a phase-prompt-oriented
-> snapshot — keep paths here in sync with `CLAUDE.md` and `db/migrations/`.
-
-```
-travellens/
-├── CLAUDE.md                        ← Claude Code reads this automatically every session
-├── README.md                        ← portfolio front door
-├── run.py                           ← dev launcher: docker + 3 host procs; --no-sim / --server-only / --window N
-├── docs/
-│   ├── phase-0-setup.md             ← Phase 0 spec (Part A manual + Part B Claude Code)
-│   ├── phase-1-postgres.md          ← Phase 1 spec
-│   ├── phase-2-streaming.md         ← Phase 2 spec
-│   ├── phase-3-embeddings.md        ← Phase 3 spec
-│   ├── phase-4-ai-layer.md          ← Phase 4 spec
-│   ├── phase-5-dashboard.md         ← Phase 5 spec
-│   ├── phase-6-airflow.md           ← Phase 6 spec (current — in progress)
-│   ├── phase-7-monitor.md           ← Phase 7 spec (complete — /monitor live pulse)
-│   ├── backlog.md                   ← known issues, future work, LLM comparison plan
-│   ├── capabilities-and-limits.md   ← per-feature reliability reference
-│   ├── session-notes.md             ← short-lived handoff context between sessions
-│   └── claude-code-prompts.md       ← this file
-├── ai/
-│   ├── __init__.py                  ← required — Python package marker
-│   ├── main.py
-│   ├── query_router.py
-│   ├── text_to_sql.py
-│   ├── semantic_search.py
-│   └── prompts/
-│       └── text_to_sql_system.txt
-├── render/
-│   ├── __init__.py                  ← required — Python package marker
-│   ├── server.py
-│   ├── widget_renderer.py
-│   └── templates/
-│       ├── base.html
-│       ├── dashboard.html
-│       ├── explore.html
-│       ├── monitor.html             ← Phase 7
-│       └── about.html
-├── scripts/
-│   ├── generate_embeddings.py
-│   ├── semantic_playground.py
-│   ├── load_to_postgres.py
-│   ├── validate_load.py
-│   ├── stream_consumer.py
-│   ├── kafka_event_producer.py
-│   └── init_s3_buckets.py
-├── db/
-│   ├── schema.sql                   ← base 14-table star schema (frozen)
-│   └── migrations/                  ← append-only; treat every file here as immutable
-│       ├── 003_dashboard_widgets.sql       ← Phase 5
-│       ├── 004_widget_settings.sql         ← Phase 5
-│       ├── 005_widget_cache.sql            ← Phase 5 (B-022)
-│       ├── 006_hotel_opened_year.sql       ← Phase 5 hardening
-│       └── 007_pipeline_live_metrics.sql   ← Phase 7 (B-032)
-├── docker/
-│   ├── postgres.Dockerfile
-│   └── docker-compose.yml           ← + airflow + airflow-postgres services (Phase 6)
-├── airflow/
-│   ├── dags/                        ← Phase 6 DAGs (B-024/013/014/015/016) — not yet built
-│   └── plugins/
-├── data/                            ← gitignored — source CSVs + seed JSON
-└── tests/
-```
+Canonical repo layout: see [`CLAUDE.md`](../CLAUDE.md) (root). Don't duplicate
+the tree here — keeping two copies in sync was the drift source. Per-phase
+deltas (what each phase creates / touches) live in each phase doc's
+"REPO STATE AFTER THIS PHASE" block.
 
 ---
 

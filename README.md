@@ -13,6 +13,8 @@ A real-time hotel and tourism intelligence platform for the Indian hospitality m
 ![TravelLens dashboard](./docs/assets/dashboard.png)
 
 > **Full architecture, design decisions, and trade-offs live in [`Travellense`](https://bh00t.github.io/travellens/) — the technical blueprint.** Open it in a browser for the deep dive. This README is the short front door.
+>
+> *Note: the blueprint is the **original** design (Flink streaming, DuckDB exploration, Claude API). The shipped build pivoted to a pure-Python Kafka consumer, dropped DuckDB, and serves a local Ollama model. Where the blueprint and the repo conflict, the repo wins.*
 
 ---
 
@@ -41,7 +43,7 @@ The principle: the read path never triggers compute. SQL is authored once by the
 | Layer       | Technology |
 |-------------|------------|
 | Streaming   | Kafka · Zookeeper · pure-Python event consumer · MinIO (S3) · Apache Parquet |
-| Storage     | PostgreSQL 16 · pgvector · DuckDB (local exploration) |
+| Storage     | PostgreSQL 16 · pgvector |
 | AI          | Ollama · Qwen2.5-Coder-7B (SQL) · sentence-transformers all-MiniLM-L6-v2 (embeddings) · IVFFlat |
 | Serving     | Flask · Jinja2 · Chart.js |
 | Dev / infra | Docker Compose · psql |
@@ -60,6 +62,8 @@ One line each — the blueprint explains the *why* in full. For an honest per-fe
 
 A classic Kimball star: facts at the center (`fact_bookings` ~1M rows, `fact_price_events` ~86k rows), surrounded by conformed dimensions (date, location, customer, hotel, room type), with hourly and daily pre-aggregates and a `reviews_raw` table holding the embedded text corpus (~30k rows). The authoritative source is [`db/schema.sql`](db/schema.sql); the blueprint walks through the join paths and the `dim_location.city`-is-authoritative rule that keeps city queries consistent across facts.
 
+Per-table schemas, sample rows, design notes, and the full migration history (003 → current) live in [`datamodel.md`](datamodel.md) — the data-model reference.
+
 ## Quickstart
 
 Requires Docker, Python 3.11, and a local Ollama daemon.
@@ -71,7 +75,7 @@ docker compose --env-file ../.env up -d
 
 # 2. Apply schema and migrations in order
 docker exec -i travellens-postgres psql -U travellens -d travellens < ../db/schema.sql
-for f in ../db/migrations/00{1..7}_*.sql; do
+for f in $(ls ../db/migrations/*.sql | sort); do
   docker exec -i travellens-postgres psql -U travellens -d travellens < "$f"
 done
 
@@ -103,7 +107,7 @@ python run.py --window N       # run the consumer with an N-minute window (testi
 
 A short version of what the blueprint covers in depth:
 
-- **DuckDB locally, Postgres in this build, Snowflake in production.** DuckDB is the right tool to prototype joins on CSVs in seconds; Postgres + pgvector is the right *demo* warehouse because everything sits in one process and the vector index lives with the facts; Snowflake (or BigQuery) is the right *production* warehouse once concurrency and storage push past a single-node Postgres.
+- **Postgres in this build, Snowflake in production.** Postgres + pgvector is the right *demo* warehouse because everything sits in one process and the vector index lives with the facts; Snowflake (or BigQuery) is the right *production* warehouse once concurrency and storage push past a single-node Postgres. (DuckDB was considered as a CSV-prototyping tool in the original blueprint but isn't part of this build.)
 - **Local Ollama, not a hosted API.** Zero per-query cost, zero data egress, deterministic latency on a consumer GPU. The cost is model size: Qwen2.5-Coder-7B fits on an RTX 3070, which caps SQL quality versus a frontier model.
 - **JSONB result cache now, Redis in production.** The `last_result_json` column on `dashboard_widgets` is a deliberate scoped-down stand-in with the same contract as Redis keyed by widget ID with a TTL equal to the refresh interval — the swap is one adapter away.
 - **Frozen-SQL re-execution now, Airflow refresh DAG in production.** Refresh currently runs the frozen SQL on demand; the next step is an Airflow DAG running on each widget's interval and writing to the cache, so the read path stops touching Postgres entirely.

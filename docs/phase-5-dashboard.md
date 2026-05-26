@@ -9,27 +9,19 @@
 
 ## REPO STATE AFTER THIS PHASE
 
-```
-travellens/
-├── render/
-│   ├── __init__.py                  ← CREATE (empty)
-│   ├── server.py                    ← CREATE
-│   ├── widget_renderer.py           ← CREATE
-│   └── templates/
-│       ├── base.html                ← CREATE (shared nav + layout)
-│       ├── dashboard.html           ← CREATE
-│       ├── explore.html             ← CREATE
-│       └── about.html               ← CREATE
-├── db/
-│   └── migrations/
-│       └── 003_dashboard_widgets.sql ← CREATE
-├── ai/                              ← LEAVE ALONE
-├── scripts/                         ← LEAVE ALONE
-├── docker/                          ← LEAVE ALONE
-├── docs/
-│   └── phase-5-dashboard.md         ← LEAVE ALONE
-└── requirements.txt                 ← MODIFY (add flask==3.0.3)
-```
+Canonical repo layout: see [`CLAUDE.md`](../CLAUDE.md) (root). Files this phase
+creates / touches:
+
+- **CREATE** `render/__init__.py` (empty)
+- **CREATE** `render/server.py`
+- **CREATE** `render/widget_renderer.py`
+- **CREATE** `render/templates/base.html` (shared nav + layout)
+- **CREATE** `render/templates/dashboard.html`
+- **CREATE** `render/templates/explore.html`
+- **CREATE** `render/templates/about.html`
+- **CREATE** `db/migrations/003_dashboard_widgets.sql`
+- **MODIFY** `requirements.txt` (add `flask==3.0.3`)
+- Phase-5 polish later added migrations 004 (widget settings) and 005 (B-022 frozen SQL + cache) — see [`datamodel.md`](../datamodel.md) Schema Evolution.
 
 Build a three-page Flask web application that wraps the Phase 4 AI layer into a
 Grafana-style intelligence dashboard.

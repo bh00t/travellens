@@ -9,8 +9,7 @@ pandas==2.2.2
 pyarrow==17.0.0
 numpy==1.26.4
 
-# Streaming
-apache-flink==1.18.1
+# Streaming — pure-Python Kafka consumer (Flink was in the original blueprint but is not used in this build)
 kafka-python==2.0.2
 
 # AI / ML

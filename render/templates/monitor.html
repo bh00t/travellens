@@ -129,6 +129,16 @@
     letter-spacing: .08em; padding: .1rem .4rem; border-radius: 3px;
     background: var(--gray-900); color: var(--white);
   }
+  /* Section-head scope chip (B-042): subtle indicator of which axes a
+     section is filtered by — used on Quarantine to spell out the
+     date-scoped / city-agnostic split. Same visual register as the
+     SOON badge so the eye reads it as metadata, not content. */
+  .badge-scope {
+    font-family: var(--font-mono); font-size: .55rem; font-weight: 700;
+    letter-spacing: .06em; padding: .1rem .45rem; border-radius: 3px;
+    background: var(--white); color: var(--gray-700);
+    border: 1px solid var(--gray-300); text-transform: uppercase;
+  }
 
   /* Status pill (used for freshness / airflow text states). */
   .pill {
@@ -292,12 +302,17 @@
     </div>
   </section>
 
-  <!-- ══ Section — Quarantine (date + city filtered context) ═════════════ -->
+  <!-- ══ Section — Quarantine (date-scoped, city-agnostic — B-042) ═══════ -->
   <section class="mon-section">
-    <div class="mon-section-head"><h2>Quarantine</h2></div>
+    <div class="mon-section-head">
+      <h2>Quarantine</h2>
+      <span class="badge-scope">date-scoped · all cities</span>
+    </div>
     <p class="mon-caption">
       Objects the consumer routed to MinIO for triage — bad data isolated, not silently
-      dropped. Counts are bucket-wide (not filtered).
+      dropped. Scoped to the selected date range. Quarantined objects aren&rsquo;t tagged
+      by city, so the city filter doesn&rsquo;t narrow these — they&rsquo;re counted
+      across all cities.
     </p>
 
     <div class="metric-grid">

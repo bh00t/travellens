@@ -9,31 +9,12 @@
 
 ## REPO STATE AFTER THIS PHASE
 
-```
-travellens/
-├── .gitignore                   ← CREATE
-├── .env.example                 ← CREATE
-├── .env                         ← CREATE (gitignored — never commit)
-├── requirements.txt             ← CREATE
-├── README.md                    ← CREATE
-├── CLAUDE.md                    ← CREATE (repo root — Claude Code reads this automatically)
-├── data/
-│   ├── .gitkeep                 ← CREATE
-│   ├── *.csv (12 files)         ← COPY from dataset source
-│   └── booking_events_seed.json ← COPY from dataset source
-├── db/
-│   └── migrations/              ← CREATE (empty)
-├── docker/                      ← CREATE (empty)
-├── scripts/                     ← CREATE (empty)
-├── ai/
-│   └── prompts/                 ← CREATE (empty)
-├── airflow/
-│   └── dags/                    ← CREATE (empty)
-├── render/
-│   └── templates/               ← CREATE (empty)
-├── flink/                       ← CREATE (empty)
-└── tests/                       ← CREATE (empty)
-```
+Canonical repo layout: see [`CLAUDE.md`](../CLAUDE.md) (root). This phase
+**creates** the repository skeleton — every file/directory below is new:
+
+- `.gitignore`, `.env.example`, `.env` (gitignored), `requirements.txt`, `README.md`, `CLAUDE.md`
+- `data/` (`.gitkeep` + 12 `.csv` files + `booking_events_seed.json` copied from the dataset source)
+- Empty package/skeleton directories: `db/migrations/`, `docker/`, `scripts/`, `ai/prompts/`, `airflow/dags/`, `render/templates/`, `flink/`, `tests/`
 
 ## OBJECTIVE
 
@@ -472,18 +453,10 @@ If any expected file is missing, abort and report which one.
 
 #### Step 9 — Initialize git
 
-```bash
-git init -q
-git branch -m main 2>/dev/null || true
-git add .gitignore requirements.txt .env.example README.md \
-        data/.gitkeep db/ docker/ scripts/ flink/ ai/ airflow/ render/ tests/
-git commit -m "Phase 0: environment setup complete" -q
-```
-
-The `.env` file must NOT appear in the commit. Verify:
-```bash
-git status   # should be clean except for ignored files
-```
+STOP — the owner commits manually. Do not run `git init`, `git add`, or
+`git commit` from this agent session. The owner initializes the repository,
+reviews the skeleton, and creates the first commit themselves. Confirm that
+the `.env` file is gitignored (it MUST NOT be tracked) and hand off.
 
 ---
 

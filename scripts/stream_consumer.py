@@ -103,6 +103,7 @@ from datetime import datetime, timezone, timedelta
 
 import boto3
 import psycopg2
+from psycopg2.extras import execute_values
 import pyarrow as pa
 import pyarrow.parquet as pq
 from dotenv import load_dotenv
@@ -166,6 +167,22 @@ FLUSH_CHECK_SECONDS = 10
 # broker eviction; larger = marginally higher throughput. 200 suits the
 # project's ~50 evt/s rate. Env-overridable; default 200.
 INNER_BATCH_MAX = int(os.getenv("INNER_BATCH_MAX", "200"))
+
+# Bronze buffer cap. The consumer buffers accepted events in memory and
+# flushes them to s3://.../raw_events/ as one JSONL file per batch, with
+# many events per file. The cap bounds (a) memory in the consumer process
+# and (b) the worst-case event-loss window if MinIO is unreachable —
+# a flush failure drops AT MOST this many events. Mirrors INNER_BATCH_MAX's
+# rationale; chosen larger so a typical "10s tick" at 50-100 evt/s lands
+# in a single file rather than producing 2-3 trivial files per tick.
+BRONZE_BUFFER_CAP = int(os.getenv("BRONZE_BUFFER_CAP", "500"))
+
+# Silver buffer cap. Same rationale as bronze — bounds memory and the
+# worst-case loss on Postgres outage. INSERT batching via execute_values
+# means one round-trip per flush regardless of batch size (within reason),
+# so larger batches are cheap on the database; matching bronze's 500 keeps
+# the two layers in lock-step and makes per-flush log lines easy to read.
+SILVER_BUFFER_CAP = int(os.getenv("SILVER_BUFFER_CAP", "500"))
 
 # Event types that pass validation. Anything outside this set lands in
 # malformed_events with reason "unknown_event_type" — the producer must
@@ -450,6 +467,255 @@ def dual_sink(row):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# BRONZE SINK (B-038) — durable raw archive of every accepted event
+# ══════════════════════════════════════════════════════════════════════════════
+# Why a bronze layer at all? The agg UPSERT is LOSSY (it derives totals;
+# it discards the per-event payload), the Parquet archive is LOSSY (it
+# stores aggregate rows, not events), and quarantine only captures the
+# events that FAILED a gate. There was previously no immutable copy of
+# the events that succeeded — i.e. of the raw stream itself. Bronze
+# fills that gap: every accepted payload (whatever passed the four
+# gates and made it into the window accumulator) is appended to a
+# buffer and flushed to S3 as JSONL.
+#
+# Format: JSONL — one event per line, many events per file. NOT
+# Parquet (overkill for raw bytes + would force a schema on per-type
+# variant fields like cancellation_reason/old_price_inr); NOT one
+# file per event (would generate tens of thousands of tiny S3 objects
+# for a single run, kill list performance, and waste bytes on JSON
+# overhead per object).
+#
+# Partition by INGEST wall-clock time, mirroring quarantine_event's
+# convention (NOT event-time, the way the agg Parquet does). Rationale:
+# bronze is "what arrived" — operationally indexed. The triaging
+# engineer asks "what came in during the last hour" using
+# `now()`-relative paths. Event-time partitioning would put late
+# chaos events into past-dated folders, which is the same trap the
+# quarantine code already chose to avoid.
+#
+# Isolation: bronze writes are wrapped in their own try/except. A
+# bronze failure increments a counter, logs to stderr, and continues —
+# it MUST NEVER crash the consumer or affect agg / heartbeat. Lost
+# events are accepted; bronze is best-effort-durable, not a gate.
+
+def bronze_flush(buffer, metrics):
+    """
+    Flush the bronze buffer to S3 as one JSONL file under raw_events/.
+
+    Args:
+        buffer:  list of accepted event dicts (caller passes the actual
+                 in-memory buffer; this function does NOT mutate it).
+        metrics: dict carrying counters (events_bronzed, files_written,
+                 flushes_failed) — updated in place.
+
+    Returns:
+        An empty list, intended for the caller to reassign over its
+        local buffer reference. Even on failure we clear the buffer:
+        bronze is best-effort, retrying indefinitely would leak memory
+        when MinIO is genuinely unreachable.
+    """
+    if not buffer:
+        return []
+    try:
+        now = datetime.now(timezone.utc)
+        key = (
+            f"raw_events/"
+            f"year={now.year:04d}/month={now.month:02d}/"
+            f"day={now.day:02d}/hour={now.hour:02d}/"
+            f"{now.strftime('%H%M%S')}_{uuid.uuid4().hex[:8]}.jsonl"
+        )
+        # JSONL = newline-delimited JSON. Each line is one event. The
+        # trailing newline keeps the file POSIX-text-clean so `wc -l`
+        # gives an honest event count.
+        # default=str handles any non-JSON-native value the producer
+        # might add (datetime, Decimal, etc.) without raising — same
+        # defensive default the quarantine code uses.
+        body = (
+            "\n".join(json.dumps(e, default=str) for e in buffer) + "\n"
+        ).encode("utf-8")
+        S3.put_object(
+            Bucket=S3_BUCKET,
+            Key=key,
+            Body=body,
+            ContentType="application/x-ndjson",
+        )
+        metrics["bronze_events"]  += len(buffer)
+        metrics["bronze_files"]   += 1
+        metrics["bronze_bytes"]   += len(body)
+    except Exception as exc:
+        # Same posture as quarantine_event and the heartbeat: log,
+        # increment a failure counter so the operator sees the issue
+        # in the shutdown summary, and continue. Crashing the consumer
+        # to "save" a batch of raw archive is the wrong trade.
+        metrics["bronze_failures"] += 1
+        print(
+            f"  ✗ Bronze sink error ({len(buffer)} events dropped): {exc}",
+            file=sys.stderr,
+        )
+    return []
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SILVER SINK (B-039) — typed per-event ledger in fact_booking_events
+# ══════════════════════════════════════════════════════════════════════════════
+# Why a silver layer on top of bronze? Bronze gives us a durable raw archive
+# in S3 but bronze is JSON-on-object-storage — a wrong shape for per-event
+# analytics. Silver is "the same events, typed, indexed, queryable" — a
+# Postgres-side ledger sitting in the SAME `fact_booking_events` table the
+# history backfill writes (B-035). `source='history'` and `source='stream'`
+# share the schema; the column is the only thing that distinguishes them.
+# Once silver is in place, gold (B-040 — per-booking lifecycle
+# reconstruction with `illegal_transition_flag`) becomes a SQL query, not
+# a JSONL parser.
+#
+# Dedup story: `event_id` is the table's PRIMARY KEY (migration 008), so
+# `ON CONFLICT (event_id) DO NOTHING` short-circuits re-inserts at the
+# database. This covers Kafka redelivery cleanly (a duplicate batch
+# arrives → 0 new rows). It does NOT cover producer crash-replay, which
+# would mint NEW event_ids for re-emitted events — that's a known gap;
+# making event_id deterministic per-emit (e.g. hash of booking_id + type
+# + sim_day) is the long-term path to exactly-once, tracked separately.
+#
+# Type coverage: silver writes ALL five wire types — BOOKING / CHECKIN /
+# CHECKOUT / CANCELLATION / PRICE_CHANGE. PRICE_CHANGE rows have NULL
+# booking_id and customer_id by design (a price change is an operational
+# event on a (hotel, room_type), not on a booking). This is why silver is
+# placed BEFORE the Gate-3 PROCESSED_EVENT_TYPES filter — bronze sits
+# after that filter and so excludes PRICE_CHANGE, but silver is the
+# durable per-event truth and must include every accepted event type.
+# (See AUDIT in this session's docs for why bronze isn't moved to match.)
+#
+# Isolation: same posture as bronze and the heartbeat. Wrapped in its own
+# try/except; failures log + increment a counter + drop the batch. The
+# agg UPSERT, bronze, heartbeat, quarantine sinks, and window logic are
+# untouched and unaffected.
+
+_SILVER_COLUMNS = (
+    "event_id", "event_type",
+    "booking_id", "customer_id", "hotel_id", "city", "room_type_id",
+    "event_ts", "event_date",
+    "checkin_date", "checkout_date", "nights", "num_guests",
+    "nightly_rate_inr", "revenue_inr", "booking_source", "payment_mode",
+    "cancellation_reason",
+    "old_price_inr", "new_price_inr",
+    "source",
+)
+
+
+def _silver_row(event):
+    """
+    Map one wire event dict to the fact_booking_events row tuple.
+
+    Per-type field mapping (all source='stream'):
+      BOOKING      : full booking payload (rate/revenue/nights/guests/dates).
+      CHECKIN      : base envelope + booking_id + customer_id.
+      CHECKOUT     : same as CHECKIN.
+      CANCELLATION : same + cancellation_reason.
+      PRICE_CHANGE : hotel_id + room_type_id + old/new price; booking_id
+                     and customer_id INTENTIONALLY NULL (operational event,
+                     not booking-scoped).
+
+    Returns a tuple matching _SILVER_COLUMNS order; psycopg2 / execute_values
+    handles type coercion (ISO string → TIMESTAMPTZ / DATE; int → SMALLINT /
+    NUMERIC). Fields not relevant to the row's event_type are simply None.
+    """
+    et = event.get("event_type")
+    is_booking      = (et == "BOOKING")
+    is_cancellation = (et == "CANCELLATION")
+    is_price        = (et == "PRICE_CHANGE")
+    return (
+        event.get("event_id"),
+        et,
+        event.get("booking_id"),
+        event.get("customer_id"),
+        event.get("hotel_id"),
+        event.get("city"),
+        event.get("room_type_id"),
+        event.get("event_ts"),
+        event.get("event_date"),
+        event.get("checkin_date")    if is_booking else None,
+        event.get("checkout_date")   if is_booking else None,
+        event.get("nights")          if is_booking else None,
+        event.get("num_guests")      if is_booking else None,
+        event.get("nightly_rate_inr") if is_booking else None,
+        event.get("revenue_inr")     if is_booking else None,
+        event.get("booking_source")  if is_booking else None,
+        event.get("payment_mode")    if is_booking else None,
+        event.get("cancellation_reason") if is_cancellation else None,
+        event.get("old_price_inr")   if is_price else None,
+        event.get("new_price_inr")   if is_price else None,
+        "stream",
+    )
+
+
+def silver_flush(buffer, metrics):
+    """
+    Flush the silver buffer to fact_booking_events.
+
+    Uses psycopg2.extras.execute_values for one round-trip per flush,
+    with ON CONFLICT (event_id) DO NOTHING for idempotent re-inserts.
+    cur.rowcount post-execute reports rows actually inserted (excludes
+    DO NOTHING short-circuits), so we can tell durable inserts apart
+    from dedup hits.
+
+    Args:
+        buffer:  list of accepted event dicts.
+        metrics: dict carrying counters (silver_attempted, silver_inserted,
+                 silver_duplicates, silver_flushes, silver_failures) —
+                 updated in place.
+
+    Returns:
+        Empty list. Same best-effort posture as bronze_flush: on failure
+        we drop the batch rather than retry-leak memory under sustained
+        Postgres outage.
+    """
+    if not buffer:
+        return []
+    try:
+        rows = [_silver_row(e) for e in buffer]
+        conn = psycopg2.connect(**DB_PARAMS)
+        try:
+            with conn.cursor() as cur:
+                cols = ",".join(_SILVER_COLUMNS)
+                # page_size=len(rows) forces execute_values to send the
+                # whole batch as ONE statement, so cur.rowcount reflects
+                # the entire flush. With the default page_size=100, a
+                # 500-row batch gets split into 5 sub-queries and
+                # cur.rowcount returns only the LAST one's count — which
+                # silently undercounts new-inserts (and overcounts
+                # dedupes by the same delta) on every flush. The bigger
+                # the batch, the worse the lie. Tested against a
+                # synthetic 500-row insert: default page_size returned
+                # rowcount=100, custom page_size=500 returned 500.
+                execute_values(
+                    cur,
+                    (
+                        f"INSERT INTO fact_booking_events ({cols}) VALUES %s "
+                        f"ON CONFLICT (event_id) DO NOTHING"
+                    ),
+                    rows,
+                    page_size=len(rows),
+                )
+                inserted = cur.rowcount
+            conn.commit()
+        finally:
+            conn.close()
+        attempted = len(buffer)
+        duplicates = attempted - inserted
+        metrics["silver_attempted"]  += attempted
+        metrics["silver_inserted"]   += inserted
+        metrics["silver_duplicates"] += duplicates
+        metrics["silver_flushes"]    += 1
+    except Exception as exc:
+        metrics["silver_failures"] += 1
+        print(
+            f"  ✗ Silver sink error ({len(buffer)} rows dropped): {exc}",
+            file=sys.stderr,
+        )
+    return []
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # WINDOWING HELPERS
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -657,7 +923,34 @@ def main():
         "bookings":             0,
         "cancellations":        0,
         "malformed_by_reason":  defaultdict(int),
+        # B-038: bronze sink counters. bronze_events is incremented
+        # only inside bronze_flush() on a SUCCESSFUL put — so it
+        # reports actually-durable events, not events that hit the
+        # buffer. bronze_failures counts failed flush batches (each
+        # batch failure drops <=BRONZE_BUFFER_CAP events; see
+        # bronze_flush comment). bronze_bytes is for the shutdown
+        # summary so file sizes are visible at a glance.
+        "bronze_events":        0,
+        "bronze_files":         0,
+        "bronze_bytes":         0,
+        "bronze_failures":      0,
+        # B-039: silver sink counters. silver_inserted counts rows that
+        # actually landed (cur.rowcount post-execute_values, which excludes
+        # ON CONFLICT DO NOTHING short-circuits). silver_attempted is the
+        # raw batch size — useful for spotting "everything is dedup" vs
+        # "nothing inserts." silver_duplicates = attempted - inserted is
+        # how the acceptance dedup test (C) shows itself.
+        "silver_attempted":     0,
+        "silver_inserted":      0,
+        "silver_duplicates":    0,
+        "silver_flushes":       0,
+        "silver_failures":      0,
     }
+
+    # B-038 / B-039: in-memory buffers for the two parallel sinks. Single-
+    # threaded by design; no locking.
+    bronze_buffer = []
+    silver_buffer = []
 
     # max_event_ts tracks the largest event_ts seen so far (in epoch
     # seconds). This IS the watermark generator — every time we see a
@@ -750,14 +1043,15 @@ def main():
                 run_metrics["malformed_by_reason"][reason] += 1
                 continue
 
-            # ── Gate 3: Event type filter ────────────────────────────
-            # CHECKIN and PRICE_CHANGE are valid but irrelevant to the
-            # city-revenue aggregate. Silent filter — not malformed,
-            # not counted as dropped, just not aggregated.
-            if event["event_type"] not in PROCESSED_EVENT_TYPES:
-                continue
-
             # ── Parse timestamp (safe — validator already checked it) ─
+            # Moved above the Gate-3 type filter in B-039 so the late
+            # guard (Gate 4) sees ALL valid event types — previously
+            # Gate 3 silently dropped PRICE_CHANGE before Gate 4 had a
+            # chance to look at lateness. The order change is otherwise
+            # invisible: every non-PRICE_CHANGE event sees identical
+            # behavior; late PRICE_CHANGE now goes to late_events/
+            # (was silently dropped at Gate 3 previously) — closing a
+            # silent-drop gap the original code didn't intend.
             ts_str  = event["event_ts"].replace("Z", "+00:00")
             event_dt = datetime.fromisoformat(ts_str)
             event_ts_secs = event_dt.timestamp()
@@ -794,6 +1088,50 @@ def main():
                 if run_metrics["late_dropped"] % 100 == 1:
                     print(f"  ⚠ Late event quarantined: {event['city']}@{window_start.isoformat()} (total: {run_metrics['late_dropped']})")
                 continue
+
+            # ── Silver archive (B-039) ────────────────────────────────
+            # Event has passed Gates 1 (JSON), 2 (schema), and 4 (late).
+            # Buffer it for the typed fact_booking_events ledger. Unlike
+            # bronze (which sits AFTER Gate 3 and so excludes
+            # PRICE_CHANGE), silver sits BEFORE Gate 3 so every accepted
+            # event type lands in the ledger, including PRICE_CHANGE —
+            # the brief's "this row MUST be written (no type filter)"
+            # requirement. Flush trigger mirrors bronze.
+            silver_buffer.append(event)
+            if len(silver_buffer) >= SILVER_BUFFER_CAP:
+                silver_buffer = silver_flush(silver_buffer, run_metrics)
+
+            # ── Gate 3: Event type filter ────────────────────────────
+            # CHECKIN and PRICE_CHANGE are valid but irrelevant to the
+            # city-revenue aggregate. Silent filter — not malformed,
+            # not counted as dropped, just not aggregated. Bronze sits
+            # AFTER this filter (so bronze excludes PRICE_CHANGE — see
+            # the AUDIT note for why we didn't move bronze to match
+            # silver: the brief explicitly forbids touching bronze).
+            # (Note as of B-034A's B-032 Chunk 2: PROCESSED_EVENT_TYPES
+            # already includes CHECKIN; this comment kept the old
+            # "CHECKIN and PRICE_CHANGE are valid but irrelevant" line
+            # for historical context. The actual filter today only
+            # excludes PRICE_CHANGE.)
+            if event["event_type"] not in PROCESSED_EVENT_TYPES:
+                continue
+
+            # ── Bronze archive (B-038) ────────────────────────────────
+            # The event has now passed every gate (JSON parse, schema,
+            # late guard, type filter) and will be accumulated below.
+            # Append the raw payload to the bronze buffer; flush when
+            # the buffer hits BRONZE_BUFFER_CAP so high-throughput runs
+            # don't grow it without bound. The periodic flush-check
+            # (Phase 2) handles the low-throughput case where the cap
+            # is never reached but a small batch is still due.
+            #
+            # Wrapped only by bronze_flush's own try/except — appending
+            # to a list can't fail in practice. The flush call below
+            # is the only thing that touches S3, and any exception
+            # there is swallowed inside bronze_flush.
+            bronze_buffer.append(event)
+            if len(bronze_buffer) >= BRONZE_BUFFER_CAP:
+                bronze_buffer = bronze_flush(bronze_buffer, run_metrics)
 
             # ── Accumulate (all gates passed) ────────────────────────
             # Chunk 2: the if/else became if/elif/elif/elif because
@@ -897,6 +1235,29 @@ def main():
             except Exception as exc:
                 print(f"  ✗ pipeline_metrics heartbeat error: {exc}", file=sys.stderr)
 
+            # ── Periodic bronze drain (B-038) ─────────────────────────
+            # Catches the low-throughput case where the cap is not hit
+            # between ticks (e.g. <500 events in 10s). Without this,
+            # bronze freshness would degrade to "next time a heavy
+            # batch fills the cap" — the opposite of "near-real-time."
+            # Bronze flushes BEFORE the window flush below for two
+            # reasons: (a) it's smaller and faster (single S3 put_object
+            # for many events, vs one put_object per closed window
+            # in dual_sink), so we get the raw archive out the door
+            # first; (b) bronze_flush is fully isolated — its failure
+            # path doesn't affect the watermark window flush that
+            # follows.
+            bronze_buffer = bronze_flush(bronze_buffer, run_metrics)
+
+            # ── Periodic silver drain (B-039) ─────────────────────────
+            # Same rationale as bronze. Silver runs immediately after
+            # bronze so both archive layers reach the same logical
+            # cadence and neither blocks on the other. Silver writes
+            # to Postgres (different external system from bronze's
+            # MinIO), so its failure modes are independent — and its
+            # own try/except keeps the loop running through DB blips.
+            silver_buffer = silver_flush(silver_buffer, run_metrics)
+
             watermark_secs = max_event_ts - WATERMARK_GRACE_SECONDS
 
             # Identify all windows whose end is before the watermark —
@@ -946,6 +1307,19 @@ def main():
         dual_sink(row)
         run_metrics["windows_flushed"] += 1
 
+    # B-038: drain whatever's left in the bronze buffer so the most
+    # recent accepted events make it to S3 before we exit. Final flush
+    # is force-on-empty-too via the no-op early return in bronze_flush.
+    if bronze_buffer:
+        print(f"  → final bronze drain: {len(bronze_buffer)} events")
+    bronze_buffer = bronze_flush(bronze_buffer, run_metrics)
+
+    # B-039: drain silver too. Same pattern as bronze — no-op when empty,
+    # one final Postgres round-trip when not.
+    if silver_buffer:
+        print(f"  → final silver drain: {len(silver_buffer)} events")
+    silver_buffer = silver_flush(silver_buffer, run_metrics)
+
     consumer.close()
 
     # ════════════════════════════════════════════════════════════════════
@@ -960,6 +1334,24 @@ def main():
     print(f"  Windows flushed     : {run_metrics['windows_flushed']}")
     print(f"  Late dropped        : {run_metrics['late_dropped']:,}")
     print(f"  Malformed dropped   : {run_metrics['malformed_dropped']:,}")
+    # B-038: bronze sink summary. bronze_events should match the
+    # accept-path total (events_consumed - malformed - late - any
+    # silent type-filter rejects, currently only PRICE_CHANGE).
+    bronze_kb = run_metrics["bronze_bytes"] / 1024
+    print(f"  Bronze archived     : {run_metrics['bronze_events']:,} events"
+          f"  ({run_metrics['bronze_files']} files, {bronze_kb:,.1f} KB)")
+    if run_metrics["bronze_failures"] > 0:
+        print(f"     ↑ {run_metrics['bronze_failures']} bronze flush(es) failed — "
+              f"events dropped; check s3://{S3_BUCKET}/raw_events/ for gaps")
+    # B-039: silver sink summary. silver_inserted = silver_attempted on
+    # a fresh run; on a redelivered run, silver_duplicates climbs while
+    # silver_inserted stays flat (the ON CONFLICT DO NOTHING result).
+    print(f"  Silver inserted     : {run_metrics['silver_inserted']:,} rows"
+          f"  ({run_metrics['silver_flushes']} flushes, "
+          f"{run_metrics['silver_duplicates']:,} dedup'd)")
+    if run_metrics["silver_failures"] > 0:
+        print(f"     ↑ {run_metrics['silver_failures']} silver flush(es) failed — "
+              f"rows dropped; check fact_booking_events for gaps")
 
     if run_metrics["malformed_dropped"] > 0:
         # This is the signal a teammate sees the next morning. They

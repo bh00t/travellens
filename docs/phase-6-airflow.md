@@ -10,28 +10,19 @@
 
 ## REPO STATE AFTER THIS PHASE
 
-```
-travellens/
-├── docker/
-│   └── docker-compose.yml            ← MODIFY (add airflow + airflow-postgres services)
-├── airflow/
-│   ├── dags/
-│   │   ├── refresh_pinned_widgets.py ← CREATE (B-024)
-│   │   ├── daily_hotel_kpi.py        ← CREATE (B-013)
-│   │   ├── reconcile_late_events.py  ← CREATE (B-014)
-│   │   ├── hotel_sentiment_scores.py ← CREATE (B-015)
-│   │   └── customer_ltv.py           ← CREATE (B-016)
-│   ├── plugins/                      ← LEAVE EMPTY (bind-mount target only)
-│   └── requirements-airflow.txt      ← CREATE (provider manifest, container-only)
-├── db/
-│   └── migrations/
-│       ├── 008_hotel_sentiment_scores.sql ← CREATE (target table for B-015)
-│       └── 009_customer_ltv.sql           ← CREATE (target table for B-016)
-├── docs/
-│   └── phase-6-airflow.md            ← this file
-├── requirements.txt                  ← LEAVE ALONE (sqlalchemy stays at 2.0.x)
-└── .env                              ← LEAVE ALONE (add Airflow vars manually)
-```
+Canonical repo layout: see [`CLAUDE.md`](../CLAUDE.md) (root). Files this phase
+creates / touches:
+
+- **MODIFY** `docker/docker-compose.yml` (add `airflow` + `airflow-postgres` services)
+- **CREATE** `airflow/dags/refresh_pinned_widgets.py` (B-024)
+- **CREATE** `airflow/dags/daily_hotel_kpi.py` (B-013)
+- **CREATE** `airflow/dags/reconcile_late_events.py` (B-014)
+- **CREATE** `airflow/dags/hotel_sentiment_scores.py` (B-015)
+- **CREATE** `airflow/dags/customer_ltv.py` (B-016)
+- **CREATE** `airflow/requirements-airflow.txt` (provider manifest, container-only)
+- **CREATE** `db/migrations/009_hotel_sentiment_scores.sql` (target table for B-015 — was planned as 008 before 008 was taken by `008_lifecycle_events.sql` / B-035)
+- **CREATE** `db/migrations/010_customer_ltv.sql` (target table for B-016 — was planned as 009; slid forward by one)
+- **MODIFY** `.env` — add Airflow vars manually
 
 ## OBJECTIVE
 
@@ -469,7 +460,7 @@ docker exec travellens-minio mc ls local/travellens-data/late_events/ | grep -v 
 
 Two weekly DAGs that build Gold-layer aggregates other tooling can
 query without paying the underlying compute cost on each request.
-Both write to new tables created by migrations `008` and `009`.
+Both write to new tables created by migrations `009` and `010`.
 
 #### B-015 — `hotel_sentiment_scores`
 
@@ -479,7 +470,7 @@ Both write to new tables created by migrations `008` and `009`.
 | `catchup`         | `False` — recomputed in full each week |
 | `max_active_runs` | `1` |
 | Source tables     | `reviews_raw` (with `embedding`), `hotel_master` |
-| Target            | `hotel_sentiment_scores` (new Gold table, migration 008) |
+| Target            | `hotel_sentiment_scores` (new Gold table, migration 009) |
 | Connection        | `travellens_warehouse` |
 
 **Computation** — per `hotel_id`:
@@ -514,7 +505,7 @@ ORDER BY sentiment_score DESC LIMIT 10;
 | `catchup`         | `False` — recomputed in full each week |
 | `max_active_runs` | `1` |
 | Source tables     | `fact_bookings`, `dim_customer` |
-| Target            | `customer_ltv` (new Gold table, migration 009) |
+| Target            | `customer_ltv` (new Gold table, migration 010) |
 | Connection        | `travellens_warehouse` |
 
 **Computation** — per `customer_id`:

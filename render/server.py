@@ -881,10 +881,30 @@ def _monitor_freshness(conn) -> dict:
     return {"status": status, "latest": latest, "age_min": age_min}
 
 
-def _monitor_quarantine() -> dict:
+def _monitor_quarantine(date_from: str | None = None,
+                        date_to:   str | None = None) -> dict:
     """
-    Section 3 — malformed + late event counts in MinIO. Guarded: a short
-    timeout and a single attempt so a down/absent MinIO never hangs the page.
+    Section 3 — malformed + late event counts in MinIO.
+
+    Date scoping (B-042): when date_from and date_to are both supplied
+    as 'YYYY-MM-DD' strings, count objects under
+        {prefix}/year=YYYY/month=MM/day=DD/
+    for each day in the inclusive range and sum across days. This matches
+    the EVENTS section's filter (same axis: ingest-time, since the
+    consumer partitions the key by `datetime.now(timezone.utc)` at quarantine
+    time). City is NOT applicable — the keys carry no city segment
+    (malformed events often can't be parsed for a city; quarantine_event
+    has always partitioned date-only). Callers DO NOT pass city.
+
+    When either endpoint is missing, fall back to the historical
+    bucket-wide count (kept for safety; the live monitor routes always
+    pass dates via the default-today rule, so this branch is mostly a
+    code-path safety net).
+
+    Guarded: a short timeout and a single attempt so a down/absent MinIO
+    never hangs the page. Each day-prefix is its own list_objects_v2 call
+    (small + indexed under MinIO's tree), so a 30-day filter is 60 cheap
+    calls (30 per prefix), well under the page-render budget.
     """
     try:
         s3 = boto3.client(
@@ -904,14 +924,49 @@ def _monitor_quarantine() -> dict:
                 total += page.get("KeyCount", 0)
             return total
 
+        # Build the list of prefixes to count under.
+        #   date-scoped → one prefix per day per kind, e.g.
+        #     malformed_events/year=2026/month=05/day=26/
+        #   not date-scoped → the bucket-wide prefix (legacy fallback).
+        def day_prefixes(root: str) -> list[str]:
+            if not (date_from and date_to):
+                return [root]
+            try:
+                d0 = datetime.strptime(date_from, "%Y-%m-%d").date()
+                d1 = datetime.strptime(date_to,   "%Y-%m-%d").date()
+            except ValueError:
+                return [root]
+            if d1 < d0:
+                # Inverted range → empty result (matches "no days in range").
+                return []
+            out = []
+            d = d0
+            while d <= d1:
+                out.append(f"{root}year={d.year:04d}/month={d.month:02d}/day={d.day:02d}/")
+                d += timedelta(days=1)
+            return out
+
+        def count_days(root: str) -> int:
+            return sum(count_prefix(p) for p in day_prefixes(root))
+
         return {
-            "reachable": True,
-            "malformed": count_prefix(MONITOR_PREFIX_MALFORMED),
-            "late":      count_prefix(MONITOR_PREFIX_LATE),
+            "reachable":  True,
+            "date_scoped": bool(date_from and date_to),
+            "date_from":   date_from,
+            "date_to":     date_to,
+            "malformed":  count_days(MONITOR_PREFIX_MALFORMED),
+            "late":       count_days(MONITOR_PREFIX_LATE),
         }
     except Exception as exc:
         log.warning("monitor: MinIO quarantine unreachable: %s", exc)
-        return {"reachable": False, "malformed": None, "late": None}
+        return {
+            "reachable":  False,
+            "date_scoped": bool(date_from and date_to),
+            "date_from":   date_from,
+            "date_to":     date_to,
+            "malformed":   None,
+            "late":        None,
+        }
 
 
 def _monitor_airflow() -> dict:
@@ -979,8 +1034,10 @@ def monitor():
     finally:
         conn.close()
 
-    quarantine = _monitor_quarantine()   # MinIO — guarded
-    airflow    = _monitor_airflow()      # HTTP  — guarded
+    # B-042: quarantine counts now scoped to the same date range as EVENTS.
+    # City is NOT applied — the S3 keys carry no city segment.
+    quarantine = _monitor_quarantine(date_from, date_to)   # MinIO — guarded
+    airflow    = _monitor_airflow()                         # HTTP  — guarded
 
     return render_template(
         "monitor.html",
@@ -1032,7 +1089,10 @@ def monitor_data():
     finally:
         conn.close()
 
-    quarantine = _monitor_quarantine()
+    # B-042: same date scoping as the EVENTS section above (and as the
+    # server-rendered /monitor route below) so the in-place 10s poll
+    # stays consistent with the page on initial render.
+    quarantine = _monitor_quarantine(date_from, date_to)
 
     # latest_ts is a datetime — serialise for JSON.
     if live.get("latest_ts"):

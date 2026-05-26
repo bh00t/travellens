@@ -11,8 +11,15 @@ __pycache__/
 .env.local
 
 # Claude Code — per-developer permissions stay local; shared config is .claude/settings.json
+.claude/settings.json
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
+
+# Session notes — local handoff scratchpad; not committed (owner decision)
+docs/session-notes.md
+
+# Calendar simulator clock — local machine state; rebuilt on first run
+scripts/.sim_clock.json
 
 # Data — do not commit large CSVs to git
 data/*.csv

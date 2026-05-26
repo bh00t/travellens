@@ -10,20 +10,12 @@
 
 ## REPO STATE AFTER THIS PHASE
 
-```
-travellens/
-├── scripts/
-│   ├── generate_embeddings.py   ← CREATE
-│   └── semantic_playground.py   ← CREATE
-├── db/
-│   └── schema.sql               ← LEAVE ALONE
-├── ai/                          ← LEAVE ALONE
-├── docker/                      ← LEAVE ALONE
-├── docs/
-│   └── phase-3-embeddings.md    ← LEAVE ALONE
-└── Postgres (in-DB)
-    └── idx_reviews_embedding    ← CREATED by generate_embeddings.py
-```
+Canonical repo layout: see [`CLAUDE.md`](../CLAUDE.md) (root). Files this phase
+creates / touches:
+
+- **CREATE** `scripts/generate_embeddings.py`
+- **CREATE** `scripts/semantic_playground.py`
+- **CREATE (in-DB)** `idx_reviews_embedding` — IVFFlat index on `reviews_raw.embedding`, created by `generate_embeddings.py` after the batch embed completes.
 
 ## OBJECTIVE
 
@@ -222,10 +214,8 @@ All 4 must pass before moving to Phase 4.
 
 ### Step 5 — Commit
 
-```bash
-git add scripts/generate_embeddings.py docs/phase-3-embeddings.md
-git commit -m "Phase 3: review embeddings + IVFFlat index"
-```
+STOP — the owner commits manually. Do not run `git add` or `git commit` from
+this agent session. The owner reviews the diff and commits themselves.
 
 ---
 

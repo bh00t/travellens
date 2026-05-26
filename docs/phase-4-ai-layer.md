@@ -12,23 +12,16 @@
 
 ## REPO STATE AFTER THIS PHASE
 
-```
-travellens/
-├── ai/
-│   ├── __init__.py              ← CREATE (empty — required for Python package)
-│   ├── main.py                  ← CREATE (rename from ai_main.py)
-│   ├── query_router.py          ← CREATE
-│   ├── text_to_sql.py           ← CREATE
-│   ├── semantic_search.py       ← CREATE
-│   └── prompts/
-│       └── text_to_sql_system.txt ← CREATE
-├── scripts/                     ← LEAVE ALONE
-├── db/                          ← LEAVE ALONE
-├── docker/                      ← LEAVE ALONE
-├── docs/
-│   └── phase-4-ai-layer.md      ← LEAVE ALONE
-└── .env                         ← LEAVE ALONE (add OLLAMA_HOST, OLLAMA_MODEL)
-```
+Canonical repo layout: see [`CLAUDE.md`](../CLAUDE.md) (root). Files this phase
+creates / touches:
+
+- **CREATE** `ai/__init__.py` (empty — required for Python package)
+- **CREATE** `ai/main.py` (rename from `ai_main.py`)
+- **CREATE** `ai/query_router.py`
+- **CREATE** `ai/text_to_sql.py`
+- **CREATE** `ai/semantic_search.py`
+- **CREATE** `ai/prompts/text_to_sql_system.txt`
+- **MODIFY** `.env` — add `OLLAMA_HOST`, `OLLAMA_MODEL`
 
 ## OBJECTIVE
 
@@ -275,10 +268,8 @@ Each must return reviews + a 3-theme Ollama summary. Check:
 
 ### Step 10 — Commit
 
-```bash
-git add ai/ docs/phase-4-ai-layer.md
-git commit -m "Phase 4: text-to-SQL + semantic search + query router"
-```
+STOP — the owner commits manually. Do not run `git add` or `git commit` from
+this agent session. The owner reviews the diff and commits themselves.
 
 ---
 

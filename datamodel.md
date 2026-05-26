@@ -41,6 +41,7 @@
     - [booking_events_seed.json](#booking_events_seedjson)
 11. [Data Quality Guarantees](#data-quality-guarantees)
 12. [Loading Order for Postgres](#loading-order-for-postgres)
+13. [Schema Evolution](#schema-evolution)
 
 ---
 
@@ -337,6 +338,102 @@ The four tables with schema changes at Silver:
 | Phase 5 (dashboards) | ✓ | ✓ | ✓ all tables |
 
 Don't build layers before you feel the pain of not having them. Bronze + Postgres is fine for Phase 1.
+
+### Streaming-side bronze: `raw_events/`
+
+For the **streaming path** (events flowing through Kafka, not the
+historical batch load above), bronze takes a different shape. The
+consumer (`scripts/stream_consumer.py`) writes a durable raw archive
+of every accepted event to:
+
+```
+s3://travellens-data/raw_events/year=YYYY/month=MM/day=DD/hour=HH/HHMMSS_<uuid8>.jsonl
+```
+
+Key properties:
+
+| Property | Value |
+|---|---|
+| Format | JSONL — one event per line, many events per file. The full wire payload (base envelope + per-type fields incl. `event_date` and `event_ts`) is written verbatim. |
+| Partitioning | INGEST wall-clock time (when the consumer writes the file), NOT event_time. Mirrors the existing quarantine prefixes — operators ask "what arrived in the last hour" not "what business-day did the event represent." |
+| Batching | Many events per file. Buffer flushes on size cap (`BRONZE_BUFFER_CAP`, default 500) OR `FLUSH_CHECK_SECONDS` periodic tick (~10s), whichever first. Final drain on graceful shutdown. |
+| What's in it | Every event that passed all four consumer gates (JSON parse, schema, type filter, late guard). PRICE_CHANGE is NOT in bronze (silent Gate-3 filter). Malformed and late events are NOT in bronze (they're in `malformed_events/` and `late_events/`). |
+| Append-only | Files are immutable once written. Raw redeliveries are archived as-is — dedup happens at silver, not here. |
+| Durability posture | Best-effort. A flush failure logs to stderr, increments a counter, and drops the batch; it never crashes the consumer or blocks agg/heartbeat. The shutdown summary reports any gaps. |
+
+Why bronze on the stream when the agg sink already exists: the
+`agg_hourly_city_stats` UPSERT is **lossy by construction** — it
+emits derived totals per (city, window), not events; per-event
+analytics (per-booking lifecycle reconstruction, replay testing,
+ad-hoc forensic queries) can't be answered from it. Bronze
+captures the events themselves so silver (typed event ledger) and
+gold (lifecycle reconstruction with transition-flag QA) can be
+built on top without any "if only we'd kept the raw payload."
+
+Where bronze sits in the streaming pipeline:
+
+```
+Kafka topic ──► consumer
+                 ├─► malformed_events/  (Gates 1+2, JSON or schema fail)
+                 ├─► late_events/       (Gate 4, watermark fail)
+                 ├─► raw_events/        (ACCEPT path — bronze, every accepted event)
+                 ├─► agg_hourly_city_stats  (Postgres + Parquet, aggregated)
+                 └─► pipeline_metrics       (Postgres, heartbeat)
+```
+
+Bronze is parallel to agg, not upstream of it — both fire off the
+same accept path. A bronze failure cannot affect agg, and a
+Postgres / agg-Parquet failure cannot affect bronze.
+
+Tracked under B-038. Silver (per-event ledger in
+`fact_booking_events source='stream'`) shipped as B-039 (see below);
+gold (per-booking lifecycle reconstruction with
+`illegal_transition_flag`) is B-040.
+
+### Streaming-side silver: `fact_booking_events source='stream'`
+
+The consumer (`scripts/stream_consumer.py`) also writes silver inline
+on the accept path — every accepted event is INSERTed into
+`fact_booking_events` with `source='stream'`, in the SAME table the
+history backfill (B-035) writes to with `source='history'`. The
+`source` column is the only distinguisher; downstream analytics
+treat both alike. (B-035 design note: "HISTORY and STREAM both write
+here; a `source` column ('history' | 'stream') is the only
+separator.")
+
+| Property | Value |
+|---|---|
+| Table | `fact_booking_events` (migration 008 schema — no change). `event_id` UUID PK provides the uniqueness for ON CONFLICT. |
+| Trigger | Buffer fills inline on the accept path (post-Gate-4, pre-Gate-3 — so PRICE_CHANGE is INCLUDED). Flushes on `SILVER_BUFFER_CAP` (default 500) OR `FLUSH_CHECK_SECONDS` tick OR graceful shutdown. |
+| Type coverage | All 5 wire types: BOOKING / CHECKIN / CHECKOUT / CANCELLATION / PRICE_CHANGE. PRICE_CHANGE rows carry `booking_id=NULL, customer_id=NULL` by design (operational event, not booking-scoped). |
+| Dedup | `INSERT ... ON CONFLICT (event_id) DO NOTHING` via `execute_values(page_size=len(rows))`. Covers Kafka redelivery cleanly (same event_id → ignored). Does NOT cover producer crash-replay (producer mints a fresh `event_id = uuid4()` per emit, so a re-emitted logically-identical event would land as a new row); deterministic event_id (e.g. `uuid5(NAMESPACE, f"{booking_id}|{event_type}|{sim_day}")`) is the long-term path to exactly-once, tracked as a future enhancement. |
+| Isolation | `silver_flush` wrapped in its own try/except. Failure → log + bump `silver_failures` + drop the batch + continue. Never crashes the consumer, never blocks agg/bronze/heartbeat. |
+| Linkage | Stream BOOKING rows reference real `fact_bookings.booking_id`, `dim_customer.customer_id`, `hotel_master.hotel_id`, `dim_room_type.room_type_id` — by construction (the producer replays real `fact_bookings` rows). PRICE_CHANGE `room_type_id` is producer-synthesised (fresh UUID), not a real FK — there are no FK constraints on `fact_booking_events`, so this doesn't fail at write time, but downstream gold/analytics that join on it should LEFT JOIN. |
+
+Where silver sits in the streaming pipeline:
+
+```
+Kafka topic ──► consumer
+                 ├─► malformed_events/         (Gates 1+2)
+                 ├─► late_events/              (Gate 4)
+                 ├─► raw_events/               (BRONZE — post-Gate-3, JSONL on S3)
+                 ├─► fact_booking_events       (SILVER — pre-Gate-3, source='stream')
+                 ├─► agg_hourly_city_stats     (Postgres + Parquet, aggregated)
+                 └─► pipeline_metrics          (Postgres, heartbeat)
+```
+
+Why silver is **pre-Gate-3** while bronze is **post-Gate-3**: bronze
+predates B-039 and was placed where the brief at the time told it to
+sit (post-all-gates); the brief for B-039 explicitly requires
+PRICE_CHANGE rows in silver ("this row MUST be written, no type
+filter"). To get PRICE_CHANGE into silver without touching bronze,
+parse-ts + Gate 4 (late) were moved above Gate 3, and silver fires
+between Gate 4 and Gate 3. Same accept criteria for both (valid +
+non-late); the difference is that bronze excludes PRICE_CHANGE while
+silver includes it. Late PRICE_CHANGE events now go to `late_events/`
+instead of being silently dropped at Gate 3 — a small fix to a
+previously-silent quirk, consistent with the consumer's "nothing is
+silently dropped" docstring.
 
 ---
 
@@ -1347,6 +1444,235 @@ WITH (lists = 100);
 
 ---
 
+## Lifecycle Events + Simulator State
+
+Two tables that bridge the historical batch world (`fact_bookings`) and the
+live stream world (`scripts/kafka_event_producer.py`). Both ship in
+migration **`db/migrations/008_lifecycle_events.sql`** and are populated by
+`scripts/generate_lifecycle_history.py`.
+
+The pivot: `fact_bookings` records *one row per booking with start and end
+dates*. The stream world thinks in *events* — one wire message per state
+transition (BOOKING, CHECKIN, CHECKOUT, CANCELLATION). To run live and
+historical analytics off the same table, the historical bookings are
+**exploded** into the events they imply, and the live stream writes its
+events into the same table. A `source` column distinguishes them.
+
+### The `sim-today` anchor
+
+Every generator and simulator command takes `--sim-today` (default
+**`2025-06-01`**, picked so ~11–12 months of real `fact_bookings` rows
+remain ahead of it as the stream's future runway). It is the project's
+calendar "now."
+
+The generator processes **every row of `fact_bookings` exactly once**
+and routes it into one of four buckets based on `booking_ts`,
+`checkin_date`, `checkout_date` vs the anchor:
+
+```
+                        booking_ts < sim-today              booking_ts >= sim-today
+                ┌──────────────────────────────────┐  ┌──────────────────────────┐
+checkout <  S   │ COMPLETED                        │  │   (impossible — guard:   │
+                │   history: BOOKING + CHECKIN +   │  │    booking_ts must be    │
+                │   CHECKOUT  (or BOOKING +        │  │    on/before check-in)   │
+                │   CANCELLATION if is_cancelled)  │  │                          │
+                ├──────────────────────────────────┤  ├──────────────────────────┤
+checkin < S     │ IN_PROGRESS  (guest mid-stay)    │  │                          │
+≤ checkout      │   history: BOOKING + CHECKIN     │  │                          │
+                │   sim_open_bookings: CHECKED_IN  │  │                          │
+                ├──────────────────────────────────┤  ├──────────────────────────┤
+checkin >= S    │ BOOKED  (awaiting check-in)      │  │ FUTURE — SKIPPED.        │
+                │   history: BOOKING               │  │   Reserved for the       │
+                │   sim_open_bookings: BOOKED      │  │   stream simulator       │
+                │                                  │  │   to replay later.       │
+                └──────────────────────────────────┘  └──────────────────────────┘
+```
+
+**The crucial property: the open backlog is real.** Every row in
+`sim_open_bookings` is a booking that actually exists in `fact_bookings`
+— the simulator advances real customers staying at real hotels with
+real reservations. Nothing is invented.
+
+**FUTURE bookings are reserved for the stream.** Roughly 388K of the
+1M `fact_bookings` rows have `booking_ts >= sim-today (2025-06-01)`
+running out to 2026-05-16. They are deliberately NOT written as
+history events — they are exactly what the stream simulator (next
+backlog item, B-035 "next step") will replay, sorted by `booking_ts`,
+as `source='stream'` BOOKING events.
+
+The stream simulator picks rows out of `sim_open_bookings` to advance
+CHECKIN → CHECKED_IN → CHECKOUT (or BOOKED → CANCELLATION) at their
+real dates, and emits the FUTURE bookings as `source='stream'`.
+
+### The `source` concept
+
+`fact_booking_events.source` is the only thing that distinguishes a
+backfilled event from a live one:
+
+| `source`  | Written by                                      | When            |
+|-----------|-------------------------------------------------|-----------------|
+| `history` | `scripts/generate_lifecycle_history.py`         | One-shot backfill |
+| `stream`  | `scripts/stream_consumer.py` (via Kafka)        | Continuous, post-anchor |
+
+Analytics queries usually ignore `source` (a checkout is a checkout).
+Operational queries (monitor, lag tracking) filter on it.
+
+---
+
+### `fact_booking_events`
+
+**Purpose:** Append-only silver ledger — one row per lifecycle event.
+**Produced by:** `scripts/generate_lifecycle_history.py` (history) +
+`scripts/stream_consumer.py` (stream).
+**Update cadence:** Bulk-insert at backfill time; continuous from the
+stream consumer thereafter.
+
+#### Schema (as deployed by migration 008)
+
+| Column | Type | Notes |
+|---|---|---|
+| `event_id` | UUID | **PK.** One per event row, regardless of booking. |
+| `event_type` | VARCHAR(20) | `BOOKING` / `CHECKIN` / `CHECKOUT` / `CANCELLATION` (today). Reserved: `PRICE_CHANGE`, `REVIEW`. CHECK constraint enforces allowed set. |
+| `booking_id` | UUID | The booking this event belongs to. Same `booking_id` is repeated across BOOKING + CHECKIN + CHECKOUT (or BOOKING + CANCELLATION). |
+| `customer_id` | VARCHAR(20) | **FK semantics → `dim_customer`** (no FK constraint declared for ingest speed). |
+| `hotel_id` | VARCHAR(20) | **FK semantics → `hotel_master`**. |
+| `city` | VARCHAR(50) | Resolved via `dim_location` at write time. Denormalised so the stream-partition key never needs a runtime join. |
+| `room_type_id` | UUID | **FK semantics → `dim_room_type`**. |
+| `event_ts` | TIMESTAMPTZ | When the event happened in event-time. For history: real `booking_ts` for BOOKING; afternoon of `checkin_date` for CHECKIN; morning of `checkout_date` for CHECKOUT; uniform between booking and check-in for CANCELLATION. |
+| `event_date` | DATE | `event_ts::date`. Indexed; cheap date-range filter. |
+| `checkin_date`, `checkout_date`, `nights`, `num_guests` | — | Same values as the underlying booking. Repeated on every event row for that booking so per-event queries don't need a self-join. |
+| `nightly_rate_inr`, `revenue_inr` | NUMERIC(10,2) | **Invariant on BOOKING rows:** `revenue_inr == nightly_rate_inr × nights`. Asserted in the generator and verified by acceptance. |
+| `booking_source` | VARCHAR(50) | OTA / channel. |
+| `payment_mode` | VARCHAR(20) | `UPI` / `CREDIT_CARD` / `DEBIT_CARD` / `NET_BANKING` / `WALLET`. Synthesised in history (fact_bookings doesn't carry it). |
+| `cancellation_reason` | VARCHAR(40) | Set ONLY on CANCELLATION rows: `customer_cancelled` (~70%) or `no_show` (~30%). |
+| `rating`, `review_channel`, `review_text` | — | Reserved for REVIEW (B-030). Always NULL today. |
+| `old_price_inr`, `new_price_inr` | NUMERIC(10,2) | Reserved for PRICE_CHANGE. Always NULL today. |
+| `source` | TEXT | `'history'` or `'stream'`. CHECK constraint enforced. |
+| `ingested_at` | TIMESTAMPTZ | When the row hit the table. Default `now()`. |
+
+Indexes: `(booking_id)`, `(event_date)`, `(hotel_id)`, `(source)`.
+
+#### Why type-specific columns are nullable
+
+A single events table is the simplest schema that supports every event
+type; nullable columns hold per-type payload. The alternative (one table
+per event type) would force a `UNION ALL` on every analytical query —
+slower to write, slower to teach, slower to query.
+
+---
+
+### `sim_open_bookings`
+
+**Purpose:** Mutable simulator state — the "open" bookings the stream
+producer can advance.
+**Produced by:** `scripts/generate_lifecycle_history.py` (initial seed) +
+`scripts/kafka_event_producer.py` (live mutations as it advances rows).
+**Update cadence:** Continuous while the producer runs; rows are
+deleted as bookings CHECKOUT or CANCEL.
+
+#### Schema (as deployed by migration 008)
+
+| Column | Type | Notes |
+|---|---|---|
+| `booking_id` | UUID | **PK.** Matches the BOOKING event already written to `fact_booking_events`. |
+| `customer_id` | VARCHAR(20) | Real customer from `dim_customer`. |
+| `hotel_id` | VARCHAR(20) | Real hotel from `hotel_master`. |
+| `city` | VARCHAR(50) | Denormalised from `dim_location.city`. |
+| `room_type_id` | UUID | Real room from `dim_room_type` — chosen from the **hotel's own** room types (a Goa hotel's "Sea View" cannot end up on a Jaipur booking). |
+| `checkin_date`, `checkout_date`, `nights`, `num_guests` | — | Schedule of the open booking. **Invariant:** `checkout_date > sim-today` for every row, so the producer always has something to advance toward. |
+| `nightly_rate_inr`, `payment_mode`, `booking_source` | — | Same shape as the BOOKING event. |
+| `state` | TEXT | `'BOOKED'` (awaiting CHECKIN) or `'CHECKED_IN'` (awaiting CHECKOUT). CHECK constraint enforced. |
+| `booked_event_ts` | TIMESTAMPTZ | When the BOOKING event for this row was emitted — handy for "how long has this been open." |
+| `source` | TEXT | Default `'history'`. The producer would set `'stream'` for bookings it creates itself. |
+
+Indexes: `(checkin_date)`, `(checkout_date)`, `(state)`.
+
+#### Why a separate mutable table
+
+`fact_booking_events` is an **immutable** ledger (the audit trail).
+`sim_open_bookings` is **mutable** simulator state (rows deleted on
+CHECKOUT/CANCELLATION). Mixing them would lose the audit trail.
+Same pattern as event-sourcing + a materialised projection.
+
+---
+
+### How history and stream stay aligned
+
+`sim_open_bookings` at startup mirrors the real shape of in-flight
+bookings at the anchor: at `--sim-today 2025-06-01` the seed is ~17K
+rows (~14K BOOKED awaiting CHECKIN; ~3K CHECKED_IN awaiting CHECKOUT)
+— the actual mid-flight backlog that fact_bookings implies. The
+producer can advance the CHECKED_IN slice toward CHECKOUT immediately
+without waiting for new bookings to accumulate. This is the cold-start
+solve that B-034 left open.
+
+The continuity property the generator guarantees: **latest `source='history'`
+`event_date` is at most 7 days before `sim-today`** (acceptance threshold).
+At the default anchor, the latest history event lands on 2025-05-31 —
+1 day before sim-today — so the join from "what just happened" to
+"what's happening now" has no visible void on the monitor or in
+analytical queries.
+
+---
+
+### The sim-clock (`scripts/.sim_clock.json`) and `event_date`
+
+The calendar-replay producer (`scripts/kafka_event_producer.py`,
+B-034A) walks a sim-clock one day at a time. Two pieces of state make
+that work:
+
+**The clock file.** A small JSON file at `scripts/.sim_clock.json`
+(gitignored — local machine state, rebuilt on first run):
+
+```json
+{
+  "last_completed_day": "2025-06-04",
+  "chaos_seed": 42
+}
+```
+
+On startup, the producer reads `last_completed_day` and resumes at
+the next day. If the file is absent (or `--reset-clock` is passed) it
+starts at `--sim-start` (default `2025-06-01`, MUST match the
+generator's anchor). `chaos_seed` is persisted alongside so
+cancellation plans — which are keyed off `f"{booking_id}|{chaos_seed}"`
+— stay deterministic across restarts without the user re-passing the
+flag.
+
+The clock is written at the END of each sim-day, AFTER Kafka flush +
+DB commit. Day boundaries are the atomic commit points; a graceful
+Ctrl-C finishes the in-progress day before exiting.
+
+**`event_date` on the wire.** Every event the producer emits now
+carries TWO timestamps:
+
+| Field | Meaning | Why |
+|---|---|---|
+| `event_ts` | Wall-clock UTC NOW at emit time | Keeps the consumer's event-time windowing, watermarks, and freshness checks unchanged — windows close in seconds, the `/monitor` heartbeat stays "alive." |
+| `event_date` (NEW, additive) | The sim-day the event represents (ISO date) | Carries the *business* date for downstream silver consumers. The consumer's Gate 2 requires only `(event_type, event_ts, city, hotel_id)`; unknown fields pass through harmlessly. |
+
+The split matters because Phase A replays bookings whose
+`checkin_date` / `checkout_date` are in 2025–2026 but `event_ts` is
+"now." Without `event_date`, downstream consumers that care about the
+business day a CHECKIN happened on would have to derive it from the
+booking — fragile and expensive. With `event_date`, it's one column.
+
+**Mutating `sim_open_bookings` live.** The producer treats
+`sim_open_bookings` as live working state: it INSERTs newly-emitted
+BOOKINGs (with `source='stream'`) and DELETEs rows on CHECKOUT or
+CANCELLATION; for CHECKIN it UPDATEs the row to `state='CHECKED_IN'`.
+The generator's `source='history'` rows and the producer's
+`source='stream'` rows live in the same table — the `source` column
+on each row is the only distinguisher, and downstream queries treat
+an open booking the same regardless of source.
+
+The reverse continuity property the producer guarantees: while the
+runway lasts (`booking_ts` in `fact_bookings` reaches 2026-05-16),
+every sim-day produces some new BOOKINGs — about 1,000 per day on
+average — so the stream never goes quiet.
+
+---
+
 ## Streaming Configuration
 
 This file is **not loaded into the DWH**. It configures the Kafka simulator.
@@ -1422,19 +1748,37 @@ For each hotel, every "tick" (e.g. every second):
 3. For each event: draw an event type from the weighted mix below, then for BOOKING/PRICE_CHANGE fill the type-specific extra fields
 4. Publish JSON to Kafka `booking-events` topic
 
+#### Producer model — stateful booking-lifecycle simulator (B-034)
+
+`scripts/kafka_event_producer.py` is a **stateful open-bookings registry simulator**, not a per-tick weighted draw. Each tick:
+
+1. With small probability emits a stateless `PRICE_CHANGE` on a random hotel/room.
+2. Else either **starts a new booking** (mints `booking_id`, picks a real `customer_id` from `data/dim_customer.csv`, emits `BOOKING`, adds the record to an in-memory registry) **or advances a random open booking one step**:
+    - `BOOKED → CHECKIN` (record status flips, stays in registry), or
+    - `BOOKED → CANCELLATION` (probabilistic; reason is `customer_cancelled` or `no_show`, the record is evicted), or
+    - `CHECKED_IN → CHECKOUT` (the record is evicted).
+3. The registry is capped at a soft maximum; when full, every tick is forced to ADVANCE until eviction frees a slot.
+
+**Why this shape:** every `CHECKIN`/`CHECKOUT`/`CANCELLATION` carries a `booking_id` and `customer_id` that traces to a real prior `BOOKING` event in the same stream — joins-by-booking become meaningful. The old stateless model produced uncorrelated wire events.
+
+**New producer input:** `data/dim_customer.csv` (column `customer_id`, ~20K rows). Sampled WITH replacement at booking-start time — repeat customers are realistic and intentional.
+
 #### Event types emitted
 
-The producer's `EVENT_TYPES` / `EVENT_WEIGHTS` arrays (in `scripts/kafka_event_producer.py`) define the live event mix. Weights sum to exactly 1.0:
+Wire `event_type` strings unchanged from the previous mix. Field contract enriched per the simulator above. The consumer treats unknown extra fields harmlessly — no change required on the consume side for the enriched envelope to land cleanly.
 
-| Event type | Weight | Carries extra fields? | Notes |
-|---|---:|---|---|
-| `BOOKING` | 0.55 | yes — `room_type_id`, `revenue_inr`, `nights`, `booking_source` | Headline event. Drives `total_bookings` and `total_revenue_inr` on `agg_hourly_city_stats`. |
-| `CHECKIN` | 0.18 | no — base envelope only | Drives `total_checkins`. Roughly proportional to bookings on a small lag (most bookings eventually check in). |
-| `CHECKOUT` | 0.12 | no — base envelope only | Drives `total_checkouts`. Slightly less than CHECKIN because some bookings cancel or no-show before checkout. |
-| `CANCELLATION` | 0.10 | no — base envelope only | Drives `total_cancellations` (raw count) and feeds `cancellation_rate` (ratio). Matches the ~12% real cancellation rate. |
-| `PRICE_CHANGE` | 0.05 | yes — `room_type_id`, `old_price_inr`, `new_price_inr` | Passes consumer Gate 2 (`VALID_EVENT_TYPES`) but is then silently filtered at Gate 3 (not in `PROCESSED_EVENT_TYPES`). Reserved for a future fact_price_events stream path. |
+| Event type | Extra fields beyond base envelope | Notes |
+|---|---|---|
+| `BOOKING` | `booking_id`, `customer_id`, `room_type_id`, `checkin_date`, `checkout_date`, `nights`, `num_guests`, `nightly_rate_inr`, `revenue_inr`, `booking_source`, `payment_mode` (`PREPAID`/`PAY_AT_HOTEL`) | Headline event. Drives `total_bookings` and `total_revenue_inr` on `agg_hourly_city_stats`. **INVARIANT (asserted in code):** `revenue_inr == nightly_rate_inr * nights`. |
+| `CHECKIN` | `booking_id`, `customer_id` | Drives `total_checkins`. Now traceable to its originating BOOKING. |
+| `CHECKOUT` | `booking_id`, `customer_id` | Drives `total_checkouts`. Same booking_id as the matching CHECKIN. |
+| `CANCELLATION` | `booking_id`, `customer_id`, `cancellation_reason` (`customer_cancelled` or `no_show`) | Drives `total_cancellations` (raw count) and feeds `cancellation_rate` (ratio). Reason is a probabilistic branch decided at cancellation time, not a wall-clock check. |
+| `PRICE_CHANGE` | `room_type_id`, `old_price_inr`, `new_price_inr` (NO `booking_id`, NO `customer_id`) | Stateless operational event on a (hotel, room_type). Passes consumer Gate 2 but is silently filtered at Gate 3 (not in `PROCESSED_EVENT_TYPES`). |
+| `REVIEW` | (planned: `booking_id`, `customer_id`, `rating`, `review_text`, `source`, `travel_type`) | **In the data model, NOT yet emitted (B-030).** The consumer's `VALID_EVENT_TYPES` does not include REVIEW today — emitting it now would quarantine each as `unknown_event_type`. Wiring lands once the consumer accepts REVIEW and routes it to the `total_reviews` column. |
 
-**Base envelope** (every event regardless of type): `event_id`, `event_type`, `hotel_id`, `city`, `event_ts`. `CHECKIN`, `CHECKOUT`, and `CANCELLATION` carry only this envelope — the consumer only needs the city + timestamp to bump the matching count column on `agg_hourly_city_stats`.
+**Base envelope** (every event regardless of type): `event_id` (uuid4), `event_type`, `hotel_id`, `city`, `event_ts` (ISO 8601 UTC, wall-clock now). The Kafka partition key is the city, set from the clean hotel record so chaos-corrupted `city` values don't skew partition distribution.
+
+**Wire-type mix consequence — lifecycle physics shifts the achieved mix.** The old stateless `BOOKING / CHECKIN / CHECKOUT / CANCELLATION / PRICE_CHANGE = 0.55 / 0.18 / 0.12 / 0.10 / 0.05` design cannot be reproduced by a full lifecycle (each booking begets ~1.88 follow-up events). On a fixed-seed 3-min @ 50 evt/s run starting from an empty registry, the producer reproducibly emits approximately **0.47 / 0.27 / 0.17 / 0.04 / 0.05** (transient phase: bookings still accumulating). The *long-run steady-state* mix is approximately **0.33 / 0.29 / 0.29 / 0.04 / 0.05** — but it takes many minutes for the registry to drain to equilibrium. Both numbers are documented in the producer's module docstring; the acceptance test uses the short-run target with a ±5pp tolerance band.
 
 #### Producer & consumer CLI
 
@@ -1574,6 +1918,99 @@ GROUP BY 1, 2 ORDER BY 1, 2;
 | Geo flow maps | `fact_bookings` + `dim_customer` → `ref_state_centroids` + `dim_location` | (same) |
 
 **Rule of thumb:** if a Gold table exists for your query, use it. It's 10-100x faster than aggregating raw facts on every request. The fallback column shows what you'd join in Phase 1 before Gold tables exist.
+
+---
+
+## Schema Evolution
+
+Numbering starts at **003** because 001 and 002 were folded into the
+initial `db/schema.sql` (the frozen 14-table star schema). From 003
+onward, every structural change ships as a numbered, append-only file
+in `db/migrations/` — that directory plus `db/schema.sql` together are
+the source of truth.
+
+| #   | What it changed (plain language)                                                                       | Phase / feature                  | Backlog ID |
+|-----|--------------------------------------------------------------------------------------------------------|----------------------------------|------------|
+| 003 | `dashboard_widgets` table — pinned widgets + prompts + refresh schedule                                | Phase 5 — Dashboard              | (B-008)    |
+| 004 | `dashboard_widgets.width` column — Normal / Full layout                                                | Phase 5 — Dashboard polish       | (B-012)    |
+| 005 | `dashboard_widgets.generated_sql` + `last_result_json` — frozen SQL + JSONB result cache               | Phase 5 — Dashboard read-path    | B-022      |
+| 006 | `hotel_master.opened_year` column — fixes L-010 entity-count confusion                                 | Phase 4 — SQL prompt fix         | (L-010)    |
+| 007 | `pipeline_metrics` heartbeat table + 4 new count columns on `agg_hourly_city_stats` (checkins/checkouts/cancellations/reviews) | Phase 7 / Phase 2 hardening      | B-032      |
+| 008 | Lifecycle event tables (`fact_booking_events` + `sim_open_bookings`) for the streaming redesign        | Phase 2 — Streaming lifecycle    | B-035      |
+| 009 | Gold lifecycle layer: `ingest_seq` cursor column on `fact_booking_events` + `fact_booking_lifecycle` gold table (one row per booking_id, forward-only status machine, `illegal_transition_flag`, `source_mix`) + `gold_watermark` single-row cursor table | Phase 2 — Gold layer | B-040      |
+
+---
+
+## Gold Lifecycle Layer (migration 009, B-040)
+
+The gold layer materialises one row per `booking_id` from the silver event ledger (`fact_booking_events`). A separate ~1-min micro-batch process (`scripts/gold_lifecycle_updater.py`) — decoupled from the consumer so gold latency never back-pressures the silver accept path — reads silver events in `ingest_seq` order, applies a forward-only status machine, and upserts to the gold table.
+
+### `fact_booking_lifecycle` — one row per booking
+
+| Column | Type | Notes |
+|---|---|---|
+| `booking_id` | UUID PK | One row per booking |
+| `customer_id` | VARCHAR(20) | From the BOOKING event |
+| `hotel_id` | VARCHAR(20) | From the BOOKING event |
+| `room_type_id` | UUID | From the BOOKING event |
+| `city` | VARCHAR(50) | From the BOOKING event |
+| `booking_ts` | TIMESTAMPTZ | event_ts of the BOOKING event |
+| `booking_date` | DATE | event_date (sim-day) of BOOKING |
+| `checkin_ts` | TIMESTAMPTZ | event_ts of the CHECKIN event |
+| `checkin_date` | DATE | event_date of CHECKIN |
+| `checkout_ts` | TIMESTAMPTZ | event_ts of the CHECKOUT event |
+| `checkout_date` | DATE | event_date of CHECKOUT |
+| `cancellation_ts` | TIMESTAMPTZ | event_ts of the CANCELLATION event |
+| `cancellation_date` | DATE | event_date of CANCELLATION |
+| `nights` | SMALLINT | From BOOKING |
+| `num_guests` | SMALLINT | From BOOKING |
+| `nightly_rate_inr` | NUMERIC(10,2) | From BOOKING |
+| `revenue_inr` | NUMERIC(10,2) | From BOOKING |
+| `booking_source` | VARCHAR(50) | From BOOKING |
+| `payment_mode` | VARCHAR(20) | From BOOKING |
+| `cancellation_reason` | VARCHAR(40) | From CANCELLATION |
+| `current_status` | VARCHAR(20) NOT NULL | Forward-only: BOOKED → CHECKED_IN → COMPLETED / CANCELLED |
+| `outcome` | VARCHAR(15) | in_progress / completed / cancelled / no_show |
+| `illegal_transition_flag` | BOOLEAN NOT NULL | TRUE when a genuine business-domain timestamp inversion is detected (e.g. checkout.event_ts < checkin.event_ts). NOT triggered by processing-order artifacts from heap scan or bulk INSERT ordering. |
+| `source_mix` | VARCHAR(10) | history / stream / mixed — which source(s) contributed events |
+| `event_count` | INT NOT NULL | Total silver events applied to this row |
+| `first_event_ts` / `last_event_ts` | TIMESTAMPTZ | Timestamp range of all applied events |
+| `last_updated` | TIMESTAMPTZ NOT NULL | Timestamp of last gold upsert |
+
+**Status machine (forward-only — never regresses):**
+- `BOOKED` (0) → `CHECKED_IN` (1) → `COMPLETED` (2) on CHECKOUT
+- `BOOKED` (0) → `CANCELLED` (2) on CANCELLATION
+- `CHECKED_IN` (1) → `CANCELLED` (2) on CANCELLATION
+
+**Excluded from gold:** `PRICE_CHANGE` (no booking_id) and `REVIEW` (hotel-level, not per-booking lifecycle).
+
+**`illegal_transition_flag` semantics:** fires on BUSINESS-DOMAIN inversions detected from `event_ts` (business timestamp in history data, wall-clock in stream data):
+- CHECKOUT: fires if `checkout.event_ts < checkin.event_ts`, OR if a CANCELLATION was already recorded (mutually exclusive outcomes)
+- CHECKIN: fires if `checkin.event_ts < booking.event_ts`
+- CANCELLATION: fires if a CHECKOUT was already recorded
+
+Processing-order artifacts (e.g. CHECKOUT getting a lower `ingest_seq` than BOOKING because the history generator bulk-inserted event types in separate passes) do NOT set this flag.
+
+### `gold_watermark` — single-row cursor
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | INT PK | Always 1 (single-row constraint) |
+| `last_ingest_seq` | BIGINT NOT NULL | Last `ingest_seq` committed to gold; 0 on fresh table |
+| `updated_at` | TIMESTAMPTZ NOT NULL | Timestamp of last watermark advance |
+
+The updater reads `WHERE ingest_seq > last_ingest_seq`, processes a batch, upserts gold, then advances the watermark — all in one atomic commit. On restart it resumes from the committed watermark.
+
+### `ingest_seq` cursor on `fact_booking_events`
+
+Added by migration 009: `BIGINT GENERATED BY DEFAULT AS IDENTITY`. Existing rows were auto-filled by PostgreSQL in heap scan order (not `ingested_at` order — the intended backfill UPDATE was a no-op because PostgreSQL already auto-assigned values on `ADD COLUMN`). New stream inserts auto-increment from the sequence. An index on `ingest_seq` makes the `WHERE ingest_seq > watermark ORDER BY ingest_seq LIMIT batch` query efficient.
+
+### Gold updater operational notes
+
+- **One instance at a time** — concurrent instances will deadlock on the `fact_booking_lifecycle` PK; run exactly one.
+- **Configurable via env:** `GOLD_INTERVAL_SECONDS` (default 60), `GOLD_BATCH_SIZE` (default 5000).
+- **Deadlock resilience:** on `DeadlockDetected`, the updater rolls back the current batch, logs the error, sleeps 10s, and retries from the committed watermark.
+- **Run via:** `python -m scripts.gold_lifecycle_updater`
 
 ---
 

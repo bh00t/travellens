@@ -5,6 +5,72 @@
 
 ---
 
+## Status at a glance
+
+**Legend.** `B-NNN` = work item (something we plan to build or fix). `L-NNN` =
+known limitation (something the system does today that we accept, work around,
+or have a planned remedy for). Done items live in the [Completed](#completed)
+table — that's the canonical source of done-state; the per-item sections below
+carry context only.
+
+### OPEN — work items (B-)
+
+- B-003a — `_validate_columns` misses bare WHERE refs on single-table queries (low)
+- B-005 — prompt normalisation before routing
+- B-006 — semantic search duplicate reviews (resolves L-003)
+- B-013 — `daily_hotel_kpi` DAG (Phase 6)
+- B-014 — `reconcile_late_events` DAG (Phase 6)
+- B-015 — `hotel_sentiment_scores` DAG (Phase 6)
+- B-016 — `customer_ltv` DAG (Phase 6)
+- B-017 — LLM comparison: Qwen2.5-Coder-7B vs Gemma 3 12B
+- B-020 — change chart type from the dashboard
+- B-021 — drag-and-drop reordering — polish (core done)
+- B-022 — decouple read path from compute (cache + frozen SQL)
+- B-023 — About page redesign
+- B-024 — `refresh_pinned_widgets` DAG (Phase 6, compute path for B-022)
+- B-025 — fixed-height scrollable table / review widgets
+- B-026 — sentiment classification for reviews (resolves L-012)
+- B-028 — `run.py` dev launcher (built; not yet committed / verified)
+- B-030 — REVIEW as a stream event (feature gap; not urgent)
+- B-031 — consumer resilience fix (L-016; fix shipped, pending live verification)
+- B-033 — `quarantine_daily_rollup` DAG (Phase 6; self-healing daily summary)
+- B-034 — stateful lifecycle simulator — step 1 shipped, superseded by B-035 + B-036/B-037 (kept for context)
+- B-036 — calendar simulator Phase B (net-new synthetic + 10–25% long-stay tail)
+- B-037 — calendar simulator Phase C (REVIEW emission)
+- ~~B-040 — gold layer (per-booking lifecycle reconstruction + transition flags)~~ ✓ Done
+- B-041 — producer rate-flag migration (run.py / README:101 `--rate` → `--sim-speed`; phase-7-monitor.md CHECKOUT "design weight 0.12" copy → calendar-replay language)
+
+### OPEN — limitations (L-)
+
+- L-001 — `agg_daily_hotel_kpi` empty until Phase 6 DAGs run
+- L-003 — duplicate reviews in `reviews_raw` from Kaggle dataset
+- L-004 — Ollama SQL accuracy ~85–90% on real analytical queries
+- L-005 — IVFFlat recall degrades past ~1M vectors
+- L-006 — no Airflow orchestration yet (Phase 6)
+- L-007 — streaming events are synthetic, not from a real PMS
+- L-008 — flash attention not compiled in torch (CPU fallback)
+- L-009 — dashboard read path triggers LLM/SQL compute (B-022 in flight)
+- L-011 — 7B model omits `DISTINCT` on plain entity-list queries
+- L-012 — sentiment-topic conflation in semantic review search
+- L-013 — bare grouped aggregations occasionally drop `WHERE NOT is_cancelled`
+- L-016 — consumer never flushes under sustained load (fix shipped, pending verification)
+
+### DONE
+
+See the [Completed](#completed) table at the bottom of this file. Currently
+holds B-001..B-004, B-007..B-012, B-018, B-019, B-027, B-029, B-032, B-035,
+B-034A (calendar simulator Phase A), B-038 (bronze sink), B-039 (silver
+sink), B-040 (gold lifecycle layer), B-042 (monitor quarantine date scoping),
+plus the unnumbered Phase 1–5 foundation items.
+
+### ABANDONED
+
+None to date. (When an item is abandoned, strike through its header and add an
+"Abandoned: <reason>" line — keep the body for context per the "never delete"
+rule.)
+
+---
+
 ## Phase 4 Hardening — Query Engine
 
 These must be resolved before the dashboard is reliable. A wrong query = wrong widget = misleading dashboard.
@@ -472,8 +538,8 @@ back; under a 2-min test window everything late-injected lands far past the wate
 
 ---
 
-### ~~B-029 — `/monitor` auto-refresh (no manual reload)~~ — **SHIPPED**
-**Status:** ✓ COMPLETE — see Completed table. Resolved by the Chunk 4 redesign:
+### B-029 — `/monitor` auto-refresh (no manual reload)
+**Status:** ✓ Done — see [Completed](#completed) table. Resolved by the Chunk 4 redesign:
 landed straight at B-029b (the smoother JSON+JS variant, skipping B-029a's
 full-page reload as unnecessary now that B-032 was landing in the same change).
 `render/server.py` exposes `GET /monitor/data` returning the live + stream +
@@ -485,8 +551,8 @@ update in place without reload.
 
 ---
 
-### ~~B-032 — Live pipeline metrics (real-time throughput; resolves L-015)~~ — **SHIPPED** ⭐
-**Status:** ✓ COMPLETE — see Completed table. All 4 chunks delivered.
+### B-032 — Live pipeline metrics (real-time throughput; resolves L-015)
+**Status:** ✓ Done — see [Completed](#completed) table. All 4 chunks delivered.
 - **Chunk 1 — migration** ✓ `db/migrations/007_pipeline_live_metrics.sql` —
   `pipeline_metrics` table + 4 new count columns on `agg_hourly_city_stats`.
 - **Chunk 2 — consumer** ✓ `scripts/stream_consumer.py` processes CHECKIN +
@@ -534,6 +600,531 @@ real-time.
 
 ---
 
+### B-035 — Lifecycle history backfill — time-partitioned real model (step 2 of B-034)
+**Status:** ✓ Done — see [Completed](#completed) table.
+**Priority:** High — unblocks the calendar simulator that advances `sim_open_bookings` over time, and gives analytics a fully populated event ledger before the first live event flies.
+**Origin:** B-034 step 1 left two cold-start gaps. (a) `fact_booking_events` was empty, so per-event analytics had nothing to read. (b) The stream simulator had no `sim_open_bookings` to advance.
+**Revision history:**
+- **First cut** sampled the oldest 250K bookings (`ORDER BY booking_ts LIMIT N`) and synthesised the open backlog with new UUIDs. Two problems: (i) history stopped at 2024-12-20 — a 17-month void between latest history and "today"; (ii) backlog bookings were invented, breaking the "every open booking is a real booking" property the simulator needs to replay realistically.
+- **This revision** processes ALL of `fact_bookings` in a single sweep and time-partitions every row against `--sim-today`. No sampling, no synthesis. The "open backlog" is now the real bookings that were in-flight at the anchor; the "future" is real bookings whose `booking_ts` is on/after the anchor — exactly what the stream simulator will replay later.
+**What landed:**
+- **Migration `db/migrations/008_lifecycle_events.sql`** — `fact_booking_events` (silver event ledger) + `sim_open_bookings` (mutable simulator state). Unchanged from the first cut.
+- **`scripts/generate_lifecycle_history.py`** — fully rewritten. CLI shrunk to `--sim-today` (default `2025-06-01`) and `--reset / --no-reset` (default reset). The old `--history-bookings` and `--open-backlog` flags are gone — there is no sampling and no synthesised backlog. Every function carries a docstring (verified: 13 / 13).
+- **Routing model (one sweep over fact_bookings, ORDER BY booking_ts):**
+  - `booking_ts >= sim_today` → **FUTURE** — skip; reserved for the stream simulator to replay later. Count and report range.
+  - `booking_ts < sim_today` AND `checkout_date < sim_today` → **COMPLETED** — emit `BOOKING + CHECKIN + CHECKOUT` (or `BOOKING + CANCELLATION` if `is_cancelled`).
+  - `booking_ts < sim_today` AND `checkin_date < sim_today <= checkout_date` → **IN_PROGRESS** — emit `BOOKING + CHECKIN` as history, insert `sim_open_bookings` state `CHECKED_IN`. Guest is mid-stay at the anchor; `is_cancelled` flag intentionally ignored here.
+  - `booking_ts < sim_today` AND `checkin_date >= sim_today` → **BOOKED** — emit `BOOKING` as history, insert `sim_open_bookings` state `BOOKED`. Cancellation (if any) happens "later" — the simulator can fire it as time advances.
+- **Realism guards (skip-or-fix, never silently corrupt):** `checkout > checkin` (gap ≥ 1 night); `1 ≤ nights ≤ 60`; `booking_ts ≤ checkin_date`; `1 ≤ num_guests ≤ 10`. Skipped rows counted by reason. If `nights_stayed` disagrees with `checkout-checkin`, trust the gap, recompute `revenue = nightly_rate × gap`, and count the mismatch (don't drop the row).
+- **`--reset`** still deletes ONLY `source='history'`; never touches `source='stream'`. RNG seed pinned (`20260601`) so idempotent reruns reproduce identical counts.
+- **Stats summary (full sweep, sim-today=2025-06-01, runtime ~120s on the dev box):**
+  - 1,000,000 fact_bookings rows seen → 612,380 processed (kept), 0 skipped (real data is clean), 0 nights mismatches, 387,620 FUTURE (skipped — reserved for the stream).
+  - Buckets: COMPLETED 595,192 (of which 524,935 completed, 70,257 cancelled — 11.8% cancellation rate matches `fact_bookings`); IN_PROGRESS 2,995; BOOKED 14,193.
+  - Future booking_ts range: 2025-06-01 → 2026-05-16 (~11.5 months of real runway for the stream).
+  - 1,735,502 events written (BOOKING 612,380 / CHECKIN 527,930 / CHECKOUT 524,935 / CANCELLATION 70,257).
+  - History `event_date` range: 2023-09-03 → 2025-05-31 — **latest is 1 day before sim-today, CONTINUITY satisfied** (no void).
+  - Open backlog: 17,188 rows (14,193 BOOKED + 2,995 CHECKED_IN). All real fact_bookings IDs.
+  - 1,908 / 2,000 hotels (95.4%); 20,000 / 20,000 customers (100%).
+  - Nights histogram (kept bookings): 1–3 nights 368,379 (60.2%); 4–7 nights 238,858 (39.0%); 8–14 nights 5,143 (0.8%); 15–30 nights 0; 31–60 nights 0. Reflects fact_bookings' own distribution (business 1–2 nights, honeymoon up to 7, near-zero long-stay tail).
+  - Realism: nights min/median/mean/max 1/3.0/3.33/10; lead time 0/14/18.70/120 days; num_guests 1/2/4; nightly_rate ₹235 / ₹4,057 / ₹65,055.
+- **Acceptance (TEST | EXPECTED | ACTUAL | PASS):** **15 / 15 PASS**.
+  - keys resolve (customer/hotel/room) — 0/0/0 orphans; CHECKIN/CHECKOUT/CANCEL has matching BOOKING — 0 dangling.
+  - revenue == nightly_rate × nights — 0 mismatches.
+  - REALISM: 0 events with `checkout ≤ checkin`; 0 with `nights ∉ [1,60]`; 0 BOOKING events with `event_date > checkin_date`; 0 events with `num_guests ∉ [1,10]`.
+  - CONTINUITY: gap (sim-today − latest history event_date) = **1 day** (≤ 7-day threshold).
+  - BACKLOG REAL: every `sim_open_bookings.booking_id` exists in `fact_bookings` — 0 synthesised.
+  - No `source='history'` event_date > sim-today — 0.
+  - DOCS: 13 functions, 13 documented (100%).
+  - Idempotent rerun: identical counts (1,735,502 history / 17,188 open) AND pre-seeded `source='stream'` dummy preserved.
+
+**Files:** `db/migrations/008_lifecycle_events.sql`, `scripts/generate_lifecycle_history.py` (rewritten), `datamodel.md`, `docs/phase-2-streaming.md`, `docs/session-notes.md`, `CLAUDE.md`, this file.
+
+**Next step (deliberately NOT in B-035):** calendar simulator. As live time advances past `sim-today`, replay the 387,620 FUTURE bookings from `fact_bookings` (sorted by `booking_ts`) as `source='stream'` BOOKING events, AND advance the real backlog in `sim_open_bookings` toward CHECKIN/CHECKOUT/CANCELLATION at their real dates. Both halves share the same `--sim-today` anchor as this script. Tracked as B-034A (Phase A) below.
+
+---
+
+### B-034A — Calendar simulator, Phase A (replay engine) ✓ DONE
+**Origin:** the "next step" of B-035. Replaces the stateful-lifecycle producer
+(B-034 step 1) with a calendar-driven REPLAY engine that walks `--sim-start`
+forward one day at a time, emitting BOOKINGs from `fact_bookings.booking_ts`
+order and advancing the real `sim_open_bookings` backlog through CHECKIN /
+CHECKOUT / CANCELLATION at the real dates each booking carries. Deferred to
+Phases B and C: net-new synthetic bookings + long-stay tail (**B-036**) and
+REVIEW emission once the consumer accepts REVIEW (**B-037**).
+
+**What landed:**
+- `scripts/kafka_event_producer.py` fully rewritten as the calendar replay
+  simulator. Same five wire `event_type` strings, same Kafka config
+  (`acks="all"`, `linger_ms=20`, bytes-pass-through serializer, `key=city`).
+  ONE new wire field: `event_date` (ISO date — the sim-day the event
+  represents). `event_ts` stays wall-clock UTC NOW so the consumer's
+  event-time windowing and freshness checks behave identically.
+- **Sim-clock** persisted to `scripts/.sim_clock.json` (gitignored). On
+  startup the producer resumes at `last_completed_day + 1`, or starts at
+  `--sim-start` (default `2025-06-01`, MUST match the history generator)
+  if the file is absent or `--reset-clock` is passed. `--chaos-seed` is
+  ALSO persisted to the clock file so cancellation plans stay
+  deterministic across restarts without re-passing the flag.
+- **Hydration** on startup reads `sim_open_bookings` (every booking
+  in-flight at the anchor — generator-emitted BOOKING already on the
+  wire as `source='history'`), JOINs `fact_bookings` to recover
+  `is_cancelled` (NOT a column on `sim_open_bookings`), and schedules
+  cancellation events for the BOOKED-and-is_cancelled subset. CHECKED_IN
+  rows ignore `is_cancelled` per the B-035 design — their CHECKIN was
+  already emitted as history; they will check out on their real date.
+- **Per sim-day D** the producer collects four query results and
+  shuffles them deterministically before emitting (seed:
+  `f"day|{D}|{chaos_seed}"`):
+  1. CANCELLATIONS planned for D (from prior days' BOOKINGs or
+     hydration). Plan is keyed off `f"{booking_id}|{chaos_seed}"` —
+     ~70% `customer_cancelled` on a day in `[max(booking_ts, sim_start),
+     checkin_date - 1]`, ~30% `no_show` on `checkin_date`.
+  2. NEW bookings — `fact_bookings WHERE booking_ts::date = D`, emitted
+     in `booking_ts` order. Inserted into `sim_open_bookings` as
+     `source='stream'` state `BOOKED` UNLESS same-day cancellation
+     (don't persist, emit BOOKING+CANCELLATION pair).
+  3. CHECKINs — open BOOKED rows with `checkin_date = D`. UPDATE state
+     to `CHECKED_IN`.
+  4. CHECKOUTs — open CHECKED_IN rows with `checkout_date = D`. DELETE.
+  Plus a handful of stateless PRICE_CHANGE events (default 5/day, no
+  `booking_id`/`customer_id` — preserved unchanged).
+- **Day boundaries are atomic commit points.** Within a day the
+  producer mutates `sim_open_bookings` uncommitted; at end of day it
+  flushes Kafka → commits the DB → saves the clock. SIGINT clears the
+  running flag but the day-loop only checks BETWEEN days, so a
+  graceful Ctrl-C finishes the in-progress day before exiting.
+- **Outcome fidelity** comes from `fact_bookings.is_cancelled`, NOT
+  from a random draw. An is_cancelled booking emits CANCELLATION and
+  never CHECKIN/CHECKOUT; a non-cancelled booking emits BOOKING + (on
+  checkin_date) CHECKIN + (on checkout_date) CHECKOUT.
+- **Revenue invariant** `revenue_inr == nightly_rate_inr * nights`
+  asserted on every BOOKING. When `fact_bookings.nights_stayed`
+  disagrees with `checkout - checkin`, the producer trusts the gap and
+  recomputes — same rule the history generator (B-035) follows.
+- **Wire types unchanged → consumer unchanged.** Gate 2's required
+  fields (`event_type, event_ts, city, hotel_id`) are all present;
+  `event_date` is additive and ignored by the consumer.
+- **REVIEW deferred to B-037.** Emitting it now would route every one
+  to `unknown_event_type` quarantine — the consumer's
+  `VALID_EVENT_TYPES` still excludes it (B-030).
+- **Backward-compat shims.** The deprecated `--rate` and `--duration`
+  flags are accepted-and-ignored with a warning so `run.py` (which
+  still passes `--rate`) keeps working until its next pass.
+
+**Acceptance (21 checks, all PASS):**
+- Hydration: 17,188 rows loaded (14,193 BOOKED + 2,995 CHECKED_IN);
+  1,229 cancellations planned.
+- Clock resumes correctly across restarts (saved+1).
+- No-chaos 4-day slice: 9,942 events emitted; consumer ingested all
+  9,942 with **0 malformed / 0 late**; 44 windows flushed; per-type
+  agg sums (`total_bookings 3,034 / total_checkins 2,790 /
+  total_checkouts 3,397 / total_cancellations 701`) match producer
+  wire counts **exactly**.
+- Quarantine S3 delta = 0 on clean run.
+- LINKAGE: 0 / 2,529 lifecycle booking_ids absent from `fact_bookings`;
+  0 booking_ids with both CHECKOUT and CANCELLATION; 0 duplicate
+  `(booking_id, event_type)` pairs.
+- OUTCOME FIDELITY: 108 is_cancelled BOOKINGs in capture, 0 of them
+  got CHECKIN or CHECKOUT. Cancellation reasons split into both
+  `customer_cancelled` and `no_show`.
+- FIELDS: 3,402 / 3,402 events carry `event_ts` AND `event_date`; 0
+  events have `event_ts` outside ±10 min of wall-clock now; 0 / 5
+  PRICE_CHANGE carry `booking_id`/`customer_id`; 0 / 868 BOOKING
+  violate the revenue invariant; 0 / 2,529 lifecycle events missing
+  `booking_id`/`customer_id`; 0 / 178 CANCELLATION missing reason.
+- STATE: 4,563 new `source='stream'` rows inserted; sim_open_bookings
+  shrank from 17,188 to 16,046 over 7 sim-days; deltas reconcile with
+  emitted counts.
+- RESTART: re-run with same `--until` after a completed slice → 0
+  events, clock unchanged. Re-run with new `--until` → resumes at
+  saved+1.
+- CHAOS: producer chaos counts (229 malformed: 59 unknown_city + 49
+  unparseable_json + 46 unparseable_event_ts + 39 missing_field + 36
+  unknown_event_type, 94 late) match consumer's run summary **exactly**;
+  `malformed_events/` S3 prefix gained 229 objects, `late_events/`
+  gained 94. Reproducible with `--chaos-seed 42`.
+
+**Files touched:** `scripts/kafka_event_producer.py` (rewritten),
+`scripts/.sim_clock.json` (new, gitignored), `.gitignore`,
+`datamodel.md`, `docs/phase-2-streaming.md`, `docs/session-notes.md`,
+`CLAUDE.md`, this file.
+
+**Next:** **B-036** wires net-new synthetic bookings + a 10–25%
+long-stay tail (real `fact_bookings` has near-zero stays >7 nights).
+**B-037** turns REVIEW emission on after the consumer accepts REVIEW
+(closes B-030 in tandem). Neither is in B-034A's scope.
+
+---
+
+### B-036 — Calendar simulator, Phase B (net-new synthetic + long-stay tail)
+**Priority:** Medium — depends on B-034A (done).
+**Problem (and why it isn't fixed in Phase A):** Phase A REPLAYS the real
+runway. That gives perfect fidelity for outcomes, dates, and customer
+linkage — but it inherits `fact_bookings`' own distribution shape. Two
+gaps follow:
+  - **Stays >7 nights are near-zero** in `fact_bookings` (the B-035 stats
+    block shows 60.2% short / 39.0% mid / 0.8% in 8–14 nights / 0% above).
+    Real hospitality has a 10–25% long-stay tail (extended stays, leisure
+    weeks, religious tours). The replay can't synthesise what isn't there.
+  - When the runway is exhausted (~2026-05), the simulator's BOOKING
+    stream stops cold. The hydrated backlog still drains, but no new
+    bookings fire after that point.
+**Fix sketch:** alongside the runway replay, mint a small synthetic
+stream — same wire shape as Phase A's BOOKING events, but with
+synthetic `booking_id`s (clearly distinguishable, e.g. `SIM-` prefix
+or recorded as `source='synthetic'` on `fact_booking_events` later)
+and a separate long-stay distribution (lognormal centred near 10–14
+nights with a tail to 30 nights). Tunable mix ratio: target ~10–25%
+of total new-booking volume. Synthetic bookings should NOT write to
+`fact_bookings` (that table is the original-source historical record);
+they MAY write to `sim_open_bookings` for lifecycle progression, with
+`source='synthetic'`. Outcome (is_cancelled) is a draw with the same
+prior as `fact_bookings` (~11.8% cancellation rate).
+**Acceptance (sketch):** A 14-sim-day run produces a stay-length
+histogram with the 10–25% tail visible above 7 nights; the consumer
+still drops 0 events; the synthetic booking_ids never collide with
+fact_bookings UUIDs; cancellation reason split holds.
+**Out of scope:** REVIEW (B-037).
+
+---
+
+### B-037 — Calendar simulator, Phase C (REVIEW emission, resolves B-030)
+**Priority:** Medium — depends on B-034A (done) AND on the consumer
+accepting REVIEW (the consumer half of B-030).
+**Sequencing:** consumer first. Today `VALID_EVENT_TYPES` does NOT
+include `REVIEW`; emitting it from the producer routes every one to
+`unknown_event_type` quarantine. The consumer change extends the
+allow-list, adds a `PROCESSED_EVENT_TYPES` branch that writes
+`total_reviews` on the `agg_hourly_city_stats` upsert (the column
+already exists per migration 007), and ideally embeds-at-ingest.
+**Producer side:** once the consumer accepts REVIEW, the producer
+fires REVIEW at the right lifecycle point — POST-CHECKOUT, on the
+checkout sim-day or a few days after, with sampled real Kaggle review
+text per B-030's notes (real-text trade-off: generated text is weak
+for semantic search; sampling real text gives hotel-level correlation
+AND real language). Probabilistic: not every checkout produces a
+review (a small share, ~10–20%, matches real OTA review rates).
+**Acceptance (sketch):** Some bookings produce a REVIEW after
+CHECKOUT; the consumer counts them in `total_reviews`; the
+`/monitor` SOON tile for Review goes live; downstream
+`review_embeddings` regeneration covers stream-emitted reviews when
+re-run.
+**Closes B-030** when both halves ship.
+
+---
+
+### B-038 — Bronze sink: durable raw archive of every accepted event ✓ DONE
+**Origin:** the streaming pipeline had three persistent outputs — the
+agg UPSERT (lossy: derived totals only), the agg Parquet archive
+(lossy: aggregate rows, not events), and the two quarantine prefixes
+(only events that FAILED a gate). Nothing kept an immutable copy of
+the events that succeeded. Per-event analytics, replay testing, and
+the planned silver layer all need that raw archive. B-038 fills the
+gap.
+
+**What landed in `scripts/stream_consumer.py`:**
+- New `bronze_flush(buffer, metrics)` function. Serialises the buffer
+  to JSONL bytes (one event per line, many events per file) and writes
+  one S3 object per call. Wrapped in its own try/except — any failure
+  logs to stderr, increments `bronze_failures`, and returns an empty
+  buffer (best-effort-durable; dropping a batch is preferable to
+  retrying indefinitely and leaking memory if MinIO is unreachable).
+- Bronze buffer lives in `main()`; events are appended right after
+  Gate 4 (the late-event guard) passes, BEFORE the window accumulator
+  is touched. The buffer flushes when EITHER (a) it hits
+  `BRONZE_BUFFER_CAP` events (default 500, env-overridable) OR (b)
+  the existing `FLUSH_CHECK_SECONDS` periodic tick fires — whichever
+  comes first. Final drain on graceful shutdown.
+- S3 key:
+  `raw_events/year=YYYY/month=MM/day=DD/hour=HH/HHMMSS_<uuid8>.jsonl`,
+  partitioned by INGEST wall-clock time (same convention as
+  `quarantine_event`'s `malformed_events/` and `late_events/`
+  prefixes). NOT event-time — bronze is "what arrived," operationally
+  indexed; event-time partitioning would put chaos-late events into
+  past-dated folders.
+- Counters: `bronze_events`, `bronze_files`, `bronze_bytes`,
+  `bronze_failures` added to `run_metrics`; shutdown summary prints
+  `Bronze archived: N events (F files, B KB)` and a TODO-style line
+  if any flush failed.
+
+**What did NOT change:** the agg UPSERT, the agg Parquet sink, the
+heartbeat, the quarantine sinks, and the window logic are all
+untouched. Bronze sits alongside them as a fourth sink, parallel to
+agg.
+
+**Acceptance (7/7 PASS — full table in this session's report):**
+- A. Clean run: bronze 7,453 = accepted (BOOKING 2,177 + CHECKIN
+  2,094 + CHECKOUT 2,606 + CANCELLATION 576); events_consumed 7,468 =
+  bronze + 15 PRICE_CHANGE (Gate-3 silent filter).
+- B. Chaos run: bronze 4,459 + malformed 228 + late 96 + 9
+  PRICE_CHANGE = 4,792 emitted; 0 quarantined events appear in
+  `raw_events/` (audit across 11,912 bronze events: 0 missing
+  required fields, 0 PRICE_CHANGE, 0 event_ts outside ±1h of
+  wall-clock now).
+- C. Fidelity: every sampled BOOKING / CHECKIN / CHECKOUT /
+  CANCELLATION carries the full wire payload including `event_ts`
+  (wall-clock) and `event_date` (sim-day). CANCELLATION carries
+  `cancellation_reason`. PRICE_CHANGE absent (filtered at Gate 3,
+  never reaches bronze).
+- D. Partitioning: all 32 files under
+  `raw_events/year=YYYY/month=MM/day=DD/hour=HH/`.
+- E. Batching: 32 files, 6,989 B → 184,530 B; cap-triggered batches
+  are ~170 KB (500 events), tick-triggered batches are smaller.
+  Never one-per-event, never one-giant-file.
+- F. Isolation: forced via `S3_BUCKET=does-not-exist-isolation-test`.
+  6 bronze flushes failed (logged "✗ Bronze sink error (N events
+  dropped): NoSuchBucket"); despite that, Postgres agg upsert
+  succeeded for all 44 windows, pipeline_metrics heartbeat wrote 6
+  rows, the consumer consumed all 2,430 events and exited cleanly
+  with the gap reported in its shutdown summary.
+- G. No regression: per-type agg sums across both runs match bronze
+  type counts exactly (BOOKING 3,692 / CHECKIN 3,390 / CHECKOUT
+  4,019 / CANCELLATION 811); heartbeat firing every ~10s (46 rows /
+  10:43); 88 windows flushed.
+
+**Files touched:** `scripts/stream_consumer.py` (additive — no
+existing sink modified). Docs same turn:
+`docs/backlog.md` (this entry; B-039/B-040 reserved),
+`CLAUDE.md` (consumer sinks list updated, common-mistakes row),
+`datamodel.md` (medallion section — bronze raw_events/ documented),
+`docs/phase-2-streaming.md` (POST-ACCEPTANCE HARDENING bullet).
+
+**Next:** **B-039** (silver — parse + dedupe bronze JSONL into a
+typed `fact_booking_events source='stream'` ledger) and **B-040**
+(gold — per-booking lifecycle reconstruction + transition-flag
+counts) build on bronze. Bronze is the durable input both depend
+on; closing the loop on D from the Phase-A read-only assertions
+("live-stream per-event ordering proof").
+
+---
+
+### B-039 — Silver layer: per-event ledger in fact_booking_events ✓ DONE
+**Origin:** B-038 gave us a durable bronze archive but bronze is
+JSON-on-S3 — wrong shape for per-event analytics. Silver writes the
+SAME events to `fact_booking_events` (typed, indexed, source='stream'),
+alongside the `source='history'` rows the generator (B-035) writes.
+The schema is shared; the `source` column is the only distinguisher.
+The original B-039 design called for an Airflow DAG that batched
+bronze → silver overnight; this revision **writes silver inline on
+the accept path** instead, so per-event analytics are live, not
+T-minus-one-day.
+
+**What landed in `scripts/stream_consumer.py`:**
+- New `silver_flush(buffer, metrics)` and `_silver_row(event)` helpers.
+  Buffer fills inline on the accept path, flushes on
+  `SILVER_BUFFER_CAP` (default 500) OR the existing `FLUSH_CHECK_SECONDS`
+  tick OR graceful shutdown — mirrors bronze exactly.
+- Per-type field mapping in `_silver_row`:
+    - BOOKING: full booking payload (booking_id, customer_id, hotel_id,
+      room_type_id, checkin/checkout, nights, num_guests, rate, revenue,
+      booking_source).
+    - CHECKIN / CHECKOUT: base envelope + booking_id + customer_id.
+    - CANCELLATION: same + `cancellation_reason`.
+    - PRICE_CHANGE: hotel_id + room_type_id + old/new price.
+      **booking_id and customer_id INTENTIONALLY NULL** (a price change
+      is operational, not booking-scoped) — the schema allows this.
+- INSERT uses `psycopg2.extras.execute_values` with **explicit
+  `page_size=len(rows)`** so `cur.rowcount` reflects the entire batch.
+  Default `page_size=100` silently undercounts on every batch
+  > 100 rows — verified against a 500-row synthetic test (default
+  rowcount=100, fixed rowcount=500). The counter bug surfaced during
+  acceptance and was fixed before declaring done.
+- `ON CONFLICT (event_id) DO NOTHING` — the existing PK on
+  `fact_booking_events.event_id` (migration 008) provides the
+  uniqueness; no migration 009 was needed.
+- New `run_metrics` counters: `silver_attempted` / `silver_inserted` /
+  `silver_duplicates` / `silver_flushes` / `silver_failures`.
+- Shutdown summary line: `Silver inserted: N rows (F flushes, D dedup'd)`.
+
+**Gate-order change (minimal):** to satisfy the brief's "no type
+filter — all accepted types written" requirement for PRICE_CHANGE,
+silver needs to fire BEFORE Gate 3's `PROCESSED_EVENT_TYPES` filter
+that silently drops PRICE_CHANGE. The minimal restructure: parse
+`event_ts` + Gate 4 (late guard) move above Gate 3, so the new order
+is `Gate 1 → Gate 2 → parse → Gate 4 → SILVER → Gate 3 → BRONZE →
+accumulator`. Bronze stays after Gate 3 (per "Do NOT touch bronze").
+Quarantine semantics observably unchanged on every non-PRICE_CHANGE
+event; the only side-effect is that late PRICE_CHANGE events now go
+to `late_events/` instead of being silently dropped at Gate 3 — a
+small fix to a previously-silent quirk, consistent with the
+consumer's "nothing is silently dropped" docstring.
+
+**Dedup posture (what silver covers and what it doesn't):**
+- COVERED: Kafka redelivery (same Kafka message replayed by the
+  consumer-group) — same `event_id` → ON CONFLICT short-circuits.
+  Verified: re-insert 100 existing event_ids → cur.rowcount=0, table
+  row count stable.
+- NOT COVERED: producer crash-replay. The producer mints fresh
+  `event_id = str(uuid.uuid4())` on every emit; a restart re-emitting
+  a logically-identical event would mint a NEW event_id and silver
+  would accept it. This is a known gap. The path forward is
+  **deterministic event_id** (e.g. `uuid5(NAMESPACE, f"{booking_id}|{event_type}|{sim_day}")`)
+  per-emit, which is a structural producer change tracked separately
+  (not B-039's scope). Until that lands, dedup is at-least-once-per-
+  emission, not exactly-once.
+
+**Isolation:** `silver_flush` is wrapped in its own try/except.
+Failures log to stderr, increment `silver_failures`, drop the batch,
+and return `[]` — same posture as bronze + heartbeat. Force-failure
+unit tests (`c:\tmp\silver_isolation_unit.py`) verify against two
+distinct DB errors (bad password / missing table); both return `[]`,
+bump the counter, and never raise.
+
+**Acceptance (7/7 PASS):**
+- A. Clean run (3-day slice + 1-day slice combined): silver inserted
+  = events_consumed = accepted, 0 dedup'd, all 5 types present
+  including PRICE_CHANGE (counts: BOOKING 4,543 / CHECKIN 2,228 /
+  CHECKOUT 1,828 / CANCELLATION 446 / PRICE_CHANGE 30 cumulative).
+- B. Chaos run (2 sim-days, 5% malformed + 2% late, seed 42):
+  events_consumed 4,582 → silver inserted **4,272** (EXACT =
+  4,582 − 221 malformed − 89 late); 0 quarantined rows landed in
+  silver.
+- C. Dedup: re-INSERT 100 existing event_ids via the same
+  ON CONFLICT path → `cur.rowcount = 0`, table count delta = 0.
+- D. Fidelity: one row per type sampled; field mapping correct per
+  the spec, PRICE_CHANGE has NULL booking_id + NULL customer_id.
+- E. Linkage: 3,845 stream BOOKING rows → 0 orphan booking_id /
+  customer_id / hotel_id / room_type_id (FK JOIN to fact_bookings /
+  dim_customer / hotel_master / dim_room_type).
+- F. Isolation: silver_flush survives bad password + missing table
+  without raising; consumer's agg + bronze + heartbeat unaffected
+  (structurally identical to bronze's verified posture).
+- G. No regression: clean run shows 44 windows flushed, S3 Parquet
+  archive succeeds, heartbeat firing every ~10s, 0 malformed / 0
+  late.
+
+**Files touched:** `scripts/stream_consumer.py` (additive — only the
+gate reorder is a structural change; no existing sink modified).
+Docs same turn: `docs/backlog.md` (this entry, B-040 still reserved,
+B-041 added for producer rate-flag migration), `CLAUDE.md`
+(consumer-sinks description updated; the "stream-side inserts come
+from stream_consumer.py" line is now IMPLEMENTED, not aspirational),
+`datamodel.md` (silver section updated to describe source='stream'
+rows + dedup posture).
+
+**Next:** **B-040** (gold — per-booking lifecycle reconstruction with
+`illegal_transition_flag`) reads `fact_booking_events` (both sources)
+and materialises a per-booking gold table. The end-to-end ordering
+proof obligation from the Phase-A read-only assertions' D becomes
+`SELECT SUM(illegal_transition_flag) FROM gold` == 0.
+
+---
+
+### B-040 — Gold layer: per-booking lifecycle reconstruction + transition flags ✓ DONE
+**Status:** Done — see [Completed](#completed) table.
+**Priority:** Medium — depends on B-039 (done).
+
+**What landed:**
+- **`db/migrations/009_gold_lifecycle.sql`** — `ingest_seq BIGINT GENERATED BY DEFAULT AS IDENTITY` on `fact_booking_events` + index; `fact_booking_lifecycle` (one row per booking_id: forward-only status machine BOOKED→CHECKED_IN→COMPLETED/CANCELLED, `illegal_transition_flag`, `source_mix`, lifecycle timestamps, booking facts, outcome, event_count); `gold_watermark` (single-row cursor, seeded at 0).
+- **`scripts/gold_lifecycle_updater.py`** — ~1-min micro-batch DECOUPLED from the consumer. Reads silver `WHERE ingest_seq > watermark`, groups by booking_id, sorts within each group by lifecycle order (BOOKING<CHECKIN<CHECKOUT/CANCELLATION). `illegal_transition_flag` fires on genuine business-domain inversions (CHECKOUT.event_ts < CHECKIN.event_ts; CANCELLATION after CHECKOUT) — NOT on heap-scan-order processing artifacts. Deadlock-resilient (rolls back + retries 10s). `psycopg2.extras.register_uuid()` required for UUID list param. Run via `python -m scripts.gold_lifecycle_updater`. ONLY ONE INSTANCE at a time — concurrent processes deadlock.
+- **PRICE_CHANGE + REVIEW excluded from gold** (no booking_id on PRICE_CHANGE; REVIEW is hotel-level, not per-booking lifecycle).
+
+**Acceptance (7/7 PASS):** row count 624,388 gold = 624,388 distinct silver booking_ids; illegal_flag 0; outcome completed 85.4%/cancelled 8.0%/no_show 3.4%/in_progress 3.2%; source_mix history 97.1%/stream 1.9%/mixed 0.95%; watermark==max_seq 1,763,493; 0 status inconsistencies; watermark held on re-run.
+
+**Files:** `db/migrations/009_gold_lifecycle.sql`, `scripts/gold_lifecycle_updater.py`, `datamodel.md`, `CLAUDE.md`, this file.
+
+---
+
+### B-041 — Stale-references cleanup (producer rate-flag + Phase-7 doc)
+**Priority:** Low — track only this turn; do NOT fix code.
+**Origin:** the Phase-A producer rewrite (B-034A) repurposed
+`--rate` (events/sec) as a deprecation no-op and introduced
+`--sim-speed` (sim-days/sec). Several call sites and docs still
+refer to the old contract:
+  - `run.py` builds the simulator command with a configurable
+    `rate_flag = "--rate"` and passes the `--sim-rate N` value
+    straight through. The producer accepts but ignores the flag
+    (it warns to stderr). The fix is to swap `rate_flag` for
+    `--sim-speed` AND rescale the unit (events/sec → sim-days/sec;
+    1 sim-day @ steady state ≈ 2,000 events, so `--sim-rate 50` ≈
+    `--sim-speed 0.025`).
+  - `README.md` line 101 quotes the old form in the `--no-sim`
+    example: `python -m scripts.kafka_event_producer --rate 50
+    --duration 60`. Replace with the new form
+    (`--sim-speed 0.025 --until <date>` or equivalent).
+  - `docs/phase-7-monitor.md` describes CHECKOUT as emitted "at
+    design weight 0.12" (B-032 Chunk 3 stateless-lifecycle
+    language). The calendar-replay model doesn't emit at fixed
+    weights — copy should mention "advancement at real
+    fact_bookings.checkout_date" instead.
+**Status:** OPEN / deferred. None of these break anything today —
+the producer's deprecation no-op + warning keeps `run.py` working,
+and the Phase-7 doc is descriptive not load-bearing. Bundle into
+the next docs pass.
+
+---
+
+### B-042 — Monitor: scope quarantine counts to the date filter ✓ DONE
+**Origin:** the `/monitor` page's QUARANTINE section showed
+bucket-wide MALFORMED / LATE counts that ignored the FROM/TO date
+filter that the EVENTS section already used. The two sections
+therefore disagreed by axis — EVENTS narrowed to "today", QUARANTINE
+showed "everything since project start." Confusing in a UI where
+both sit a few centimetres apart.
+
+**What landed:**
+- `render/server.py` — `_monitor_quarantine(date_from, date_to)`
+  now takes the same date range the EVENTS section uses (validated
+  YYYY-MM-DD strings from `_valid_date()` / the default-today rule),
+  enumerates each day in `[date_from, date_to]`, and counts objects
+  under `{prefix}/year=Y/month=M/day=D/` for each day on both the
+  malformed and late prefixes. Sums across days. Inverted ranges
+  (date_to < date_from) collapse to 0 by construction (no days
+  iterated). When either endpoint is missing, falls back to the
+  legacy bucket-wide count — kept as a safety net; the live monitor
+  routes always pass dates thanks to the default-today rule.
+- Both `/monitor` and `/monitor/data` route handlers pass
+  `date_from, date_to` to `_monitor_quarantine`. Same date inputs as
+  the EVENTS section → the two sections stay consistent on initial
+  render AND on the 10s `/monitor/data` polling refresh.
+- **City filter NOT applied.** Quarantine S3 keys (per
+  `stream_consumer.py:quarantine_event`) carry NO city segment —
+  malformed events often can't be parsed for a city, which is by
+  design. The function refuses to accept a city argument; passing
+  one would have no axis to filter on.
+- `render/templates/monitor.html` — QUARANTINE section copy replaced:
+  - The old "Counts are bucket-wide (not filtered)" caption swapped
+    for the brief's prescribed copy ("Scoped to the selected date
+    range. Quarantined objects aren't tagged by city, so the city
+    filter doesn't narrow these — they're counted across all cities.").
+  - New `badge-scope` style + a "date-scoped · all cities" chip on
+    the section head, in the same visual register as the existing
+    SOON badges. Tells the user the scoping rule at a glance.
+
+**Acceptance (4/4 PASS — counts match `mc ls --recursive ... | wc -l`):**
+- A. Today filter (2026-05-26, no consumer ran): malformed **0** /
+  late **0** — matches `mc ls` (empty day-prefix).
+- A'. Single day 2026-05-25: malformed **678** / late **279** —
+  matches `mc ls`.
+- B. Three-day range 2026-05-23..05-25: malformed **3,110** / late
+  **1,008** = exact per-day sum (1,760+672+678 / 528+201+279).
+- C. City toggle (no-city / Goa / Mumbai) with the same date range:
+  quarantine **3,110 / 1,008** stable across all three, while stream
+  bookings shifted **23,370 → 814 → 1,271** (as expected — same
+  axis-of-filter test, opposite direction).
+- D. No regression: /monitor renders HTTP 200 / 24 KB, full
+  `/monitor/data` JSON payload intact (live + stream + quarantine
+  all populated), heartbeat / windows / per-type counts / cities all
+  read normally.
+
+**Files touched:** `render/server.py` (additive on
+`_monitor_quarantine`; 2-line callsite updates on the two routes),
+`render/templates/monitor.html` (caption swap + small chip +
+`.badge-scope` CSS). No DB / migration / wire-shape changes.
+
+**Forward link:** B-033 (`quarantine_daily_rollup` DAG) is the
+production-grade backfill that turns this O(days × 2) list path
+into an O(1) Postgres lookup. B-042 is the right-sized stand-in
+until then; the day-prefix listing is cheap enough that even a
+30-day range is well under the page-render budget.
+
+---
+
+### B-040 — Gold layer: per-booking lifecycle reconstruction + transition flags ✓ DONE
+**Status:** Done — see full entry above and [Completed](#completed) table.
+
+---
+
 ### B-030 — Reviews are not generated in the stream (feature gap, NOT a correlation bug)
 **Origin:** User wanted reviews tied to real hotels/bookings rather than unrelated.
 **Verified fact (settled, do not re-litigate the correlation part):** hotel-level correlation
@@ -555,6 +1146,56 @@ is no guest-/booking-level linkage (the stream carries no `customer_id`; `review
   sample REAL Kaggle text and attach to streamed stays — correlation AND real language.
 **Status:** Open decision — correlation already works (verified). Streaming-reviews is an optional
 Phase-8-class feature, NOT urgent. Lower priority than B-029/B-032 (the monitor redesign).
+
+---
+
+### B-034 — Stateful booking-lifecycle producer (simulator rewrite, step 1 of N) ⬜ STEP-1 SHIPPED
+**Priority:** Medium — unblocks the realistic-lifecycle-vs-stateless-mix gap that B-030 (REVIEW) and any future per-booking analytics depend on
+**Background:** The previous `scripts/kafka_event_producer.py` drew every event type stateless per tick from a fixed weight vector (`BOOKING / CHECKIN / CHECKOUT / CANCELLATION / PRICE_CHANGE = 0.55 / 0.18 / 0.12 / 0.10 / 0.05`). The five wire-type strings looked right at the aggregate level, but no CHECKIN was tied to any actual BOOKING — every event was an independent random draw. So:
+  - per-booking joins (CHECKIN → which BOOKING?) were impossible end-to-end,
+  - cancellation_reason was uncomputable (no booking state to inspect),
+  - the consumer's per-window counts were the only thing that worked, and they only worked because the consumer doesn't validate cross-event references.
+
+**What step 1 did (this item):** rewrote the producer as a stateful open-bookings registry:
+  - Loads `data/dim_customer.csv` at startup → 20,000 real `customer_id`s, sampled WITH replacement (repeat customers are realistic).
+  - Replaces the per-tick type draw with: with `P_PRICE` (0.05) emit a stateless PRICE_CHANGE; else with `P_START` (0.50) START a booking (BOOKING + add to registry); else ADVANCE a random open booking one step (BOOKED→CHECKIN; BOOKED→CANCELLATION with `P_CANCEL_FROM_BOOKED`=0.12 and the reason chosen probabilistically `customer_cancelled` 0.70 / `no_show` 0.30; CHECKED_IN→CHECKOUT). Registry is capped at 5000 to bound memory; once full, ticks are forced to ADVANCE until eviction frees a slot.
+  - Wire `event_type` strings UNCHANGED. Base envelope unchanged. The consumer needs no changes.
+  - Field contract enriched (BOOKING adds `booking_id, customer_id, room_type_id, checkin_date, checkout_date, nights, num_guests, nightly_rate_inr, payment_mode`; CHECKIN/CHECKOUT/CANCELLATION carry `booking_id, customer_id` plus `cancellation_reason` for the latter; PRICE_CHANGE has neither booking_id nor customer_id — it's a (hotel, room_type) operational event).
+  - **Invariant asserted in code:** `revenue_inr == nightly_rate_inr * nights` on every BOOKING.
+  - All five CLI flags now parse — `--rate / --duration / --malformed-pct / --late-pct / --chaos-seed` — with the `CHAOS_*` env vars as fallback defaults. Chaos generators / late-shifter / dispatcher / `value_serializer` bytes-passthrough / `key=city` partition / `acks=all` / `linger_ms=20` all preserved verbatim.
+
+**Lifecycle physics consequence — the wire-type mix shifts (this is fundamental, not a bug):**
+The old stateless 55/18/12/10/5 mix CANNOT be reproduced by a full lifecycle — each BOOKING begets ~1.88 follow-up events. With the tunables above, the new steady-state mix is approximately:
+
+| Wire type | Old stateless | New lifecycle target | Tolerance band |
+|---|---:|---:|---|
+| BOOKING | 0.55 | ~0.33 | ±5pp |
+| CHECKIN | 0.18 | ~0.29 | ±5pp |
+| CHECKOUT | 0.12 | ~0.29 | ±5pp |
+| CANCELLATION | 0.10 | ~0.04 | ±5pp |
+| PRICE_CHANGE | 0.05 | 0.05 | ±5pp |
+
+The old design weights stay documented in `docs/phase-2-streaming.md` as historical context; the new lifecycle targets above are what live mix should land near on a fixed-seed run.
+
+**Deliberately deferred to a future step (NOT in B-034):**
+- **REVIEW emission is NOT implemented this step.** The consumer's Gate 2 allow-list (`VALID_EVENT_TYPES`) does NOT include REVIEW; emitting REVIEW now would quarantine every one as `unknown_event_type`. Next step: teach the consumer to accept + count REVIEW (extend `VALID_EVENT_TYPES`, route to the existing `total_reviews` column on `agg_hourly_city_stats`, optional embedding-at-ingest). Once that's verified, this producer flips REVIEW on at the right point in the lifecycle (post-CHECKOUT, with sampled real Kaggle text per B-030's notes). Both halves together resolve B-030.
+- Optional later: `cancellation_reason` and `payment_mode` could land as new columns on `agg_hourly_city_stats` / a per-booking gold table, but that's its own item (no migration written this step).
+
+**Files touched:**
+- `scripts/kafka_event_producer.py` — rewritten as the lifecycle simulator (was on the post-B-032 unfrozen list)
+- `data/dim_customer.csv` — NEW producer input (read at startup; not modified)
+- Docs: `datamodel.md`, `docs/phase-2-streaming.md`, `docs/session-notes.md`, CLAUDE.md, this file
+
+**Acceptance (step 1, on a fixed `--chaos-seed 42`, 180s @ 50 evt/s):**
+- Parse-check passes (with `PYTHONUTF8=1` on Windows — see session-notes for the cp1252 gotcha).
+- All five CLI flags parse and behave; env-var fallbacks still work.
+- Every emitted `customer_id` matches `CUST-NNNNNN` and is in `data/dim_customer.csv`.
+- Every CHECKIN / CHECKOUT / CANCELLATION carries a `booking_id` that traces to a prior BOOKING in the captured stream; PRICE_CHANGE carries neither `booking_id` nor `customer_id`.
+- Revenue invariant holds on every BOOKING.
+- Wire-type mix within ±5pp of the lifecycle targets above.
+- Registry stays bounded (max ≤ 5000) over the run.
+- Consumer (unchanged) still aggregates: `agg_hourly_city_stats` populates `total_bookings / total_checkins / total_checkouts / total_cancellations` on new windows.
+- Quarantine sinks pick up chaos as before (`malformed_events/`, `late_events/`); no new quarantine on clean runs (the enriched fields are additive — consumer ignores unknown extras).
 
 ---
 
@@ -620,3 +1261,9 @@ Phase-8-class feature, NOT urgent. Lower priority than B-029/B-032 (the monitor 
 | ✓ | B-027 — Pipeline monitor dashboard (/monitor): 3 sections (stream activity / review embeddings / pipeline health), date+city filter, guarded Airflow+MinIO deps, honest empty-states | Phase 7 |
 | ✓ | B-029 — `/monitor` in-place auto-refresh: `GET /monitor/data` JSON sidecar + 10s `setInterval` poll patching live pulse + EVENTS + QUARANTINE via `textContent`. Scroll position and filter focus preserved. Skipped B-029a's full-page-reload variant — shipped straight at B-029b alongside B-032 Chunk 4. | Phase 7 |
 | ✓ | B-032 — Live pipeline metrics + lifecycle counts. Migration 007 (`pipeline_metrics` + 4 count cols on `agg_hourly_city_stats`); consumer heartbeat + per-type counting; producer CHECKOUT emission; `/monitor` redesigned with header live pulse (events/sec from heartbeat deltas, alive=age<15s), default-today filter, EVENTS / QUARANTINE / HEALTH sections, SOON tiles for Review / Embedded / Sentiment with blocking backlog IDs. Revenue removed (business → Explorer). Retires L-015; resolves L-014 for counting (CHECKIN/CHECKOUT now in `agg_hourly_city_stats` though not in `fact_bookings`). | Phase 7 |
+| ✓ | B-035 — Lifecycle history backfill, time-partitioned real model (step 2 of B-034). Migration 008 (`fact_booking_events` silver ledger + `sim_open_bookings` simulator state) + new `scripts/generate_lifecycle_history.py`. One sweep over all of `fact_bookings`; routes each row vs `--sim-today` (default 2025-06-01) into COMPLETED / IN_PROGRESS / BOOKED / FUTURE buckets. Backlog is real (every `sim_open_bookings.booking_id` is a real fact_bookings row); ~388K FUTURE bookings reserved for the stream simulator to replay. 15 / 15 acceptance (keys, revenue invariant, realism, continuity, BACKLOG REAL, docs, idempotency). | Phase 2 / Phase 6 |
+| ✓ | B-042 — Monitor: scope quarantine MALFORMED + LATE counts to the FROM/TO date filter. `render/server.py:_monitor_quarantine(date_from, date_to)` now enumerates per-day prefixes under `{malformed,late}_events/year=Y/month=M/day=D/` for each day in the range and sums KeyCount; city stays N/A (S3 keys carry no city, by design). `/monitor` template gets the brief's date-scoped + city-agnostic copy and a small "date-scoped · all cities" chip on the section head. 4/4 PASS — counts match `mc ls --recursive | wc -l` exactly (0/0 today, 678/279 for 2026-05-25, 3,110/1,008 for the 3-day range 2026-05-23..25); city toggle leaves quarantine unchanged across no-city / Goa / Mumbai while EVENTS shifts as expected. Right-sized stand-in until B-033's quarantine_daily_rollup DAG turns this O(days) list path into an O(1) Postgres lookup. | Phase 7 |
+| ✓ | B-039 — Silver sink: inline per-event ledger in `scripts/stream_consumer.py`. New `silver_flush()` writes every accepted event to `fact_booking_events` with `source='stream'` via `execute_values` + `ON CONFLICT (event_id) DO NOTHING`. Captures all 5 wire types (incl. PRICE_CHANGE with NULL booking_id/customer_id) — placed BEFORE Gate 3's accumulator filter, with parse-ts + Gate 4 (late) moved above Gate 3 to keep the late-quarantine path intact. `page_size=len(rows)` on `execute_values` so `cur.rowcount` reports the full batch (a mid-acceptance fix; default page_size=100 silently undercut new-inserts on every batch > 100 rows). Acceptance 7/7 PASS — counts reconcile (silver inserted 4,272 EXACT = events 4,582 − malformed 221 − late 89 on the chaos slice; 2,380 EXACT on the clean slice; cumulative 9,075 across the session, type-split matches producer); dedup test (re-insert 100 event_ids) → 0 inserts, table count stable; linkage (3,845 stream BOOKINGs) → 0 orphan FK targets; isolation force-test (bad pw + missing table) → silver_failures bumps, no exception. Foundation for B-040 (gold lifecycle reconstruction). | Phase 2 |
+| ✓ | B-038 — Bronze sink: durable raw-event archive in `scripts/stream_consumer.py`. New `bronze_flush()` batches every accepted event (post-Gate-4) to S3 under `raw_events/year=YYYY/month=MM/day=DD/hour=HH/HHMMSS_<uuid8>.jsonl` (JSONL, ingest-time partitioned, many events per file). Flush triggers: `BRONZE_BUFFER_CAP` (default 500) OR `FLUSH_CHECK_SECONDS` tick OR graceful shutdown. Wrapped in its own try/except; failures log + increment `bronze_failures` + drop the batch — never crash the consumer, never block agg or heartbeat. Acceptance 7/7 PASS — counts reconcile (bronze 11,912 = accepted events across both test runs; per-type agg sums match bronze exactly); chaos test: 0 quarantined events in `raw_events/`; isolation test (bogus bucket): 6 bronze flushes failed, all 44 Postgres agg upserts still succeeded + 6 heartbeats wrote + consumer exited cleanly. Foundation for B-039 (silver) and B-040 (gold). | Phase 2 |
+| ✓ | B-034A — Calendar simulator Phase A (replay engine). `scripts/kafka_event_producer.py` rewritten as a calendar-driven REPLAY of `fact_bookings WHERE booking_ts >= --sim-start` + advancement of the real `sim_open_bookings` backlog. Sim-clock in `scripts/.sim_clock.json`; resume = saved + 1. New wire field `event_date` (sim-day) alongside wall-clock `event_ts`. Same Kafka config / partition key / wire types as before. Cancellation timing + reasons keyed deterministically off `booking_id + chaos-seed`. 21 / 21 acceptance — 0 quarantine on clean run, exact agg-vs-producer sum match, 0 dangling booking_ids, 0 is_cancelled bookings checked in, restart re-emits 0 events, chaos reproducible. Phases B (B-036 net-new + long-stay) and C (B-037 REVIEW) explicitly deferred. | Phase 2 / Phase 6 |
+| ✓ | B-040 — Gold lifecycle layer. Migration 009 (`ingest_seq` cursor column on `fact_booking_events` + `fact_booking_lifecycle` one-row-per-booking gold table + `gold_watermark` single-row cursor). `scripts/gold_lifecycle_updater.py` decoupled ~1-min micro-batch: reads silver `WHERE ingest_seq > watermark`, groups by booking_id, intra-batch lifecycle sort, forward-only status machine, business-timestamp-based `illegal_transition_flag` (NOT processing-order). 7/7 acceptance: 624,388 gold rows = 624,388 distinct silver booking_ids; illegal_flag=0 across all 606,463 history + 5,917 mixed + 12,008 stream rows; outcome completed 85.4%/cancelled 8.0%/no_show 3.4%/in_progress 3.2%; watermark==max_seq 1,763,493; 0 status inconsistencies; idempotent. | Phase 2 / Phase 6 |

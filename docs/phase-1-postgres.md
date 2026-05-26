@@ -10,21 +10,14 @@
 
 ## REPO STATE AFTER THIS PHASE
 
-```
-travellens/
-├── docker/
-│   ├── postgres.Dockerfile      ← CREATE
-│   └── docker-compose.yml       ← CREATE (Postgres only — Phase 2 extends it)
-├── db/
-│   └── schema.sql               ← CREATE (14 tables, extension, no inline indexes)
-├── scripts/
-│   ├── load_to_postgres.py      ← CREATE
-│   └── validate_load.py         ← CREATE
-├── data/                        ← LEAVE ALONE
-├── docs/
-│   └── phase-1-postgres.md      ← LEAVE ALONE
-└── .env                         ← LEAVE ALONE
-```
+Canonical repo layout: see [`CLAUDE.md`](../CLAUDE.md) (root). Files this phase
+creates / touches:
+
+- **CREATE** `docker/postgres.Dockerfile`
+- **CREATE** `docker/docker-compose.yml` (Postgres only — Phase 2 extends it)
+- **CREATE** `db/schema.sql` (14 tables, extension, no inline indexes)
+- **CREATE** `scripts/load_to_postgres.py`
+- **CREATE** `scripts/validate_load.py`
 
 ## OBJECTIVE
 

@@ -5,6 +5,22 @@
 
 ---
 
+## Contents
+
+- [Project](#project)
+- [Stack](#stack)
+- [Phase status](#phase-status)
+- [Hard rules](#hard-rules----never-break-these)
+- [Repo layout](#repo-layout)
+- [Documentation conventions](#documentation-conventions)
+- [Common mistakes](#common-mistakes----always-avoid-these)
+- [Key design decisions](#key-design-decisions-locked----do-not-re-litigate)
+- [Docker stack](#docker-stack)
+- [Quality gate](#quality-gate----every-change)
+- [If something breaks](#if-something-breaks)
+
+---
+
 ## Project
 
 Real-time hotel and tourism intelligence platform for the Indian hospitality market.
@@ -79,6 +95,8 @@ Current phase: **6** — Phase 7 shipped (monitor redesign done end-to-end). Rea
   `ai/query_router.py`.
 - **Under active hardening — edit ONLY per a specific backlog item:**
   `ai/text_to_sql.py` (B-022 run_stored_sql, B-003 _validate_columns, B-004 next),
+  `ai/prompts/text_to_sql_system.txt` (B-003 schema context, B-022 SQL rules; edit whenever schema
+  knowledge or SQL generation rules change — keep in sync with `text_to_sql.py`),
   `ai/main.py` (B-004, B-005), `ai/semantic_search.py` (B-006 dedup, B-004),
   `render/server.py` and `render/templates/dashboard.html` (B-022 cache, Show SQL,
   rename),
@@ -236,14 +254,81 @@ travellens/
 
 ---
 
+## Documentation conventions
+
+### Single source of truth hierarchy
+
+One place per detail — cross-reference, never restate. Restating current state in a second file
+creates two sources that drift apart.
+
+| Document | Owns |
+|---|---|
+| `CLAUDE.md` | Authoritative current state: phase status, hard rules, repo layout, common mistakes, design decisions, quality gate. If it's a rule or a current fact, it lives here. |
+| `datamodel.md` | Schema source of truth: per-table columns, types, FKs, migration history. Every LLM-facing prompt that touches the data model must be built from here or from `information_schema`, never from memory. |
+| `backlog.md` | Work items: B-/L- IDs, open items, in-progress items, completed table. Status and history of every planned or shipped change. |
+| `docs/phase-*.md` | Build history and narrative: how each phase was originally built and how it evolved. These are HISTORY documents, not current specs. |
+| `README.md` | Portfolio entry point: what the project is, where to start, links out. |
+| `docs/claude-code-prompts.md` | Phase starters: prompt templates for beginning each phase with Claude Code. |
+| `docs/capabilities-and-limits.md` | AI-layer behaviour + per-feature reliability reference: what each query path does, accuracy levels, known caveats (L-numbers), and what is explicitly out of scope. Update this when a backlog item changes observable AI behaviour. |
+
+> `docs/session-notes.md` is ephemeral handoff context between sessions — gitignored, not part of
+> the canonical hierarchy, and intentionally discarded once its context is absorbed into code or
+> a backlog item.
+
+### Phase docs are build history, not current spec
+
+Phase docs record how a phase was built and how it evolved — they are not kept current with the
+live system. Every phase doc carries a **HISTORY DOCUMENT** banner immediately after the status
+line, naming where current truth lives:
+
+```
+> **HISTORY DOCUMENT** — This records how Phase N was originally built and how it evolved.
+> For current behaviour, see [CLAUDE.md](../CLAUDE.md) · [datamodel.md](../datamodel.md) · [backlog.md](backlog.md).
+```
+
+The banner must name the specific SSoT destinations (CLAUDE.md / datamodel.md / backlog.md) — not
+just say "this is history."
+
+**Inside the phase doc:**
+
+- The original build runbook is kept intact and labeled `## ARCHITECTURE DECISIONS (ORIGINAL)` for
+  any decisions section.
+- Steps that were superseded by later backlog items are marked `[SUPERSEDED]` with an inline note
+  pointing to the Build History entry that replaced them.
+- All post-acceptance evolution (new features, redesigns, hardening) goes in a
+  `## BUILD HISTORY / EVOLUTION` section at the bottom of the doc (before `## NEXT`), in
+  chronological order, earliest first. Each entry cites its B-number and summarizes what changed
+  and why — it does NOT restate current behaviour inline (that would re-duplicate and drift).
+- Current behaviour is NEVER restated in the phase doc body — the body stays as the original build
+  record; the BUILD HISTORY entry names the change; CLAUDE.md / datamodel.md carry the live state.
+- A forward-looking spec (phase not yet shipped, or phase in-progress with no completed evolution)
+  uses a banner that says "planned build steps" and carries **no BUILD HISTORY section** until at
+  least one component has shipped and been superseded.
+
+### Editing docs
+
+- **Preserve substance** — reorder and reframe, never amputate. Decisions, lessons, acceptance
+  numbers, backlog refs, and evolution history are deliberate kept assets.
+- **Sync the same turn** — when a section is renamed or moved, fix every cross-reference to it in
+  the same edit session. Do not leave dangling links.
+- **Verify anchors resolve** — after any section rename or doc restructure, grep all docs for links
+  with `#` anchors and confirm every target heading still exists. Report 0 dangling before declaring
+  done.
+- **Docs only** — doc edits never touch code, scripts, SQL, configs, or code comments. When a doc
+  edit session is complete, surface for owner review; the owner commits.
+
+---
+
 ## Common mistakes — always avoid these
+
+Full column schemas for all tables below are in `datamodel.md`.
 
 | Mistake | Correct approach |
 |---|---|
 | Forgetting `__init__.py` in new package | Create it (empty) immediately when making a new package folder |
 | Using `hotel_master.city` in SQL | Always `dim_location.city` via JOIN on `location_id` |
 | Querying `agg_daily_hotel_kpi` for booking counts | Use `fact_bookings` — KPI table is empty until B-013 DAG runs |
-| Steering the SQL prompt to `agg_hourly_city_stats` for business answers | The stream rollup is now POPULATED (was previously claimed "empty" in the prompt — corrected during the B-032 Chunk 4 doc pass). It is the source for the `/monitor` dashboard, NOT for Explorer queries. `text_to_sql_system.txt` now names `agg_daily_hotel_kpi`, `agg_hourly_city_stats`, AND `pipeline_metrics` together as "operational/streaming aggregate tables, not the booking analytics source" — all business booking/revenue/cancellation analytics route to `fact_bookings`. |
+| Steering Explorer queries to `agg_hourly_city_stats` | Stream rollup is populated but is for `/monitor` only — NOT Explorer. Business booking/revenue/cancellation analytics → `fact_bookings`. |
 | Short words in `SEMANTIC_TRIGGERS` | Minimum ~5 chars or multi-word phrases — `"hot"` matches inside `"hotels"` |
 | Running `python ai/main.py` | Always `python -m ai.main` from repo root |
 | Building IVFFlat index before all embeddings written | Always embed first, index last |
@@ -253,19 +338,18 @@ travellens/
 | Editing an existing migration | Migrations are append-only — add a new numbered file |
 | `agg_daily_hotel_kpi` column names | Real columns: `total_bookings`, `total_revenue_inr`, `avg_nightly_rate_inr`, `cancellation_rate`, `avg_rating` — no `occupancy_rate`, no `revpar_inr` |
 | `chain_name` treated as always present | `chain_name` is NULL for ~60% (independents) — exclude NULL when ranking chains |
-| Counting entities via `fact_bookings` rows | "How many hotels", "hotels per city", "hotels opened per year" → query `hotel_master` directly (optionally joined to other dimensions). `fact_bookings` is for booking ROWS, not entity counts. The system prompt's ENTITY COUNT RULE codifies this. |
-| `hotel_master.opened_year` columns | `opened_year SMALLINT` added in migration 006 (synthetic, range 1975–2023, correlated with `star_category`, capped at the hotel's earliest booking year). Use this directly for "hotels opened/created per year" — never derive opening year from `fact_bookings` dates. |
-| `is_cancelled` scope | `is_cancelled` lives ONLY on `fact_bookings` — it does NOT exist on `hotel_master`, `dim_customer`, `dim_location`, `dim_date`, `dim_room_type`, or `reviews_raw`. A query whose FROM/JOIN doesn't include `fact_bookings` MUST NOT reference it (counting hotels, listing customers, enumerating cities — none take an `is_cancelled` filter). For fact_bookings queries, exclude cancelled bookings by default (`WHERE NOT b.is_cancelled`) unless the question is specifically about cancellations. |
-| `agg_hourly_city_stats` column drift | Real columns post-migration 007: `city`, `window_start`, `window_end`, `total_bookings`, `total_revenue_inr`, `avg_occupancy_rate`, `cancellation_rate`, `ingestion_ts`, `total_checkins`, `total_checkouts`, `total_cancellations`, `total_reviews`. Population (B-032 Chunks 2 + 3 — end-to-end): `total_checkins`, `total_checkouts`, and `total_cancellations` are all written by the consumer for every flushed window and read non-zero on recent windows because the producer now emits all three event types at design weights (CHECKIN 0.18, CHECKOUT 0.12, CANCELLATION 0.10). `total_reviews` stays NULL — REVIEW is not a stream event today (B-030). |
-| `pipeline_metrics` table | Append-only heartbeat written by `scripts/stream_consumer.py` every `FLUSH_CHECK_SECONDS` (~10s) — live since B-032 Chunk 2. Columns: `metric_ts` (PK), `events_consumed`, `bookings`, `cancellations`, `malformed`, `late` (BIGINT, NOT NULL default 0), `active_windows` (INT, NOT NULL default 0), `max_event_ts` (TIMESTAMP, NULL), `consumer_lag` (BIGINT, NULL — reserved, not computed yet). Counters are cumulative-since-start — derive events/sec as a delta between adjacent rows, not as a stored column. Drop deltas where the newer value < older value (consumer restart reset). Added in migration 007 to resolve L-015. |
-| `fact_booking_events` / `sim_open_bookings` (migration 008, B-035) | One silver event ledger spans history AND stream; `source` ('history'\|'stream') is the only separator. Schema: `event_id`/`event_type`/`booking_id`/`customer_id`/`hotel_id`/`city`/`room_type_id`/`event_ts`/`event_date` + per-type nullable cols (`cancellation_reason`, `rating`/`review_channel`/`review_text` reserved for REVIEW, `old/new_price_inr` reserved for PRICE_CHANGE). **Invariant on BOOKING rows:** `revenue_inr == nightly_rate_inr * nights` (asserted in generator; generator trusts the `checkout - checkin` gap and recomputes revenue when stored `nights_stayed` disagrees). `sim_open_bookings` is mutable simulator state — one row per booking awaiting CHECKIN (`state='BOOKED'`) or CHECKOUT (`state='CHECKED_IN'`); rows are deleted on CHECKOUT/CANCELLATION. **Backlog is REAL** — every `sim_open_bookings.booking_id` exists in `fact_bookings`; no synthesised IDs. Populated by `python -m scripts.generate_lifecycle_history` (idempotent `--reset` deletes ONLY source='history', never source='stream'). |
-| `--sim-today` anchor + FUTURE bucket | Default anchor is **`2025-06-01`** (configurable via `--sim-today YYYY-MM-DD`). Real `fact_bookings` runs to ~2026-05, so ~388K bookings with `booking_ts >= sim-today` sit AFTER the anchor — these are the **FUTURE** bucket: the generator skips them and they are **reserved for the stream simulator to replay** in `booking_ts` order as `source='stream'` BOOKING events. Do not write history events for them; do not insert them into `sim_open_bookings`. The generator's stats block reports `bucket_future` + its `booking_ts` range so the runway is visible. |
-| Backfilling lifecycle events with arbitrary scripts | Use `scripts/generate_lifecycle_history.py`. Never INSERT directly into `fact_booking_events` from ad-hoc SQL — the script enforces FK validity, the revenue invariant, the source='history' tag, and the matching BOOKING-for-every-followup rule. Stream-side inserts (`source='stream'`) come from `scripts/stream_consumer.py`'s silver sink (B-039 — inline on the accept path, every accepted event of every type, ON CONFLICT (event_id) DO NOTHING for Kafka-redelivery dedup). The producer (B-034A calendar replay simulator) writes to Kafka, not to `fact_booking_events` directly — the consumer is the only stream-side writer to that table. |
-| Calendar replay producer (`scripts/.sim_clock.json`) | The producer persists `{last_completed_day, chaos_seed}` to `scripts/.sim_clock.json` at the end of every sim-day; on restart it resumes at `saved+1`. Running with `--reset-clock` deletes the file. **Do not edit the file by hand to skip days** — the simulator owns the FUTURE bucket; skipping days drops real `fact_bookings` rows from the stream. The file is gitignored (local machine state). If `--chaos-seed` is changed between runs, hydrated cancellation plans whose date is now in the past get clamped forward and the producer prints a warning — pass the same seed on every restart, or accept the small re-shuffle. |
-| Every emitted event carries TWO timestamps | `event_ts` = wall-clock UTC NOW (keeps consumer windowing/freshness unchanged); `event_date` = the SIM-DAY the event represents (NEW additive field). Use `event_date` for business-day analytics (CHECKIN counts per business day), use `event_ts` for operational SLOs (events-per-second, watermark grace). The consumer's Gate 2 doesn't require `event_date` — unknown fields pass through harmlessly. |
-| Bronze archive (`raw_events/`) is the SOURCE OF TRUTH for raw stream events | `scripts/stream_consumer.py` writes every accepted event (post-Gate-4) to `s3://travellens-data/raw_events/year=/month=/day=/hour=/HHMMSS_<uuid8>.jsonl` (JSONL, many events per file, INGEST-time partitioning). PRICE_CHANGE is NOT bronzed — it's silently filtered at Gate 3 before bronze. Malformed and late events are NOT bronzed either — they only land in `malformed_events/` and `late_events/` respectively. Bronze is append-only — never dedup or rewrite a file; raw redeliveries are archived as-is and dedup happens later at silver (B-039). Bronze writes are best-effort: a bronze failure logs and continues, never crashes the consumer or blocks agg/heartbeat. |
-| `fact_booking_lifecycle` / `gold_watermark` (migration 009, B-040) | Gold layer — one row per `booking_id`. Updated by `scripts/gold_lifecycle_updater.py` (decoupled ~1-min micro-batch; run ONE instance only). Forward-only status machine: BOOKED→CHECKED_IN→COMPLETED/CANCELLED. `illegal_transition_flag` fires on BUSINESS-TIMESTAMP inversions: (1) `checkin.event_ts < booking.event_ts`; (2) `checkout.event_ts < checkin.event_ts`; (3) CHECKOUT with NO preceding CHECKIN when `_seeded=True` (booking was seen — guarded so cross-batch artifacts where CHECKOUT ingest_seq < BOOKING ingest_seq do NOT falsely flag); (4) CANCELLATION after CHECKOUT. NOT fired for processing-order artifacts from heap scan order or bulk INSERT ordering. Detector verified by `tests/test_gold_lifecycle_flag.py` (6 negative tests — 3 must-flag, 3 must-not-flag; run via `python -m pytest tests/test_gold_lifecycle_flag.py -v`). `source_mix` tracks provenance ('history'/'stream'/'mixed'). PRICE_CHANGE and REVIEW excluded (no per-booking lifecycle). `gold_watermark` persists the last committed `ingest_seq` so the updater resumes after restart without reprocessing. Run via `python -m scripts.gold_lifecycle_updater`. |
-| Running multiple gold_lifecycle_updater instances | **Structurally prevented by Postgres advisory lock** (`pg_try_advisory_lock(7400040)`) acquired at startup. A second instance logs `"Another gold_lifecycle_updater instance holds the advisory lock"` and exits immediately with code 1 — deadlock is impossible. If you need to restart: the lock releases automatically when the process exits. If a process is stuck, kill it: `Get-WmiObject Win32_Process \| Where-Object { $_.CommandLine -like '*gold_lifecycle_updater*' } \| ForEach-Object { Stop-Process -Id $_.ProcessId -Force }`. |
+| Counting entities via `fact_bookings` rows | "How many hotels", "hotels per city", "hotels opened per year" → query `hotel_master` directly. `fact_bookings` is for booking ROWS, not entity counts. |
+| `hotel_master.opened_year` | `opened_year SMALLINT` added in migration 006 (range 1975–2023, correlated with `star_category`). Use directly for "hotels opened per year" — never derive opening year from `fact_bookings` dates. |
+| `is_cancelled` scope | `is_cancelled` lives ONLY on `fact_bookings` — not on dimensions or `reviews_raw`. Exclude cancelled bookings by default (`WHERE NOT b.is_cancelled`) unless the question is specifically about cancellations. |
+| `agg_hourly_city_stats` column drift | Post-migration 007 columns: `city`, `window_start`, `window_end`, `total_bookings`, `total_revenue_inr`, `avg_occupancy_rate`, `cancellation_rate`, `ingestion_ts`, `total_checkins`, `total_checkouts`, `total_cancellations`, `total_reviews`. `total_reviews` stays NULL — REVIEW is not a stream event (B-030). |
+| `pipeline_metrics` table | Append-only heartbeat every ~10s (migration 007). Counters are **cumulative-since-start** — derive events/sec as a delta between adjacent rows. Drop deltas where newer < older (consumer restart reset). `consumer_lag` is reserved/NULL. |
+| `fact_booking_events` / `sim_open_bookings` (migration 008) | Silver ledger spans history AND stream; `source` ('history'\|'stream') is the only separator. BOOKING invariant: `revenue_inr == nightly_rate_inr * nights`. `sim_open_bookings` is mutable simulator state (deleted on CHECKOUT/CANCELLATION); every booking_id is real — no synthesised IDs. |
+| `--sim-today` anchor + FUTURE bucket | Default anchor **`2025-06-01`**. ~388K bookings with `booking_ts >= sim-today` are FUTURE — skip in history generator, reserved for stream replay. Do not write history events for them. |
+| Backfilling lifecycle events with arbitrary scripts | Use `scripts/generate_lifecycle_history.py`. Never INSERT directly into `fact_booking_events` — script enforces FK validity, revenue invariant, source='history' tag, and BOOKING-for-every-followup rule. Consumer is the only stream-side writer (`source='stream'`). |
+| Calendar replay producer (`scripts/.sim_clock.json`) | Persists `{last_completed_day, chaos_seed}`; resumes at `saved+1`. **Do not edit by hand** — skipping days drops real `fact_bookings` rows from stream. Pass the same `--chaos-seed` on every restart. |
+| Every emitted event carries TWO timestamps | `event_ts` = wall-clock UTC (consumer windowing/SLOs); `event_date` = sim-day (business analytics). Gate 2 ignores unknown fields — `event_date` passes harmlessly. |
+| Bronze archive — PRICE_CHANGE not bronzed | Accepted events (post-Gate-4) → `s3://.../raw_events/` (INGEST-time partitioned JSONL). PRICE_CHANGE filtered at Gate 3 before bronze. Malformed/late → their own S3 paths. Bronze is best-effort — failure logs and continues. |
+| `fact_booking_lifecycle` / `gold_watermark` (migration 009) | Gold layer — one row per `booking_id`, forward-only machine: BOOKED→CHECKED_IN→COMPLETED/CANCELLED. `illegal_transition_flag` fires on business-timestamp inversions (CHECKOUT before CHECKIN, CANCELLATION after CHECKOUT) — NOT processing-order artifacts. Advisory lock (`pg_try_advisory_lock(7400040)`) prevents duplicate instances; second instance exits code 1. Kill stuck instance: `Get-WmiObject Win32_Process \| Where-Object { $_.CommandLine -like '*gold_lifecycle_updater*' } \| ForEach-Object { Stop-Process -Id $_.ProcessId -Force }`. Full schema: `datamodel.md`. |
 
 ---
 

@@ -5,6 +5,8 @@
 > **DAGs:** `refresh_pinned_widgets` · `daily_hotel_kpi` · `reconcile_late_events` · `hotel_sentiment_scores` · `customer_ltv`  
 > **Status:** [x] In progress / [ ] Complete  
 
+> **HISTORY DOCUMENT** — This records Phase 6's design decisions and planned build steps; it will be updated as the phase completes. For current status, see [CLAUDE.md](../CLAUDE.md) (phase status table) · [backlog.md](backlog.md) (B-024, B-013, B-014, B-015, B-016).
+
 ---
 
 
@@ -20,8 +22,8 @@ creates / touches:
 - **CREATE** `airflow/dags/hotel_sentiment_scores.py` (B-015)
 - **CREATE** `airflow/dags/customer_ltv.py` (B-016)
 - **CREATE** `airflow/requirements-airflow.txt` (provider manifest, container-only)
-- **CREATE** `db/migrations/009_hotel_sentiment_scores.sql` (target table for B-015 — was planned as 008 before 008 was taken by `008_lifecycle_events.sql` / B-035)
-- **CREATE** `db/migrations/010_customer_ltv.sql` (target table for B-016 — was planned as 009; slid forward by one)
+- **CREATE** `db/migrations/<next>_hotel_sentiment_scores.sql` (target table for B-015 — check `db/migrations/` for the next free number; 008 and 009 are both taken)
+- **CREATE** `db/migrations/<next+1>_customer_ltv.sql` (target table for B-016)
 - **MODIFY** `.env` — add Airflow vars manually
 
 ## OBJECTIVE
@@ -61,7 +63,7 @@ sensitive — without Phase 5's frozen SQL, the DAG has nothing to run.
 
 ---
 
-## ARCHITECTURE DECISIONS (LOCKED)
+## ARCHITECTURE DECISIONS (ORIGINAL)
 
 These design choices are settled. Do not re-litigate during STEPS.
 
@@ -460,7 +462,7 @@ docker exec travellens-minio mc ls local/travellens-data/late_events/ | grep -v 
 
 Two weekly DAGs that build Gold-layer aggregates other tooling can
 query without paying the underlying compute cost on each request.
-Both write to new tables created by migrations `009` and `010`.
+Both write to new tables created by the next two available migrations after 009 (check `db/migrations/` for the current highest number before creating).
 
 #### B-015 — `hotel_sentiment_scores`
 
@@ -470,7 +472,7 @@ Both write to new tables created by migrations `009` and `010`.
 | `catchup`         | `False` — recomputed in full each week |
 | `max_active_runs` | `1` |
 | Source tables     | `reviews_raw` (with `embedding`), `hotel_master` |
-| Target            | `hotel_sentiment_scores` (new Gold table, migration 009) |
+| Target            | `hotel_sentiment_scores` (new Gold table; migration number: next free after 009) |
 | Connection        | `travellens_warehouse` |
 
 **Computation** — per `hotel_id`:
@@ -505,7 +507,7 @@ ORDER BY sentiment_score DESC LIMIT 10;
 | `catchup`         | `False` — recomputed in full each week |
 | `max_active_runs` | `1` |
 | Source tables     | `fact_bookings`, `dim_customer` |
-| Target            | `customer_ltv` (new Gold table, migration 010) |
+| Target            | `customer_ltv` (new Gold table; migration number: next free after hotel_sentiment_scores) |
 | Connection        | `travellens_warehouse` |
 
 **Computation** — per `customer_id`:

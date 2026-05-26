@@ -5,6 +5,8 @@
 > **Scripts:** `scripts/load_to_postgres.py` · `scripts/validate_load.py`  
 > **Status:** [ ] In progress / [x] Complete  
 
+> **HISTORY DOCUMENT** — This records how Phase 1 was originally built. For the current schema source of truth, see [CLAUDE.md](../CLAUDE.md) · [datamodel.md](../datamodel.md) · [backlog.md](backlog.md).
+
 ---
 
 
@@ -59,7 +61,7 @@ Do not create files outside this list. Do not modify `data/` or `.env`.
 
 ---
 
-## ARCHITECTURE DECISIONS
+## ARCHITECTURE DECISIONS (ORIGINAL)
 
 ### Why Postgres + pgvector, not DuckDB
 
@@ -184,15 +186,7 @@ Critical column specifics:
 - `reviews_raw.embedding` is `vector(384)` — exactly this type
 - `hotel_master.amenities` is `JSONB`
 - `fact_bookings.is_cancelled` is `BOOLEAN NOT NULL DEFAULT FALSE`
-- `agg_hourly_city_stats` canonical columns and PRIMARY KEY `(city, window_start)`:
-  - `city VARCHAR(100) NOT NULL`
-  - `window_start TIMESTAMP NOT NULL`
-  - `window_end TIMESTAMP NOT NULL`
-  - `total_bookings INTEGER`
-  - `total_revenue_inr NUMERIC(15,2)`
-  - `avg_occupancy_rate NUMERIC(5,2)`  ← use `_rate` not `_pct`
-  - `cancellation_rate NUMERIC(5,4)`
-  - `ingestion_ts TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP`
+- `agg_hourly_city_stats` PRIMARY KEY `(city, window_start)` — use `avg_occupancy_rate` (not `_pct`). Full schema: `datamodel.md` (migration 007 added 4 count columns post-Phase-1).
 
 Apply the schema:
 ```bash
@@ -333,25 +327,6 @@ After all 7 succeed, output `PHASE 1 ACCEPTED` and stop. Do not proceed to Phase
 ## EXPLORE
 
 Run these queries after the load completes to understand what's in the database.
-
-**DuckDB UI (`duckdb -ui`):**
-
-Run this once in the first cell. Keep the cell context set to `memory` (top-right dropdown):
-
-```sql
-INSTALL postgres;
-LOAD postgres;
-ATTACH 'host=localhost port=5432 dbname=travellens user=travellens password=yourpassword'
-    AS travellens_postgres (TYPE postgres);
-```
-
-Then for every subsequent query cell — add `USE travellens_postgres.public;` as the
-**first line of that cell**, then write your query below it:
-
-```sql
-USE travellens_postgres.public;
-SELECT ... FROM fact_bookings;
-```
 
 **psql:**
 ```bash
@@ -523,8 +498,6 @@ To restart: bring the container back up and re-run Steps 3 onward.
 ---
 
 ## LESSONS LEARNED
-
-_(Fill in after Phase 1 is complete)_
 
 - Actual load time:
 - Any FK orphan errors during re-enable:

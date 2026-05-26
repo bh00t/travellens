@@ -14,6 +14,8 @@
 > migration that unlocked the live-throughput path, see
 > [`../db/migrations/007_pipeline_live_metrics.sql`](../db/migrations/007_pipeline_live_metrics.sql).
 
+> **HISTORY DOCUMENT** — This records how Phase 7 was originally built and how it evolved. For current behaviour of `/monitor`, see [CLAUDE.md](../CLAUDE.md) · [backlog.md](backlog.md).
+
 ---
 
 ## REPO STATE AFTER THIS PHASE
@@ -24,7 +26,7 @@ creates / touches:
 - **MODIFY** `render/server.py` (add `/monitor` + `/monitor/data` routes + 5 helpers)
 - **CREATE** `render/templates/monitor.html` (Chunk 4 layout)
 - **REQUIRED** `db/migrations/007_pipeline_live_metrics.sql` (creates `pipeline_metrics` + agg count cols — applied before the monitor reads anything)
-- **DEPENDS ON** `scripts/stream_consumer.py` writing the heartbeat the monitor reads (the consumer was touched under B-031 / B-032 — see Phase 2 POST-ACCEPTANCE HARDENING)
+- **DEPENDS ON** `scripts/stream_consumer.py` writing the heartbeat the monitor reads (the consumer was touched under B-031 / B-032 — see [Phase 2 Build History / Evolution](phase-2-streaming.md#build-history--evolution))
 
 ---
 
@@ -61,9 +63,8 @@ place every ~10s; the dot pill goes grey when the consumer stops.
   `pipeline_metrics` heartbeat every `FLUSH_CHECK_SECONDS` (~10s) and populates
   the per-type count columns. Without it, the heartbeat never lands and
   per-type tiles stay zero.
-- [x] **Producer chunk 3 shipped** — `scripts/kafka_event_producer.py` emits
-  CHECKOUT at design weight 0.12 (along with the other four types). Without
-  it, `total_checkouts` reads 0 forever.
+- [x] **Producer emits CHECKOUT** — `scripts/kafka_event_producer.py` emits CHECKOUT events
+  (B-032 Chunk 3 / B-034A calendar replay). Without it, `total_checkouts` reads 0 forever.
 - [x] `.env` contains the S3/MinIO vars (`AWS_ENDPOINT_URL`, etc.) and Airflow
   is reachable at `http://localhost:8080` when its container is up.
 
@@ -71,7 +72,7 @@ If any prerequisite fails, stop. Do not improvise.
 
 ---
 
-## ARCHITECTURE DECISIONS (LOCKED)
+## ARCHITECTURE DECISIONS (ORIGINAL)
 
 ### Two data sources, two roles
 
@@ -358,6 +359,36 @@ queries).
 - Default `from` and `to` to today UTC when absent — do NOT fall back to "all
   data".
 - Do not run any git commands — the user commits after acceptance.
+
+---
+
+## BUILD HISTORY / EVOLUTION
+
+Changes to the Phase 7 monitor after the original B-027 acceptance sign-off. Earliest first.
+
+---
+
+### B-027 — Base monitor build
+
+Original `/monitor` route in `render/server.py` + `render/templates/monitor.html`. Three fixed sections (EVENTS, QUARANTINE, HEALTH). Data served from `agg_hourly_city_stats` and MinIO bucket counts. No live pulse, no auto-refresh — static load on each page visit.
+
+---
+
+### B-029 — In-place auto-refresh
+
+Added the `/monitor/data` JSON sidecar route. JavaScript poller hits `/monitor/data` every ~10s and updates page numbers in place without a full reload. Added the live-pulse header: green dot + events/sec derived from adjacent `pipeline_metrics` rows. Dot goes grey when the consumer stops (no heartbeat in the last 30s).
+
+**Why:** A static-load monitor cannot answer "is the pipeline running right now?" A 10s in-place refresh gives near-live visibility without a full page cycle.
+
+---
+
+### B-032 Chunk 4 — Live-throughput redesign
+
+Full redesign of `monitor.html`: default-today filter, per-event-type lifecycle counts (BOOKING / CHECKIN / CHECKOUT / CANCELLATION), SOON placeholder tiles (Sentiment, Review, Embedded — honest about what is not built yet), revenue removed from pipeline metrics (business content belongs in Explorer). Live events/sec matches producer rate exactly; page renders even with MinIO stopped.
+
+**Files:** `render/server.py` (five `_monitor_*` helpers, guard on every external dependency), `render/templates/monitor.html` (Chunk 4 layout). Migration 007 is the schema anchor.
+
+---
 
 ## NEXT
 

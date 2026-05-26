@@ -97,8 +97,8 @@ Once the one-time setup above is done, `run.py` is the dev launcher — one comm
 
 ```bash
 python run.py                  # full stack: Docker (if needed) + consumer + simulator + dashboard
-python run.py --no-sim         # consumer + dashboard live, NO simulator (send events by hand:
-                               #   python -m scripts.kafka_event_producer --rate 50 --duration 60)
+python run.py --no-sim         # consumer + dashboard live, NO simulator (run the producer
+                               #   manually: python -m scripts.kafka_event_producer)
 python run.py --server-only    # ONLY the Flask dashboard (assumes Docker/DB already up; for viewing existing data)
 python run.py --window N       # run the consumer with an N-minute window (testing; prod is 60m)
 ```

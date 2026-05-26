@@ -852,42 +852,14 @@ heartbeat, the quarantine sinks, and the window logic are all
 untouched. Bronze sits alongside them as a fourth sink, parallel to
 agg.
 
-**Acceptance (7/7 PASS — full table in this session's report):**
-- A. Clean run: bronze 7,453 = accepted (BOOKING 2,177 + CHECKIN
-  2,094 + CHECKOUT 2,606 + CANCELLATION 576); events_consumed 7,468 =
-  bronze + 15 PRICE_CHANGE (Gate-3 silent filter).
-- B. Chaos run: bronze 4,459 + malformed 228 + late 96 + 9
-  PRICE_CHANGE = 4,792 emitted; 0 quarantined events appear in
-  `raw_events/` (audit across 11,912 bronze events: 0 missing
-  required fields, 0 PRICE_CHANGE, 0 event_ts outside ±1h of
-  wall-clock now).
-- C. Fidelity: every sampled BOOKING / CHECKIN / CHECKOUT /
-  CANCELLATION carries the full wire payload including `event_ts`
-  (wall-clock) and `event_date` (sim-day). CANCELLATION carries
-  `cancellation_reason`. PRICE_CHANGE absent (filtered at Gate 3,
-  never reaches bronze).
-- D. Partitioning: all 32 files under
-  `raw_events/year=YYYY/month=MM/day=DD/hour=HH/`.
-- E. Batching: 32 files, 6,989 B → 184,530 B; cap-triggered batches
-  are ~170 KB (500 events), tick-triggered batches are smaller.
-  Never one-per-event, never one-giant-file.
-- F. Isolation: forced via `S3_BUCKET=does-not-exist-isolation-test`.
-  6 bronze flushes failed (logged "✗ Bronze sink error (N events
-  dropped): NoSuchBucket"); despite that, Postgres agg upsert
-  succeeded for all 44 windows, pipeline_metrics heartbeat wrote 6
-  rows, the consumer consumed all 2,430 events and exited cleanly
-  with the gap reported in its shutdown summary.
-- G. No regression: per-type agg sums across both runs match bronze
-  type counts exactly (BOOKING 3,692 / CHECKIN 3,390 / CHECKOUT
-  4,019 / CANCELLATION 811); heartbeat firing every ~10s (46 rows /
-  10:43); 88 windows flushed.
+**Acceptance (7/7 PASS):** Clean run: bronze 7,453 = accepted (BOOKING+CHECKIN+CHECKOUT+CANCELLATION); events_consumed 7,468 = bronze + 15 PRICE_CHANGE filtered at Gate 3 — 0 PRICE_CHANGE in raw_events/. Chaos run: 11,912 bronze events across 2 runs, 0 PRICE_CHANGE / malformed / late in raw_events/. Partitioning: ingest-time year/month/day/hour correct. Isolation: 6 bronze failures (bad bucket) → agg upsert + heartbeat unaffected, consumer exited cleanly.
 
 **Files touched:** `scripts/stream_consumer.py` (additive — no
 existing sink modified). Docs same turn:
 `docs/backlog.md` (this entry; B-039/B-040 reserved),
 `CLAUDE.md` (consumer sinks list updated, common-mistakes row),
 `datamodel.md` (medallion section — bronze raw_events/ documented),
-`docs/phase-2-streaming.md` (POST-ACCEPTANCE HARDENING bullet).
+`docs/phase-2-streaming.md` (Build History / Evolution section).
 
 **Next:** **B-039** (silver — parse + dedupe bronze JSONL into a
 typed `fact_booking_events source='stream'` ledger) and **B-040**
@@ -970,28 +942,7 @@ unit tests (`c:\tmp\silver_isolation_unit.py`) verify against two
 distinct DB errors (bad password / missing table); both return `[]`,
 bump the counter, and never raise.
 
-**Acceptance (7/7 PASS):**
-- A. Clean run (3-day slice + 1-day slice combined): silver inserted
-  = events_consumed = accepted, 0 dedup'd, all 5 types present
-  including PRICE_CHANGE (counts: BOOKING 4,543 / CHECKIN 2,228 /
-  CHECKOUT 1,828 / CANCELLATION 446 / PRICE_CHANGE 30 cumulative).
-- B. Chaos run (2 sim-days, 5% malformed + 2% late, seed 42):
-  events_consumed 4,582 → silver inserted **4,272** (EXACT =
-  4,582 − 221 malformed − 89 late); 0 quarantined rows landed in
-  silver.
-- C. Dedup: re-INSERT 100 existing event_ids via the same
-  ON CONFLICT path → `cur.rowcount = 0`, table count delta = 0.
-- D. Fidelity: one row per type sampled; field mapping correct per
-  the spec, PRICE_CHANGE has NULL booking_id + NULL customer_id.
-- E. Linkage: 3,845 stream BOOKING rows → 0 orphan booking_id /
-  customer_id / hotel_id / room_type_id (FK JOIN to fact_bookings /
-  dim_customer / hotel_master / dim_room_type).
-- F. Isolation: silver_flush survives bad password + missing table
-  without raising; consumer's agg + bronze + heartbeat unaffected
-  (structurally identical to bronze's verified posture).
-- G. No regression: clean run shows 44 windows flushed, S3 Parquet
-  archive succeeds, heartbeat firing every ~10s, 0 malformed / 0
-  late.
+**Acceptance (7/7 PASS):** Clean run: silver inserted = events_consumed = accepted (0 dedup'd, all 5 types including PRICE_CHANGE). Chaos run: 4,272 inserted EXACT = 4,582 consumed − 221 malformed − 89 late; 0 quarantined rows in silver. Dedup: re-insert 100 existing event_ids → rowcount=0, count stable. Linkage: 3,845 BOOKING rows → 0 orphan FKs. Isolation: silver_flush survives bad pw + missing table; agg/bronze/heartbeat unaffected.
 
 **Files touched:** `scripts/stream_consumer.py` (additive — only the
 gate reorder is a structural change; no existing sink modified).
@@ -1120,11 +1071,6 @@ until then; the day-prefix listing is cheap enough that even a
 
 ---
 
-### B-040 — Gold layer: per-booking lifecycle reconstruction + transition flags ✓ DONE
-**Status:** Done — see full entry above and [Completed](#completed) table.
-
----
-
 ### B-030 — Reviews are not generated in the stream (feature gap, NOT a correlation bug)
 **Origin:** User wanted reviews tied to real hotels/bookings rather than unrelated.
 **Verified fact (settled, do not re-litigate the correlation part):** hotel-level correlation
@@ -1206,8 +1152,9 @@ The old design weights stay documented in `docs/phase-2-streaming.md` as histori
 
 ---
 
+## Known Limitations (L-)
 
-
+| ID | Description | Introduced | Resolution |
 |---|---|---|---|
 | L-001 | `agg_daily_hotel_kpi` empty until Phase 6 Airflow DAGs | Phase 4 | B-013 |
 | L-002 | ~~Hybrid queries (SQL filter + semantic content) degrade silently~~ — RESOLVED by B-004 (Phase 5) | Phase 4 | RESOLVED |

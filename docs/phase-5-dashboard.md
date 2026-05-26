@@ -3,7 +3,9 @@
 > **Stack:** Python 3.11 · Flask · Jinja2 · Chart.js · Postgres 16 · Docker  
 > **Hardware:** RTX 3070 8GB · 31GB RAM · Windows 11  
 > **Entry point:** `python -m render.server` → `http://localhost:5000`  
-> **Status:** [ ] In progress / [ ] Complete  
+> **Status:** [x] Complete  
+
+> **HISTORY DOCUMENT** — This records how Phase 5 was originally built and how it evolved. For current behaviour of the Flask dashboard, see [CLAUDE.md](../CLAUDE.md) · [datamodel.md](../datamodel.md) · [backlog.md](backlog.md).
 
 ---
 
@@ -58,7 +60,7 @@ the render layer.
 
 ---
 
-## ARCHITECTURE DECISIONS
+## ARCHITECTURE DECISIONS (ORIGINAL)
 
 ### Flask, not FastAPI
 
@@ -283,7 +285,7 @@ Seven sections in order:
 
 **Tech stack** — pill badges in two styles:
 - Green highlighted pills: Postgres 16, pgvector, Apache Kafka, Ollama · Qwen2.5-Coder-7B, sentence-transformers · all-MiniLM-L6-v2
-- Grey pills: Python 3.11, Flask, Chart.js, MinIO, Docker, DuckDB
+- Grey pills: Python 3.11, Flask, Chart.js, MinIO, Docker
 
 **Data sources** — 2-column grid:
 - Hotel Reviews: 30K real reviews from MakeMyTrip/OYO (Kaggle), embedded into pgvector
@@ -375,9 +377,8 @@ docker exec travellens-postgres psql -U travellens -d travellens \
 
 After Phase 5 is running:
 
-**DuckDB UI — check widget state:**
+**psql — check widget state:**
 ```sql
-USE travellens_postgres.public;
 SELECT widget_id, prompt, widget_type, pinned_at, last_refreshed_at
 FROM dashboard_widgets
 ORDER BY pinned_at DESC;
@@ -422,12 +423,9 @@ Phase 4 and all data are unaffected.
 
 ## LESSONS LEARNED
 
-_(Fill in after Phase 5 is complete)_
-
-- Widget type auto-detection accuracy:
-- Queries that produced wrong widget types:
-- Flask server latency (page load time):
-- Any Ollama timeout issues during dashboard auto-refresh:
+- Widget type auto-detection: accuracy depends on query phrasing; `widget_renderer.py` uses shape-based heuristics (single scalar → stat card, multiple rows + 2 columns → bar chart, etc.).
+- Read path never triggers compute (B-022 — pin freezes SQL; refresh runs frozen SQL; dashboard load serves JSONB cache). See backlog B-022 for the full cache architecture.
+- Ollama latency on first query ~2–3s (model warm-up); subsequent queries ~1s on RTX 3070.
 
 ---
 
@@ -446,6 +444,28 @@ _(Fill in after Phase 5 is complete)_
 - Never import psycopg2 in server.py for data queries — only for dashboard_widgets table CRUD
 - Replace `yourusername` in about.html GitHub link with the actual GitHub username
 - The server must be run as `python -m render.server` not `python render/server.py`
+
+---
+
+## BUILD HISTORY / EVOLUTION
+
+Changes to the Phase 5 dashboard after the original acceptance sign-off. Earliest first.
+
+---
+
+### Migration 004 — Widget width setting
+
+`db/migrations/004_widget_settings.sql` added a `width` column to `dashboard_widgets`. See [`datamodel.md`](../datamodel.md) Schema Evolution for the DDL.
+
+---
+
+### B-022 — Frozen SQL cache (read path never triggers compute)
+
+`db/migrations/005_widget_cache.sql` added `generated_sql` and `last_result_json` to `dashboard_widgets`. `render/server.py` updated: pin now stores the Ollama-generated SQL frozen on the widget row; refresh runs that frozen SQL directly without a new LLM call; dashboard page load serves the `last_result_json` JSONB cache immediately.
+
+**Why:** LLM calls on every refresh added latency and non-determinism. Frozen SQL makes refresh fast, deterministic, and LLM-cost-free — same stale-while-revalidate pattern a CDN uses.
+
+**Files modified:** `render/server.py`, `render/templates/dashboard.html` (Show SQL modal + widget rename). See [`backlog.md`](backlog.md) B-022 for the full design.
 
 ---
 

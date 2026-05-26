@@ -5,6 +5,8 @@
 > **Script:** `scripts/generate_embeddings.py`  
 > **Status:** [ ] In progress / [x] Complete  
 
+> **HISTORY DOCUMENT** — This records how Phase 3 was originally built. For the current embedding setup and index configuration, see [CLAUDE.md](../CLAUDE.md) · [datamodel.md](../datamodel.md) · [backlog.md](backlog.md).
+
 ---
 
 
@@ -60,7 +62,7 @@ python -c "import torch; print('CUDA:', torch.cuda.is_available(), '|', torch.cu
 
 ---
 
-## ARCHITECTURE DECISIONS
+## ARCHITECTURE DECISIONS (ORIGINAL)
 
 ### Why `all-MiniLM-L6-v2`
 
@@ -223,29 +225,7 @@ this agent session. The owner reviews the diff and commits themselves.
 
 Run these queries to understand what Phase 3 built. Use whichever tool you prefer:
 
-**DuckDB UI (`duckdb -ui`):**
-
-Run this once in the first cell. Keep the cell context set to `memory` (top-right dropdown):
-
-```sql
-INSTALL postgres;
-LOAD postgres;
-ATTACH 'host=localhost port=5432 dbname=travellens user=travellens password=yourpassword'
-    AS travellens_postgres (TYPE postgres);
-```
-
-Then for every subsequent query cell — add `USE travellens_postgres.public;` as the
-**first line of that cell**, then write your query below it:
-
-```sql
-USE travellens_postgres.public;
-SELECT ... FROM reviews_raw;
-```
-
-> **Note:** Any query using the `<=>` cosine similarity operator (E8) will not work in
-> DuckDB — it does not understand pgvector operators. Run those in psql only.
-
-**psql:**
+**psql** (required for `<=>` cosine similarity — pgvector operators are not available in DuckDB):
 ```bash
 docker exec -it travellens-postgres psql -U travellens -d travellens
 ```
@@ -487,7 +467,7 @@ old and new model vectors are geometrically incompatible.
 - Truncate at 1,000 chars — never skip long reviews (NULL embeddings are invisible to search)
 - Run all 4 acceptance tests in psql before declaring done
 - Do not modify any Phase 1 or Phase 2 files
-- `<=>` cosine operator only works in psql — do not use it in DuckDB UI
+- `<=>` cosine operator requires psql — pgvector operators are not supported in DuckDB
 
 
 ## NEXT

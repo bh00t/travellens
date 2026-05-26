@@ -5,7 +5,9 @@
 > **Files:** `ai/query_router.py` · `ai/text_to_sql.py` · `ai/semantic_search.py` · `ai/main.py`  
 > **Status:** [ ] In progress / [x] Complete  
 
-> For current behavior and accuracy levels, see [`capabilities-and-limits.md`](./capabilities-and-limits.md).
+> **HISTORY DOCUMENT** — This records how Phase 4 was originally built and how it evolved. For current behaviour of the AI layer, see [CLAUDE.md](../CLAUDE.md) · [backlog.md](backlog.md).
+
+> For per-query accuracy levels and known caveats, see [`capabilities-and-limits.md`](./capabilities-and-limits.md).
 
 ---
 
@@ -63,7 +65,7 @@ for Phase 5 to render.
 
 ---
 
-## ARCHITECTURE DECISIONS
+## ARCHITECTURE DECISIONS (ORIGINAL)
 
 ### Keyword classifier router, not LLM router
 
@@ -472,11 +474,9 @@ Phase 3 embeddings and index are unaffected — rollback only removes Phase 4 fi
 
 ## LESSONS LEARNED
 
-_(Fill in after Phase 4 is complete)_
-
-- SQL path accuracy — which query patterns failed or produced wrong SQL?
-- Semantic path quality — did Ollama summaries reflect the reviews accurately?
-- Router misclassifications — any queries routed to the wrong path?
+- SQL path accuracy — see `docs/backlog.md` L-004 (Ollama accuracy ~85–90%), L-011 (DISTINCT omission), L-013 (bare aggregation cancellation filter drop).
+- Semantic path quality — see L-012 (topic vs polarity conflation in embeddings).
+- Router misclassifications — see L-003 (short trigger words like "hot" matching inside "hotels").
 - Actual Ollama latency on GPU:
 - Any Ollama timeout issues:
 - Rule sections that needed tightening (JOIN MAP / COLUMN LOCATION / ENTITY COUNT / OUTPUT RULES):
@@ -499,6 +499,33 @@ _(Fill in after Phase 4 is complete)_
 - Run all 6 acceptance tests before declaring done — including latency check
 - Do not modify Phase 1, 2, or 3 files
 
+---
+
+## BUILD HISTORY / EVOLUTION
+
+Changes to the Phase 4 AI layer after the original acceptance sign-off. Earliest first.
+
+---
+
+### B-003 — Column-name validation
+
+Added `_load_schema()` and `_validate_columns()` to `text_to_sql.py`. Both are built from `information_schema.columns` at import time. The guard rejects Ollama-generated SQL that references columns not present on the named table, returning a structured validation error instead of a Postgres exception.
+
+**Why:** Ollama occasionally hallucinated column names (`hotel_master.city` instead of `dim_location.city`). The guard surfaces the exact bad column rather than a cryptic SQL error.
+
+**Regression suite:** `pytest tests/test_validate_columns.py -v` — see Hardening tests in ACCEPTANCE TESTS above.
+
+---
+
+### B-004 — Hybrid queries (filter detection + hotel_id scoping)
+
+Added `detect_filters()` to `text_to_sql.py` and hotel-scoping logic to `ai/main.py`. Queries that combine a SQL aggregate with a city or hotel filter now correctly scope the WHERE clause rather than returning unfiltered results.
+
+**Why:** Mixed queries ("top cities in Goa") produced unscoped SQL — the aggregate ran over all cities. `detect_filters()` is a thin pre-pass before SQL generation, not a replacement for it.
+
+**Regression suite:** `pytest tests/test_hybrid_queries.py -v` — covers fast detection-layer unit tests and slower stack-hitting tests marked `@pytest.mark.slow`. See Hardening tests in ACCEPTANCE TESTS above.
+
+---
 
 ## NEXT
 

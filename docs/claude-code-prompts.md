@@ -283,15 +283,4 @@ deltas (what each phase creates / touches) live in each phase doc's
 
 ## Phase status
 
-| Phase | Description | Status |
-|---|---|---|
-| 0 | Environment setup | ✓ Complete |
-| 1 | Postgres schema + data load | ✓ Complete |
-| 2 | Kafka streaming + dual sink | ✓ Complete |
-| 3 | Embeddings + pgvector | ✓ Complete |
-| 4 | AI layer (Text-to-SQL + semantic) | ✓ Complete |
-| 5 | Flask dashboard | ✓ Complete |
-| 6 | Airflow DAGs | ⬜ In progress — infra/containers up, 5 DAGs not built |
-| 7 | Pipeline monitor (/monitor) | ✓ Complete — B-027 base + B-029 in-place auto-refresh + B-032 live throughput redesign all shipped |
-
-Current phase: **6**. Root `CLAUDE.md` is the canonical source for phase status — this table is a copy for prompt-file convenience.
+Canonical phase status: see the **Phase status** table in [`CLAUDE.md`](../CLAUDE.md). Current phase: **6** (Airflow DAGs; infra up, 5 DAGs not built).

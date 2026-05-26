@@ -59,109 +59,43 @@ The datasets here support three query patterns:
 - **Read this `datamodel.md`** for schemas, relationships, sample rows, and design decisions
 - **`schema.sql`** — DDL statements to create all tables in Postgres
 - **CSV files** — the actual data (~248 MB, ~1.16M rows total)
-- **Need to regenerate or scale?** Run the three generator scripts in order:
-
-  ```bash
-  python generate_datasets.py    # Stage 1 — base schema (~30s)
-  python generate_stage2.py      # Stage 2 — facts, customers, dates (~90s)
-  python generate_stage3.py      # Stage 3 — customer behavior correlation (~60s)
-  ```
-
-  All scripts are deterministic (`SEED = 42`). Edit constants at the top of each to scale rows or change date ranges.
+- **Need to regenerate or scale?** See [Regenerating the Dataset](#regenerating-the-dataset) below — three deterministic scripts (seed=42), ~3 min total.
 
 ---
 
 ## Regenerating the Dataset
 
-All CSVs in this folder are produced by three deterministic generator scripts in `scripts/`. Re-running them produces byte-identical output (seed=42) — so you can safely regenerate at any time to scale rows, extend the date range, or recover from accidental edits.
+All CSVs in `data/` are produced by three deterministic generator scripts (`SEED=42`). All stages run in order; Stage 2 depends on Stage 1 output and Stage 3 overwrites Stage 2's `fact_bookings.csv`.
 
-### Stage 1 — Foundation (`scripts/generate_datasets.py`)
-
-Builds the entities that everything else references. No dependencies on other stages.
-
-| Output | Rows | Description |
-|---|---:|---|
-| `hotel_master.csv` | 2,000 | Hotels with name, city, chain, star, total_rooms, amenities (JSON), price_tier_id |
-| `dim_location.csv` | 44 | City → state → region → tourism zone mapping with lat/lng |
-| `dim_room_type.csv` | ~5,500 | Room types per hotel, with capacity and category |
-| `reviews_raw.csv` | 30,000 | Reviews seed (Stage 2 regenerates with quality fixes) |
-| `booking_events_seed.json` | 500 | Per-hotel behavior profile for the Kafka simulator |
-| `public_holidays.csv` | ~120 | Indian public holidays 2024–2027 |
-| `india_states_zones.csv` | 37 | State-level tourism zones and arrival statistics |
-
-Runtime: ~30s. Outputs land in `data/` (configurable via `OUT_DIR` at the top of the script).
-
-### Stage 2 — Facts and dependent dims (`scripts/generate_stage2.py`)
-
-Reads Stage 1 outputs and adds the high-volume fact tables plus the calendar dim.
-
-| Output | Rows | Description |
-|---|---:|---|
-| `fact_bookings.csv` | 1,000,000 | Bookings Jan 2024 → May 2026, with seasonality and OTA mix |
-| `fact_price_events.csv` | ~86,000 | Price change history per hotel + room_type |
-| `dim_date.csv` | 2,557 | Date spine 2020–2026 with season, holiday flags, fiscal quarter |
-| `dim_customer.csv` | 20,000 | Customers with segments (Business/Leisure/Backpacker/Honeymoon/Family/Religious) |
-| `ref_price_tiers.csv` | 4 | Budget/Mid/Premium/Luxury INR bands |
-
-Also regenerates `reviews_raw.csv` with quality fixes: power-law hotel distribution (so a few hotels have many reviews and most have few), seasonal date weighting, amenity ↔ review-content correlation, and verbose-reviewer behavior.
-
-Runtime: ~90s. **Must run AFTER Stage 1.**
-
-### Stage 3 — Customer behavior correlation (`scripts/generate_stage3.py`)
-
-Re-regenerates `fact_bookings.csv` so customer segments actually drive realistic behavior:
-
-- Business customers → mid/premium rooms, 1-2 nights, weekday-skewed, higher cancellation
-- Honeymoon customers → luxury rooms, 5-7 nights, beach/heritage destinations, low cancellation
-- Backpackers → budget rooms, 2-3 nights, hill stations
-- Religious customers → mid rooms, Varanasi/Rishikesh/Pushkar
-- Family/Leisure follow their own distributions
-
-Also produces `ref_state_centroids.csv` (38 rows) for state-level lat/lng used in geo-flow visualizations.
-
-Runtime: ~60s. **Must run AFTER Stage 2** (overwrites Stage 2's `fact_bookings.csv`).
-
-### Why three stages and not one script
-
-Each stage is independently re-runnable and the dependencies are linear. If you decide later to tune customer behavior without rebuilding hotels and dates, you re-run Stage 3 alone — Stage 1 and 2 outputs stay untouched. If you change the date range, Stage 1 stays valid but Stage 2 and 3 need a re-run. This decomposition was added incrementally during data design as quality issues were discovered; the staged structure preserves the option to fix individual concerns without rebuilding the whole dataset.
+| Stage | Script | Runtime | Key outputs |
+|---|---|---|---|
+| 1 — Foundation | `scripts/generate_datasets.py` | ~30s | `hotel_master.csv` (2K), `dim_location.csv` (44), `dim_room_type.csv` (~5.5K), `reviews_raw.csv` (30K seed), `booking_events_seed.json` (500), `public_holidays.csv` (~120), `india_states_zones.csv` (37) |
+| 2 — Facts | `scripts/generate_stage2.py` | ~90s | `fact_bookings.csv` (1M, Jan 2024–May 2026), `fact_price_events.csv` (~86K), `dim_date.csv` (2,557), `dim_customer.csv` (20K), `ref_price_tiers.csv` (4); regenerates `reviews_raw.csv` with power-law + seasonality fixes |
+| 3 — Correlation | `scripts/generate_stage3.py` | ~60s | Overwrites `fact_bookings.csv` with segment-driven behavior (Business → weekday/premium, Honeymoon → luxury/5–7 nights, etc.); adds `ref_state_centroids.csv` (38) |
 
 ### Tuning knobs
 
-Each script has a CONFIG block at the top. Common changes:
+Each script has a CONFIG block at the top. `SEED=42` everywhere — keep aligned across stages or referential integrity breaks.
 
-| Knob | Where | Effect |
+| Knob | Stage | Effect |
 |---|---|---|
-| `NUM_HOTELS` | Stage 1 | More/fewer hotels (cascades to bookings, reviews) |
-| `NUM_REVIEWS` | Stage 1 | More/fewer reviews |
-| `NUM_BOOKINGS` | Stage 2 | Scale fact_bookings up or down |
-| `NUM_CUSTOMERS` | Stage 2 | More/fewer unique customers |
-| `HISTORY_START` / `HISTORY_END` | Stage 2 + 3 | Extend or shrink the booking date range |
-| `SEED` | All three | Change RNG seed for a different dataset shape |
-
-`SEED = 42` everywhere for reproducibility. Keep them aligned across stages or referential integrity breaks.
+| `NUM_HOTELS` | 1 | Cascades to bookings and reviews |
+| `NUM_REVIEWS` | 1 | Review volume |
+| `NUM_BOOKINGS` | 2 | Scale `fact_bookings` |
+| `NUM_CUSTOMERS` | 2 | Unique customer count |
+| `HISTORY_START` / `HISTORY_END` | 2 + 3 | Booking date range |
+| `SEED` | All | RNG seed for different dataset shape |
 
 ### Full regeneration workflow
 
 ```bash
-cd C:\Users\risha\Desktop\Code\repo\travellens
-.venv\Scripts\activate
-
-# Optional: clear existing data
-del data\*.csv data\*.json
-
-# Run all three in order
-python scripts/generate_datasets.py    # ~30s — Stage 1: foundation
-python scripts/generate_stage2.py      # ~90s — Stage 2: facts + dims
-python scripts/generate_stage3.py      # ~60s — Stage 3: customer correlation
-
-# Validate referential integrity
-python scripts/validate_load.py        # Catches FK violations before Postgres load
-
-# Load into Postgres
-python scripts/load_to_postgres.py     # See "Loading Order for Postgres" below
+# From repo root with .venv active
+python scripts/generate_datasets.py    # ~30s — Stage 1
+python scripts/generate_stage2.py      # ~90s — Stage 2
+python scripts/generate_stage3.py      # ~60s — Stage 3
+python scripts/validate_load.py        # Validate referential integrity
+python -m scripts.load_to_postgres     # Load into Postgres
 ```
-
-Total time: ~3 minutes for the full 1M-booking dataset.
 
 ---
 
@@ -215,19 +149,17 @@ Not all data changes the same way. Some files are meant to be edited by hand. Ot
 
 **Note:** When `public_holidays.csv` changes, the `is_holiday` and `is_high_demand_holiday` flags in `dim_date.csv` become stale. Either regenerate `dim_date.csv` via Stage 2, or update the flags directly with SQL.
 
-### Pattern 2: Slowly-changing dimensions (SCD)
+### Pattern 2: Slowly-changing dimensions
 
-**These describe entities that change in the real world.** Production systems use SCD Type 1 (overwrite) or Type 2 (versioned rows) depending on whether historical state matters.
+All dimensions are currently **SCD Type 1** (latest value only, no history tracking in this build).
 
-| File | What changes | SCD strategy for production |
+| File | What changes | Edit notes |
 |---|---|---|
-| `hotel_master.csv` | New hotels, star re-categorization, ownership/chain changes | Type 1 for `chain_name`, `total_rooms`. Type 2 if you need historical context for old bookings. |
-| `dim_room_type.csv` | Hotels add/remove room types | Type 1 — old `room_type_id` references in `fact_bookings` keep working |
-| `dim_customer.csv` | Loyalty tier upgrades, home state changes | Type 2 recommended — "what tier was this customer WHEN they booked?" matters for analytics |
-| `dim_location.csv` | New cities added to platform coverage | Append-only, no edits to existing rows |
-| `dim_date.csv` | Extend by another year | Append rows. Never edit existing. |
-
-**For this dataset:** All dimensions are currently SCD Type 1 (latest value only, no history tracking). If you need Type 2 later, you'd add `effective_from` / `effective_to` / `is_current` columns.
+| `hotel_master.csv` | New hotels, star re-categorization, chain changes | Overwrite current row (Type 1) |
+| `dim_room_type.csv` | Hotels add/remove room types | Append-only — old `room_type_id` references in `fact_bookings` must keep working |
+| `dim_customer.csv` | Loyalty tier upgrades, home state changes | Overwrite current row; `fact_bookings` carries the booking-time values inline |
+| `dim_location.csv` | New cities added | Append-only, never edit existing rows |
+| `dim_date.csv` | Extend by another year | Append rows only — never edit existing rows |
 
 ### Pattern 3: Append-only facts
 
@@ -1314,65 +1246,21 @@ ORDER BY avg_occ DESC LIMIT 10;
 
 ### `agg_monthly_zone_summary`
 
-**Purpose:** Macro view of tourism zone performance by month.
-**Produced by:** Airflow DAG `monthly_zone_summary_dag.py`
-**Update cadence:** Monthly on day 1 for previous month
-**Lookback:** Full project history
+> **Planned — not yet deployed.** Will be created by a Phase 6 Airflow DAG (`monthly_zone_summary_dag.py`, B-015 or B-016).
 
-#### Schema
-
-| Column | Type | Notes |
-|---|---|---|
-| `year` | INT | **PK part 1** |
-| `month` | INT | **PK part 2** |
-| `tourism_zone` | VARCHAR(20) | **PK part 3.** From `dim_location.tourism_zone` |
-| `total_bookings` | INT | Confirmed bookings in this zone-month |
-| `total_revenue_inr` | BIGINT | Aggregated revenue |
-| `avg_booking_value_inr` | INT | Mean revenue per booking |
-| `avg_nights_per_booking` | DECIMAL(4,2) | Mean stay duration |
-| `cancellation_rate_pct` | DECIMAL(5,2) | Zone-level cancellation rate |
-| `top_city` | VARCHAR(50) | City contributing most revenue |
-| `top_source` | VARCHAR(20) | Top booking channel |
-
-#### Use cases
-
-- Seasonality charts on the dashboard
-- *"Compare Heritage vs Hill Station revenue in Q4"*
-- Year-over-year growth visualizations
+**Purpose:** Monthly roll-up of booking volume, revenue, and cancellation rate by `dim_location.tourism_zone`.
+**Planned cadence:** Monthly, day 1 for previous month.
+**Use cases:** Seasonality charts; zone-vs-zone revenue comparisons; year-over-year growth.
 
 ---
 
 ### `customer_lifetime_value`
 
-**Purpose:** Per-customer aggregate metrics for segment analysis.
-**Produced by:** Airflow DAG `clv_weekly_dag.py`
-**Update cadence:** Weekly on Sunday for full customer base
-**Lookback:** Computed from inception to current date
+> **Planned — not yet deployed.** Will be created by a Phase 6 Airflow DAG (`clv_weekly_dag.py`, B-016).
 
-#### Schema
-
-| Column | Type | Notes |
-|---|---|---|
-| `customer_id` | VARCHAR(12) | **PK** |
-| `first_booking_date` | DATE | Earliest confirmed booking |
-| `last_booking_date` | DATE | Most recent confirmed booking |
-| `total_bookings` | INT | Lifetime confirmed bookings |
-| `total_cancellations` | INT | Lifetime cancellations |
-| `total_revenue_inr` | BIGINT | Lifetime revenue contribution |
-| `avg_booking_value_inr` | INT | Mean revenue per booking |
-| `total_nights_stayed` | INT | Lifetime nights |
-| `favorite_zone` | VARCHAR(20) | Most-visited tourism zone |
-| `favorite_city` | VARCHAR(50) | Most-visited city |
-| `top_booking_source` | VARCHAR(20) | Preferred OTA |
-| `cancellation_rate_pct` | DECIMAL(5,2) | Cancellation rate for this customer |
-| `tenure_days` | INT | Days between first and last booking |
-| `clv_tier` | VARCHAR(10) | Derived: PLATINUM / GOLD / SILVER / BRONZE (binned by revenue) |
-
-#### Use cases
-
-- *"Which customer segments are highest-value?"*
-- *"Identify Backpackers who actually upgrade to Premium over time"*
-- *"Cancellation-prone Business customers — should we change deposit policy?"*
+**Purpose:** Per-customer aggregate: lifetime revenue, nights, cancellation rate, CLV tier (PLATINUM/GOLD/SILVER/BRONZE).
+**Planned cadence:** Weekly, full customer base.
+**Use cases:** Segment-level value analysis; loyalty targeting; cancellation-prone segment identification.
 
 ---
 
@@ -1392,18 +1280,14 @@ ORDER BY avg_occ DESC LIMIT 10;
 | `model_version` | VARCHAR(50) | e.g. `'all-MiniLM-L6-v2'` — for audit when models change |
 | `embedded_at` | TIMESTAMP | When this row was generated |
 
-**Two valid storage options:**
-1. **Separate table** as above — clean separation; flexible if you swap models
-2. **Column on `reviews_raw`** — simpler; one less join
+**Storage in this build:** Column `embedding vector(384)` added to `reviews_raw` via Phase 3 migration (option 2). The standalone-table schema above is the production-flexible form. The actual IVFFlat index uses `lists=30` (correct for ~30K rows; `lists=100` from the blueprint is wrong).
 
-For TravelLens, option 2 (column added to `reviews_raw` via Phase 3 migration) is fine. The standalone-table form shown here is the production-flexible version.
-
-#### Index
+#### Index (actual, on `reviews_raw`)
 
 ```sql
-CREATE INDEX ON review_embeddings
+CREATE INDEX ON reviews_raw
 USING ivfflat (embedding vector_cosine_ops)
-WITH (lists = 100);
+WITH (lists = 30);
 ```
 
 #### Use cases
@@ -1416,31 +1300,11 @@ WITH (lists = 100);
 
 ### `hotel_sentiment_scores`
 
-**Purpose:** Aggregated review sentiment per hotel, derived from embeddings.
-**Produced by:** Airflow DAG `sentiment_weekly_dag.py` (Phase 3 of blueprint)
-**Update cadence:** Weekly, recomputed against full review corpus
-**Lookback:** Full review history
+> **Planned — not yet deployed.** Depends on `review_embeddings` being populated (Phase 3 ✓) and a sentiment clustering DAG (Phase 6+).
 
-#### Schema
-
-| Column | Type | Notes |
-|---|---|---|
-| `hotel_id` | VARCHAR(10) | **PK** |
-| `total_reviews` | INT | Count used in aggregation |
-| `avg_sentiment_score` | DECIMAL(4,3) | -1.000 (very negative) to 1.000 (very positive) |
-| `cleanliness_score` | DECIMAL(4,3) | Theme-specific sentiment (from clustered embeddings) |
-| `staff_score` | DECIMAL(4,3) | Theme-specific |
-| `location_score` | DECIMAL(4,3) | Theme-specific |
-| `food_score` | DECIMAL(4,3) | Theme-specific (NULL if hotel has no restaurant) |
-| `value_score` | DECIMAL(4,3) | Theme-specific |
-| `pct_off_topic_reviews` | DECIMAL(5,2) | Share of reviews flagged irrelevant |
-| `computed_at` | TIMESTAMP | When this row was last refreshed |
-
-#### Use cases
-
-- *"Hotels with high cleanliness complaints but high ratings overall"* (find disconnect)
-- *"Rank Goa beach hotels by food sentiment"*
-- *"Surface hotels with declining sentiment over time"* (compare snapshots)
+**Purpose:** Per-hotel theme-specific sentiment scores (cleanliness, staff, location, food, value) derived from pgvector embeddings.
+**Planned cadence:** Weekly, recomputed against full review corpus.
+**Use cases:** Disconnect analysis (high rating but low cleanliness score); ranking hotels by specific sentiment dimensions; trend monitoring.
 
 ---
 
@@ -1748,59 +1612,40 @@ For each hotel, every "tick" (e.g. every second):
 3. For each event: draw an event type from the weighted mix below, then for BOOKING/PRICE_CHANGE fill the type-specific extra fields
 4. Publish JSON to Kafka `booking-events` topic
 
-#### Producer model — stateful booking-lifecycle simulator (B-034)
+#### Producer model — calendar replay simulator (B-034A, current)
 
-`scripts/kafka_event_producer.py` is a **stateful open-bookings registry simulator**, not a per-tick weighted draw. Each tick:
+> The B-034 stateful in-memory registry producer was superseded by the B-034A calendar replay simulator. See `docs/phase-2-streaming.md` ARCHITECTURE DECISIONS for the full pivot rationale.
 
-1. With small probability emits a stateless `PRICE_CHANGE` on a random hotel/room.
-2. Else either **starts a new booking** (mints `booking_id`, picks a real `customer_id` from `data/dim_customer.csv`, emits `BOOKING`, adds the record to an in-memory registry) **or advances a random open booking one step**:
-    - `BOOKED → CHECKIN` (record status flips, stays in registry), or
-    - `BOOKED → CANCELLATION` (probabilistic; reason is `customer_cancelled` or `no_show`, the record is evicted), or
-    - `CHECKED_IN → CHECKOUT` (the record is evicted).
-3. The registry is capped at a soft maximum; when full, every tick is forced to ADVANCE until eviction frees a slot.
-
-**Why this shape:** every `CHECKIN`/`CHECKOUT`/`CANCELLATION` carries a `booking_id` and `customer_id` that traces to a real prior `BOOKING` event in the same stream — joins-by-booking become meaningful. The old stateless model produced uncorrelated wire events.
-
-**New producer input:** `data/dim_customer.csv` (column `customer_id`, ~20K rows). Sampled WITH replacement at booking-start time — repeat customers are realistic and intentional.
+`scripts/kafka_event_producer.py` (B-034A) walks a sim-clock day by day, replaying `fact_bookings WHERE booking_ts >= sim-start` as BOOKING events and advancing `sim_open_bookings` through CHECKIN/CHECKOUT/CANCELLATION at their real dates. Outcomes come from `fact_bookings.is_cancelled`, not randomised. Sim-clock persists at `scripts/.sim_clock.json` (gitignored); resume = saved+1.
 
 #### Event types emitted
 
-Wire `event_type` strings unchanged from the previous mix. Field contract enriched per the simulator above. The consumer treats unknown extra fields harmlessly — no change required on the consume side for the enriched envelope to land cleanly.
-
 | Event type | Extra fields beyond base envelope | Notes |
 |---|---|---|
-| `BOOKING` | `booking_id`, `customer_id`, `room_type_id`, `checkin_date`, `checkout_date`, `nights`, `num_guests`, `nightly_rate_inr`, `revenue_inr`, `booking_source`, `payment_mode` (`PREPAID`/`PAY_AT_HOTEL`) | Headline event. Drives `total_bookings` and `total_revenue_inr` on `agg_hourly_city_stats`. **INVARIANT (asserted in code):** `revenue_inr == nightly_rate_inr * nights`. |
-| `CHECKIN` | `booking_id`, `customer_id` | Drives `total_checkins`. Now traceable to its originating BOOKING. |
-| `CHECKOUT` | `booking_id`, `customer_id` | Drives `total_checkouts`. Same booking_id as the matching CHECKIN. |
-| `CANCELLATION` | `booking_id`, `customer_id`, `cancellation_reason` (`customer_cancelled` or `no_show`) | Drives `total_cancellations` (raw count) and feeds `cancellation_rate` (ratio). Reason is a probabilistic branch decided at cancellation time, not a wall-clock check. |
-| `PRICE_CHANGE` | `room_type_id`, `old_price_inr`, `new_price_inr` (NO `booking_id`, NO `customer_id`) | Stateless operational event on a (hotel, room_type). Passes consumer Gate 2 but is silently filtered at Gate 3 (not in `PROCESSED_EVENT_TYPES`). |
-| `REVIEW` | (planned: `booking_id`, `customer_id`, `rating`, `review_text`, `source`, `travel_type`) | **In the data model, NOT yet emitted (B-030).** The consumer's `VALID_EVENT_TYPES` does not include REVIEW today — emitting it now would quarantine each as `unknown_event_type`. Wiring lands once the consumer accepts REVIEW and routes it to the `total_reviews` column. |
+| `BOOKING` | `booking_id`, `customer_id`, `room_type_id`, `checkin_date`, `checkout_date`, `nights`, `num_guests`, `nightly_rate_inr`, `revenue_inr`, `booking_source`, `payment_mode`, `event_date` | **INVARIANT:** `revenue_inr == nightly_rate_inr * nights`. `event_date` = sim-day (new additive field alongside wall-clock `event_ts`). |
+| `CHECKIN` | `booking_id`, `customer_id`, `event_date` | Traceable to its originating BOOKING. |
+| `CHECKOUT` | `booking_id`, `customer_id`, `event_date` | Same `booking_id` as matching CHECKIN. |
+| `CANCELLATION` | `booking_id`, `customer_id`, `cancellation_reason` (`customer_cancelled` or `no_show`), `event_date` | Reason is deterministic from `booking_id + chaos_seed`. |
+| `PRICE_CHANGE` | `room_type_id`, `old_price_inr`, `new_price_inr` (NO `booking_id`) | Stateless operational event. Passes Gate 2 but silently filtered at Gate 3 (not bronzed). |
+| `REVIEW` | — | **Not yet emitted (B-030).** Deferred to Phase C (B-037). |
 
-**Base envelope** (every event regardless of type): `event_id` (uuid4), `event_type`, `hotel_id`, `city`, `event_ts` (ISO 8601 UTC, wall-clock now). The Kafka partition key is the city, set from the clean hotel record so chaos-corrupted `city` values don't skew partition distribution.
-
-**Wire-type mix consequence — lifecycle physics shifts the achieved mix.** The old stateless `BOOKING / CHECKIN / CHECKOUT / CANCELLATION / PRICE_CHANGE = 0.55 / 0.18 / 0.12 / 0.10 / 0.05` design cannot be reproduced by a full lifecycle (each booking begets ~1.88 follow-up events). On a fixed-seed 3-min @ 50 evt/s run starting from an empty registry, the producer reproducibly emits approximately **0.47 / 0.27 / 0.17 / 0.04 / 0.05** (transient phase: bookings still accumulating). The *long-run steady-state* mix is approximately **0.33 / 0.29 / 0.29 / 0.04 / 0.05** — but it takes many minutes for the registry to drain to equilibrium. Both numbers are documented in the producer's module docstring; the acceptance test uses the short-run target with a ±5pp tolerance band.
+**Base envelope** (every event): `event_id` (uuid4), `event_type`, `hotel_id`, `city`, `event_ts` (ISO 8601 UTC wall-clock), `event_date` (sim-day).
 
 #### Producer & consumer CLI
 
-The producer (`scripts/kafka_event_producer.py`) and consumer (`scripts/stream_consumer.py`) both take CLI flags:
-
 ```bash
-# Producer
-python scripts/kafka_event_producer.py \
-    --rate 50                    # events per second
-    --duration 300               # seconds, 0 = forever
-    --malformed-pct 1            # % corrupt events (real-world: 0.5-1)
-    --late-pct 2                 # % delayed events (real-world: 1-3)
-    --chaos-seed 42              # reproducible chaos
+# Calendar replay producer (B-034A) — no --rate/--duration (deprecated no-ops)
+python -m scripts.kafka_event_producer \
+    --sim-start 2025-06-01       # start sim-clock here (must match generator anchor)
+    --chaos-seed 42              # reproducible cancellation plans
+    --reset-clock                # delete .sim_clock.json and restart from sim-start
 
 # Consumer
-python scripts/stream_consumer.py \
+python -m scripts.stream_consumer \
     --max-runtime 420            # seconds, 0 = forever (default)
 ```
 
-Default behavior with no flags: producer runs forever at 50 evt/s with no chaos; consumer runs forever. CLI flags shape each run. Env-var fallback exists for orchestrator use (Docker, CI): `CHAOS_MALFORMED_PCT`, `CHAOS_LATE_PCT`, `CHAOS_SEED`.
-
-For realistic real-world chaos rates (mimicking production data quality), use `--malformed-pct 1 --late-pct 2`. For aggressive correctness testing, use `--malformed-pct 5 --late-pct 2 --chaos-seed 42`.
+Chaos flags on the consumer side for stress testing: `--malformed-pct 1 --late-pct 2 --chaos-seed 42`.
 
 ---
 
@@ -2007,7 +1852,7 @@ Added by migration 009: `BIGINT GENERATED BY DEFAULT AS IDENTITY`. Existing rows
 
 ### Gold updater operational notes
 
-- **One instance at a time** — concurrent instances will deadlock on the `fact_booking_lifecycle` PK; run exactly one.
+- **One instance at a time** — enforced by Postgres advisory lock `pg_try_advisory_lock(7400040)` at startup; a second instance exits code 1 immediately. See kill command in CLAUDE.md Common Mistakes.
 - **Configurable via env:** `GOLD_INTERVAL_SECONDS` (default 60), `GOLD_BATCH_SIZE` (default 5000).
 - **Deadlock resilience:** on `DeadlockDetected`, the updater rolls back the current batch, logs the error, sleeps 10s, and retries from the committed watermark.
 - **Run via:** `python -m scripts.gold_lifecycle_updater`

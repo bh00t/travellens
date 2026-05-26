@@ -4,6 +4,8 @@
 > **Hardware:** RTX 3070 8GB · 31GB RAM · Windows 11  
 > **Status:** [ ] In progress / [x] Complete  
 
+> **HISTORY DOCUMENT** — This records how Phase 0 was originally built. For current environment requirements and stack, see [CLAUDE.md](../CLAUDE.md) · [backlog.md](backlog.md).
+
 ---
 
 
@@ -232,122 +234,19 @@ Ask the user: "What is the absolute path to your dataset files?" — store as `$
 
 #### Step 1 — Create `.gitignore`
 
-```gitignore
-# Python
-.venv/
-__pycache__/
-*.pyc
-*.pyo
-.pytest_cache/
-*.egg-info/
-
-# Environment
-.env
-.env.local
-
-# Data — do not commit large CSVs to git
-data/*.csv
-data/*.json
-!data/.gitkeep
-
-# Docker
-.docker/
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# Build artifacts
-*.parquet
-*.duckdb
-query_results/
-logs/
-*.log
-```
+Create `.gitignore` at repo root. At minimum: exclude `.venv/`, `__pycache__/`, `.env`, `data/*.csv`, `data/*.json` (keep `data/.gitkeep`), `*.parquet`, `query_results/`, `logs/`, IDE folders. The current `.gitignore` at repo root is the live reference.
 
 ---
 
 #### Step 2 — Create `requirements.txt`
 
-Pin every dependency. Floating versions will eventually break the build.
-
-```
-# Database
-psycopg2-binary==2.9.9
-pgvector==0.3.6
-sqlalchemy==2.0.30
-sqlparse==0.5.0
-
-# Data processing
-pandas==2.2.2
-pyarrow==17.0.0
-numpy==1.26.4
-
-# Streaming
-apache-flink==1.18.1
-kafka-python==2.0.2
-
-# AI / ML
-sentence-transformers==3.0.1
-torch==2.3.0
-requests==2.32.3
-
-# Cloud + storage
-boto3==1.34.130
-python-dotenv==1.0.1
-
-# Rendering
-jinja2==3.1.4
-
-# Orchestration
-apache-airflow==2.9.2
-
-# Testing
-pytest==8.2.2
-pytest-cov==5.0.0
-
-# Dev utilities
-ipython==8.25.0
-tqdm==4.66.4
-```
+Pin every dependency. The current `requirements.txt` at repo root is the live reference — use it. Key packages: `psycopg2-binary`, `pgvector`, `sqlalchemy`, `sqlparse`, `pandas`, `pyarrow`, `kafka-python`, `sentence-transformers`, `torch`, `boto3`, `python-dotenv`, `jinja2`, `pytest`. Note: `apache-flink` is NOT in the build (blueprint divergence — pure-Python consumer used instead).
 
 ---
 
 #### Step 3 — Create `.env.example`
 
-```
-# Postgres
-POSTGRES_HOST=localhost
-POSTGRES_PORT=5432
-POSTGRES_DB=travellens
-POSTGRES_USER=travellens
-POSTGRES_PASSWORD=changeme_in_real_setup
-
-# Kafka (Phase 2)
-KAFKA_BOOTSTRAP=localhost:9092
-KAFKA_TOPIC=booking-events
-
-# S3 / MinIO (Phase 2)
-AWS_ENDPOINT_URL=http://localhost:9000
-AWS_ACCESS_KEY_ID=minioadmin
-AWS_SECRET_ACCESS_KEY=minioadmin
-AWS_DEFAULT_REGION=us-east-1
-S3_BUCKET=travellens-data
-S3_PREFIX_RAW=raw/
-S3_PREFIX_REVIEWS=reviews/
-S3_PREFIX_REFERENCE=reference/
-S3_PREFIX_PROCESSED=processed/
-
-# Ollama (Phase 4)
-OLLAMA_HOST=http://localhost:11434
-OLLAMA_MODEL=qwen2.5-coder:7b
-
-# Application
-DATA_DIR=./data
-RESULTS_DIR=./query_results
-```
+Create `.env.example` at repo root with all variable names but no secrets. The current `.env.example` at repo root is the live reference. Required keys: `POSTGRES_*`, `KAFKA_BOOTSTRAP`, `KAFKA_TOPIC`, `AWS_*` (MinIO), `S3_BUCKET`, `OLLAMA_HOST`, `OLLAMA_MODEL`, `DATA_DIR`, `RESULTS_DIR`.
 
 ---
 
@@ -372,30 +271,7 @@ Tell the user the generated password. It lives in `.env` (gitignored — never c
 
 #### Step 5 — Create `README.md`
 
-```markdown
-# TravelLens India
-
-Real-time hotel intelligence platform for the Indian hospitality market.
-
-**Stack:** Postgres 16 + pgvector · Apache Kafka · Python stream consumer ·
-sentence-transformers · Claude API · MinIO · Airflow · Jinja2 + Chart.js
-
-**Build status:**
-- [x] Phase 0 — Environment setup
-- [ ] Phase 1 — Postgres foundation
-- [ ] Phase 2 — Streaming pipeline
-- [ ] Phase 3 — Embeddings + pgvector
-- [ ] Phase 4 — AI layer (Text-to-SQL + semantic search)
-- [ ] Phase 5 — HTML output
-
-## Quick test
-
-After Phase 1:
-\`\`\`bash
-python scripts/validate_load.py
-# → PASSED: 20 / 20
-\`\`\`
-```
+Create a project overview with the current phase checklist. The current `README.md` at repo root is the live reference. The initial scaffold listed the stack and phase checkboxes — later phases update the checkboxes as they complete.
 
 ---
 

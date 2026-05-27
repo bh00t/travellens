@@ -1528,18 +1528,56 @@ deleted as bookings CHECKOUT or CANCEL.
 | `room_type_id` | UUID | Real room from `dim_room_type` — chosen from the **hotel's own** room types (a Goa hotel's "Sea View" cannot end up on a Jaipur booking). |
 | `checkin_date`, `checkout_date`, `nights`, `num_guests` | — | Schedule of the open booking. **Invariant:** `checkout_date > sim-today` for every row, so the producer always has something to advance toward. |
 | `nightly_rate_inr`, `payment_mode`, `booking_source` | — | Same shape as the BOOKING event. |
-| `state` | TEXT | `'BOOKED'` (awaiting CHECKIN) or `'CHECKED_IN'` (awaiting CHECKOUT). CHECK constraint enforced. |
+| `state` | TEXT | `'BOOKED'` (awaiting CHECKIN), `'CHECKED_IN'` (awaiting CHECKOUT), or `'REVIEW_PENDING'` (awaiting deferred REVIEW). CHECK constraint enforced. **REVIEW_PENDING added by migration 015 (B-047).** |
 | `booked_event_ts` | TIMESTAMPTZ | When the BOOKING event for this row was emitted — handy for "how long has this been open." |
-| `source` | TEXT | Default `'history'`. The producer would set `'stream'` for bookings it creates itself. |
+| `source` | TEXT | Default `'history'`. The forward generator (B-047) writes `'stream'` for net-new bookings it mints. |
+| `checkin_fire_ts` | TIMESTAMPTZ NULL | **(migration 015, B-047)** Wall-clock time at which the CHECKIN event should fire. Sampled in IST from `CHECKIN_HOUR_DIST` (12-21 IST, peak 16-18) at BOOKING emit time. NULL on legacy `source='history'` rows. |
+| `checkout_fire_ts` | TIMESTAMPTZ NULL | **(migration 015, B-047)** Same for CHECKOUT, sampled from `CHECKOUT_HOUR_DIST` (08-13 IST, peak 09-10) on `checkout_date`. |
+| `cancel_fire_ts` | TIMESTAMPTZ NULL | **(migration 015, B-047)** NULL unless the deterministic cancel-decision `Random(booking_id\|cancel\|daily_seed).random() < P_CANCEL` (=0.12) selects this booking; if so, sampled from `CANCELLATION_HOUR_DIST` (09-21 IST, evening-lean) on a date in `[booking_ts, checkin_date]`. |
+| `review_fire_ts` | TIMESTAMPTZ NULL | **(migration 015, B-047)** NULL until CHECKOUT or CANCELLATION fires; then, if `make_review_event_dict` produces a payload, set to a time tonight 20-23 IST (`REVIEW_HOUR_DIST`, clamped ≥ anchor+30min) and state advances to `'REVIEW_PENDING'`. Row is deleted on REVIEW emit. |
 
-Indexes: `(checkin_date)`, `(checkout_date)`, `(state)`.
+Indexes (post-015):
+- `(booking_id)` PK
+- `(checkin_date)`, `(checkout_date)`, `(state)` — pre-existing
+- `(checkin_fire_ts) WHERE state='BOOKED' AND checkin_fire_ts IS NOT NULL` — partial, B-047
+- `(checkout_fire_ts) WHERE state='CHECKED_IN' AND checkout_fire_ts IS NOT NULL` — partial, B-047
+- `(cancel_fire_ts) WHERE state='BOOKED' AND cancel_fire_ts IS NOT NULL` — partial, B-047
+- `(review_fire_ts) WHERE review_fire_ts IS NOT NULL` — partial, B-047
+
+**Catch-up semantics.** When the producer restarts and a row's fire_ts is already in the past, the event fires as soon as the diurnal-rate bucket has capacity, with `event_ts = NOW()` (current wall-clock UTC) and `event_date = today in IST`. The original stamped time is NEVER written to the wire — it lives only in `sim_open_bookings` so the producer knows the row is overdue.
 
 #### Why a separate mutable table
 
 `fact_booking_events` is an **immutable** ledger (the audit trail).
 `sim_open_bookings` is **mutable** simulator state (rows deleted on
-CHECKOUT/CANCELLATION). Mixing them would lose the audit trail.
+CHECKOUT/CANCELLATION/REVIEW). Mixing them would lose the audit trail.
 Same pattern as event-sourcing + a materialised projection.
+
+---
+
+### `sim_daily_counter`
+
+**Purpose:** Per-day TOTAL-EVENTS guardrail for the forward generator (B-047). Lets multiple on/off producer sessions in the same IST day collectively respect a single cap.
+**Produced by:** `scripts/kafka_event_producer.py` (B-047 forward generator) — `INSERT … ON CONFLICT DO NOTHING` for today's row at startup; per-tick UPDATE increment.
+**Update cadence:** Continuous while the producer runs (one UPDATE per tick batch).
+**Added by:** Migration 014 (B-047).
+
+#### Schema (as deployed by migration 014)
+
+| Column | Type | Notes |
+|---|---|---|
+| `counter_date` | DATE | **PK.** Date in **IST**, not UTC — the rate curve and daily semantics are anchored to the Indian business day. |
+| `events_emitted` | INTEGER NOT NULL DEFAULT 0 | Cumulative TOTAL events emitted today across all sessions (BOOKING + CHECKIN + CHECKOUT + CANCELLATION + REVIEW + PRICE_CHANGE). Includes events lost downstream to chaos/quarantine — it counts what the producer *emitted*, not what the consumer accepted. |
+| `cap` | INTEGER NOT NULL | `1_000_000 × rate_multiplier`. **LAST-WRITE-WINS across same-day sessions** (B-047 + migration 016): every producer-startup UPSERT overwrites cap with the new value, so a follow-up `python run.py --rate-multiplier 3` over a bare `python run.py` (=1) jumps today's cap from 1M to 3M immediately. `events_emitted` is **NOT** overwritten — it keeps accumulating across all sessions in the day. |
+| `updated_at` | TIMESTAMPTZ NOT NULL DEFAULT NOW() | Stamped on every UPDATE. |
+
+Index: PK on `(counter_date)`.
+
+#### Why a separate single-row-per-day table
+
+The cap could have been encoded as a single row in some "simulator state" table, but a per-day row keeps the audit trail honest — you can see exactly how many events landed each IST day, and tune the cap historically by row without rewriting code. The producer's startup UPSERT writes (and overwrites) today's `cap` from the current `rate_multiplier`, so a mid-day `--rate-multiplier N` change takes effect immediately on the next session (both up and down — B-047 + migration 016). Day rollover: at the next tick whose IST date differs from the cached one, the producer inserts a new row at the current `rate_multiplier`.
+
+**Cap-hit behaviour.** When `events_emitted >= cap`, the producer sleeps until IST midnight and skips its tick loop entirely (no BOOKING, no PRICE_CHANGE, no lifecycle drain). On the IST midnight wake-up the new day's row is inserted at the current `rate_multiplier` and emission resumes. Overdue lifecycle rows then drain through the catch-up rule with `event_ts = NOW()`.
 
 ---
 
@@ -1562,7 +1600,9 @@ analytical queries.
 
 ---
 
-### The sim-clock (`scripts/.sim_clock.json`) and `event_date`
+### The sim-clock (`scripts/.sim_clock.json`) and `event_date` — RETIRED by B-047
+
+> **Status (2026-05-28).** The sim-clock model described below is **retired**. The forward generator (B-047, current producer) has NO sim-clock and reads no clock file — `.sim_clock.json` is deleted on first launch and never re-created. `event_date` on the wire is now simply `today in IST` at emit time. The historical description below is preserved for context; see [`sim_daily_counter`](#sim_daily_counter) for the replacement state, [Schema Evolution → 014/015](#schema-evolution) for the migrations, and [B-047](docs/backlog.md#b-047--stage-2a-forward-generator-data-aware-diurnal-timed-producer--done) for the rewrite rationale.
 
 The calendar-replay producer (`scripts/kafka_event_producer.py`,
 B-034A) walks a sim-clock one day at a time. Two pieces of state make
@@ -1695,40 +1735,39 @@ For each hotel, every "tick" (e.g. every second):
 3. For each event: draw an event type from the weighted mix below, then for BOOKING/PRICE_CHANGE fill the type-specific extra fields
 4. Publish JSON to Kafka `booking-events` topic
 
-#### Producer model — calendar replay simulator (B-034A, current)
+#### Producer model — data-aware forward generator (B-047, current)
 
-> The B-034 stateful in-memory registry producer was superseded by the B-034A calendar replay simulator. See `docs/phase-2-streaming.md` ARCHITECTURE DECISIONS for the full pivot rationale.
+> The B-034 stateful in-memory registry producer was superseded by the B-034A calendar replay simulator, which was in turn **superseded by the B-047 forward generator** (this entry). See `docs/phase-2-streaming.md` BUILD HISTORY for the full pivot rationale.
 
-`scripts/kafka_event_producer.py` (B-034A) walks a sim-clock day by day, replaying `fact_bookings WHERE booking_ts >= sim-start` as BOOKING events and advancing `sim_open_bookings` through CHECKIN/CHECKOUT/CANCELLATION at their real dates. Outcomes come from `fact_bookings.is_cancelled`, not randomised. Sim-clock persists at `scripts/.sim_clock.json` (gitignored); resume = saved+1.
+`scripts/kafka_event_producer.py` (B-047) is a **data-aware FORWARD generator** paced by a 24-value IST diurnal rate curve. Each tick (~200 ms) drains the soonest-due lifecycle event from `sim_open_bookings` (CHECKIN / CHECKOUT / CANCELLATION / REVIEW — priority over net-new), then fills the remaining bucket capacity with BOOKING vs PRICE_CHANGE by per-hour weight `prob_b(h) = w_b[h] / (w_b[h] + w_p[h])` — no fixed 95/5 coin flip; the daily aggregate (~48/52 BOOKING/PC at x=1) emerges from the curves. New-BOOKINGs are minted from the live dim tables under a per-hotel-per-night occupancy cap (city × season → hotel weighted by `total_rooms × star` → room type fitting `num_guests` → customer 75% out-of-state → lead-time + nights + price); each row's `checkin_fire_ts` / `checkout_fire_ts` / (optional, 12%) `cancel_fire_ts` are stamped at emit time from per-event-type IST hour distributions. REVIEW emission is deferred: on CHECKOUT or CANCELLATION emit, if the negativity-bias draw produces a review, `review_fire_ts` is set to tonight 20-23 IST (clamped ≥ now+30min) and `state → 'REVIEW_PENDING'` until REVIEW fires. **No sim-clock; `.sim_clock.json` is deleted on first launch and never re-created.** `event_ts` is always wall-clock UTC NOW; `event_date` is today in IST. Catch-up rule: an overdue fire_ts (producer was off) fires at the bucket cap with `event_ts = NOW()`, never backdated. Per-tick batched commits to `sim_open_bookings` + `sim_daily_counter` (~5 commits/sec at x=1, not per-event). On `events_emitted >= cap` (= `1_000_000 × rate_multiplier`) the producer sleeps until IST midnight. Single throughput knob: `--rate-multiplier` (integer > 1; any invalid value silently → 1).
 
 #### Event types emitted
 
 | Event type | Extra fields beyond base envelope | Notes |
 |---|---|---|
-| `BOOKING` | `booking_id`, `customer_id`, `room_type_id`, `checkin_date`, `checkout_date`, `nights`, `num_guests`, `nightly_rate_inr`, `revenue_inr`, `booking_source`, `payment_mode`, `event_date` | **INVARIANT:** `revenue_inr == nightly_rate_inr * nights`. `event_date` = sim-day (new additive field alongside wall-clock `event_ts`). |
-| `CHECKIN` | `booking_id`, `customer_id`, `event_date` | Traceable to its originating BOOKING. |
-| `CHECKOUT` | `booking_id`, `customer_id`, `event_date` | Same `booking_id` as matching CHECKIN. |
-| `CANCELLATION` | `booking_id`, `customer_id`, `cancellation_reason` (`customer_cancelled` or `no_show`), `event_date` | Reason is deterministic from `booking_id + chaos_seed`. |
-| `PRICE_CHANGE` | `room_type_id`, `old_price_inr`, `new_price_inr` (NO `booking_id`) | Stateless operational event. Passes Gate 2 but silently filtered at Gate 3 (not bronzed). |
-| `REVIEW` | `review_id` (uuid5 deterministic — `uuid5(REVIEW_NS, booking_id)`), `booking_id`, `customer_id`, `review_stage` (`booked` / `checked_in` / `checked_out` / `cancelled`), `rating` (1–5), `review_text`, `review_channel`, `event_date` | Emitted at CHECKOUT (lifecycle_status=`COMPLETED`) and CANCELLATION (`CANCELLED` / same-day). No `city` field. `event_ts` is stamped by the producer at each emission site — `review_generator.make_review_event_dict` is pure (no I/O, no timestamps); callers add `_rv["event_ts"] = _now_iso_utc()`. Routed to `reviews_raw` only; never enters `fact_booking_events`, agg, or gold. |
+| `BOOKING` | `booking_id`, `customer_id`, `room_type_id`, `checkin_date`, `checkout_date`, `nights`, `num_guests`, `nightly_rate_inr`, `revenue_inr`, `booking_source`, `event_date` | **INVARIANT:** `revenue_inr == nightly_rate_inr * nights`. `event_date` = today in IST under B-047 (was sim-day under B-034A). |
+| `CHECKIN` | `booking_id`, `customer_id`, `event_date` | Traceable to its originating BOOKING. Fires when wall-clock reaches the row's stamped `checkin_fire_ts`. |
+| `CHECKOUT` | `booking_id`, `customer_id`, `event_date` | Same `booking_id` as matching CHECKIN. Fires when wall-clock reaches `checkout_fire_ts`. |
+| `CANCELLATION` | `booking_id`, `customer_id`, `cancellation_reason` (`customer_cancelled` or `no_show`), `event_date` | Fires when wall-clock reaches `cancel_fire_ts` (12% of bookings; deterministic from `Random(booking_id\|cancel\|daily_seed)`). |
+| `PRICE_CHANGE` | `room_type_id`, `old_price_inr`, `new_price_inr` (NO `booking_id`) | Stateless operational event. Passes Gate 2 but silently filtered at Gate 3 (not bronzed). Drawn from all ~20K active hotels (B-047) — no longer from `data/booking_events_seed.json`. |
+| `REVIEW` | `review_id` (uuid5 deterministic — `uuid5(REVIEW_NS, booking_id)`), `booking_id`, `customer_id`, `review_stage` (`booked` / `checked_in` / `checked_out` / `cancelled`), `rating` (1–5), `review_text`, `review_channel`, `event_date` | Emitted DEFERRED under B-047 — on CHECKOUT or CANCELLATION the row's `review_fire_ts` is stamped in tonight 20-23 IST and `state → 'REVIEW_PENDING'`; REVIEW fires when wall-clock reaches the stamp; row deleted. No `city` field. `event_ts` stamped by the producer at each emission site. Routed to `reviews_raw` only; never enters `fact_booking_events`, agg, or gold. |
 
 **Base envelope** (BOOKING / CHECKIN / CHECKOUT / CANCELLATION / PRICE_CHANGE): `event_id` (uuid4), `event_type`, `hotel_id`, `city`, `event_ts` (ISO 8601 UTC wall-clock), `event_date` (sim-day). REVIEW omits `city` — `hotel_id` is the routing anchor.
 
 #### Producer & consumer CLI
 
 ```bash
-# Calendar replay producer (B-034A) — no --rate/--duration (deprecated no-ops)
-python -m scripts.kafka_event_producer \
-    --sim-start 2025-06-01       # start sim-clock here (must match generator anchor)
-    --chaos-seed 42              # reproducible cancellation plans
-    --reset-clock                # delete .sim_clock.json and restart from sim-start
+# Forward generator (B-047, current). Single throughput knob:
+python -m scripts.kafka_event_producer                        # default x=1
+python -m scripts.kafka_event_producer --rate-multiplier 3    # scale rate + cap together
+python -m scripts.kafka_event_producer --malformed-pct 5 --late-pct 2 --chaos-seed 42
 
 # Consumer
 python -m scripts.stream_consumer \
     --max-runtime 420            # seconds, 0 = forever (default)
 ```
 
-Chaos flags on the consumer side for stress testing: `--malformed-pct 1 --late-pct 2 --chaos-seed 42`.
+`--rate-multiplier` is **integer-only, strictly > 1**; any invalid value (non-int, ≤ 1, negative, alpha, empty, None) silently falls back to `1`. Same coerce rule on the `RATE_MULTIPLIER` env var. Chaos flags on the producer side: `--malformed-pct N --late-pct N --chaos-seed N` (env-var fallback `CHAOS_MALFORMED_PCT` / `CHAOS_LATE_PCT` / `CHAOS_SEED`).
 
 ---
 
@@ -1870,6 +1909,9 @@ the source of truth.
 | 011 | `idx_reviews_raw_event_date` index on `reviews_raw.event_date` — supports the date-range scoping in `_monitor_reviews` and `_monitor_embeddings` | Phase 7 — Monitor date scoping   | B-030b     |
 | 012 | `quarantine_daily_summary` table (`summary_date DATE PK`, `malformed_count INT`, `late_count INT`, `computed_at TIMESTAMPTZ`) — **RETIRED: dropped by migration 013** | Phase 6 / Phase 7 — Quarantine   | B-033 *(superseded by B-044)* |
 | 013 | Drops `quarantine_daily_summary`; creates `quarantine_hourly_summary` (`summary_date DATE`, `summary_hour SMALLINT`, `malformed_count INT`, `late_count INT`, `is_final BOOL`, `computed_at TIMESTAMPTZ`, PK `(summary_date, summary_hour)`) | Phase 6 / Phase 7 — Quarantine   | B-044      |
+| 014 | `sim_daily_counter` table (`counter_date DATE PK`, `events_emitted INTEGER NOT NULL DEFAULT 0`, `cap INTEGER NOT NULL`, `updated_at TIMESTAMPTZ`). Per-day TOTAL-EVENTS guardrail for the forward generator; `counter_date` is in IST; `cap = 1_000_000 × rate_multiplier` at row creation (not recomputed by later sessions of the same day). On cap-hit the producer sleeps until IST midnight. | Phase 2 — Forward generator      | B-047      |
+| 015 | 4 nullable `TIMESTAMPTZ` cols on `sim_open_bookings` (`checkin_fire_ts`, `checkout_fire_ts`, `cancel_fire_ts`, `review_fire_ts`); 4 partial indexes narrowed by `state` and IS NOT NULL; **state CHECK constraint extended** to allow `'REVIEW_PENDING'` (was `IN ('BOOKED','CHECKED_IN')`, now `IN ('BOOKED','CHECKED_IN','REVIEW_PENDING')`). Fire-time stamps are sampled in IST from per-event-type hour distributions at BOOKING emit time and persisted on the row so a restart picks up exactly where it left off. Catch-up rule: overdue stamps fire at `event_ts = NOW()`, never backdated. | Phase 2 — Forward generator      | B-047      |
+| 016 | COMMENT-only refresh on `sim_daily_counter.cap` documenting the producer's cap-upsert flip from `ON CONFLICT DO NOTHING` (sticky cap) → `ON CONFLICT DO UPDATE SET cap = EXCLUDED.cap` (last-write-wins across same-day sessions). Behavioural change lives in `scripts/kafka_event_producer.py:ensure_daily_counter_row`; this migration is the ledger entry. `events_emitted` is intentionally not in the SET clause and continues to accumulate. | Phase 2 — Forward generator      | B-047 (follow-on) |
 
 **Note — B-046 added no migration.** Stage 1 dimension expansion (949 cities · 18,076 hotels · 49,904 room types · 80,000 customers) uses existing columns only. The `type_name` field on `dim_room_type` and the `property_type` field on `hotel_master` are both free-text VARCHAR with no CHECK constraint, so the three new room-type values (`Houseboat Suite`, `Tent`, `Treehouse`) and the previously-unused property-types (`Houseboat`, `Treehouse`) inserted cleanly. `opened_year` (migration 006) carries no CHECK constraint either, so extending the data range to 2026 needed no schema change.
 

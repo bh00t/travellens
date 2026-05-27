@@ -10,7 +10,7 @@
 > `stream_consumer.py` and `kafka_event_producer.py`, see
 > [CLAUDE.md](../CLAUDE.md) (repo layout, hard rules, gate order) ·
 > [datamodel.md](../datamodel.md) (schema, bronze/silver/gold tables) ·
-> [backlog.md](backlog.md) (B-031, B-032, B-034, B-034A, B-035, B-038, B-039, B-040).
+> [backlog.md](backlog.md) (B-031, B-032, B-034, B-034A, B-035, B-038, B-039, B-040, B-047).
 
 ---
 
@@ -740,7 +740,9 @@ feature gap; PRICE_CHANGE already lives in `fact_price_events`. Full details in
 
 ---
 
-### B-034A — Calendar simulator (Phase A: replay engine) — CURRENT PRODUCER
+### B-034A — Calendar simulator (Phase A: replay engine) — *[SUPERSEDED by B-047]*
+
+> **[SUPERSEDED]** — The calendar-replay model described here was the producer between B-034A landing and B-047 landing. Replaced by [B-047 — Stage 2a forward generator](#b-047--stage-2a-forward-generator-data-aware-diurnal-timed-producer--current-producer) below. The fact-replay model has no future runway once `fact_bookings.booking_ts` exhausts, and cannot model "events happen at realistic times of day." `.sim_clock.json` is now deleted on first launch and never re-created.
 
 The producer is no longer a stateless or stateful per-tick lifecycle simulator. It is a
 **calendar-driven REPLAY** of `fact_bookings`. A sim-clock (persisted at
@@ -796,6 +798,8 @@ accepted-and-ignored deprecation no-ops.
 **REVIEW emission is STILL deferred** — the consumer's `VALID_EVENT_TYPES` does not
 include REVIEW. The next two follow-ons are tracked as B-036 (Phase B — net-new synthetic
 + 10–25% long-stay tail) and B-037 (Phase C — REVIEW emission, closes B-030).
+*(2026-05-28 follow-up: B-030 absorbed B-037 on the consumer side; B-036 and the residual
+producer-side REVIEW work were both obviated by B-047 below.)*
 
 ---
 
@@ -866,6 +870,36 @@ by `scripts/generate_review_backfill.py` (90,980 reviews at ~15% rate).
 `reviews_raw` with 7 new columns. For current wire format, Gate-2 field set, and
 routing rules see [CLAUDE.md](../CLAUDE.md) · [datamodel.md](../datamodel.md) ·
 [backlog.md](backlog.md) (B-030 completed entry).
+
+---
+
+### B-047 — Stage 2a forward generator (data-aware diurnal-timed producer) — CURRENT PRODUCER
+
+The producer is **no longer a calendar replay of `fact_bookings`**. It is a **data-aware FORWARD generator** paced by a 24-value IST diurnal rate curve. The calendar-replay model (B-034A above) is retired: `.sim_clock.json` is deleted on first launch and never re-created, `event_date` on the wire is `today in IST` (not a sim-day), and the deprecated CLI flags (`--sim-rate`, `--rate`, `--duration`, `--sim-speed`, `--sim-start`, `--until`, `--reset-clock`) are removed entirely (closes B-041 — the single throughput knob across the system is now `--rate-multiplier`).
+
+**Loop shape.** Token bucket at `effective_rate(h_IST) = BASE_RATE(10) × DIURNAL_HOUR_MULT[h] × rate_multiplier`. Each tick (~200 ms):
+
+1. Pull the soonest-due lifecycle row from `sim_open_bookings` (CHECKIN / CHECKOUT / CANCELLATION / REVIEW). Lifecycle wins priority.
+2. Else, pick BOOKING vs PRICE_CHANGE by per-hour weight `prob_b = w_b[h] / (w_b[h] + w_p[h])` — no 95/5 coin flip. Daily aggregate shapes itself ≈ 48/52 BOOKING/PC at x=1.
+3. On `events_emitted >= cap` (= 1,000,000 × rate_multiplier), sleep until IST midnight.
+
+**New-BOOKING pipeline (data-aware).** Each new BOOKING samples real entities under realistic constraints: city by `popularity × hotel_count × season/holiday from dim_date`; hotel by `total_rooms × star`, subject to per-hotel-per-night occupancy cap from overlapping `sim_open_bookings`; room type fitting `num_guests`; customer 75 % out-of-state vs `home_state`; lead time 50 % ≤7 d / 35 % 1–8 wk / 15 % 2–8 mo; nights from the empirical `fact_bookings.nights_stayed` mix; price = base × {weekend 1.15, holiday 1.25, monsoon 0.85, winter 1.10} × Gaussian(1.0, 0.05); revenue = nightly × nights (asserted invariant); `booking_source` from the empirical fact_bookings mix (MakeMyTrip 26 %, Direct 22 %, OYO 15 %, Booking.com 13 %, Goibibo 12 %, Walk-in 6 %, Agoda 6 %).
+
+**Lifecycle fire-times.** Each new BOOKING stamps `checkin_fire_ts` and `checkout_fire_ts` from per-event-type IST hour distributions (CHECKOUT 8-13 peak 9-10, CHECKIN 12-21 peak 16-18), and — for the 12 % of bookings the deterministic `Random(booking_id|cancel|daily_seed)` selects — `cancel_fire_ts` from CANCELLATION distribution (9-21 evening-lean) on a date in `[booking_ts, checkin_date]`. Persisted on the row (migration 015) so restart is idempotent.
+
+**Deferred REVIEW.** On CHECKOUT or CANCELLATION emit, if `make_review_event_dict` produces a payload, the row's `review_fire_ts` is sampled from REVIEW_HOUR_DIST (20-23 IST same day, clamped ≥ now+30 min) and state advances to `'REVIEW_PENDING'`. REVIEW fires when wall-clock reaches the stamp; row deleted on REVIEW emit. (The state `'REVIEW_PENDING'` is a new value, added to the `sim_open_bookings_state_chk` CHECK constraint by migration 015.)
+
+**Catch-up rule.** If the producer was off and a `*_fire_ts` is in the past at startup, the event fires as soon as the bucket has capacity, with `event_ts = NOW()` and `event_date = today in IST`. The original stamped time is NEVER written to the wire. This produces realistic "late but present" arrivals — a CHECKIN that should have fired at yesterday 14:00 IST instead fires today at 10:30 IST under the new bucket cap.
+
+**Migrations.** `014_sim_daily_counter.sql` adds the per-IST-day TOTAL-EVENTS guardrail. `015_lifecycle_fire_times.sql` adds the four nullable `*_fire_ts` columns on `sim_open_bookings`, four matching partial indexes, and the relaxed state CHECK constraint.
+
+**Chaos.** Extracted verbatim to `scripts/chaos_injector.py` (new shared module, 118 lines, byte-identical behaviour) so future producers can import the same generators. The five malformed corruptors, the `_make_late` shifter, and the `maybe_corrupt_or_delay` dispatcher are all unchanged.
+
+**Per-tick batched commits.** All `sim_open_bookings` inserts/updates/deletes plus the `sim_daily_counter` increment land in ONE commit per ~200 ms tick (~5 commits/sec at x=1, not per-event). At rate_multiplier = 5 with ~100 events/sec, the producer issues ~5 commits/sec rather than ~100.
+
+**Smoke-test verification (consumer + producer at x=1, ~65 s wall-clock):** events consumed 298 / late dropped 0 / malformed dropped 0; silver inserted 298 rows in 10 flushes with 0 dedup; revenue invariant 0 broken across 38 BOOKINGs; CHECKIN fire-hour histogram all in 12-21 IST with peak hour 17 (n=14); CHECKOUT all in 8-13 IST peak hour 10 (n=21); BOOKING vs PRICE_CHANGE mix at IST 00-01 = 12.7 % matching the picker math `w_b/(w_b+w_p) = 0.04/0.34 ≈ 0.118`; cancel rate 13.1 % (target 12 %). `--rate-multiplier` coerce verified 22/22 cases across CLI + env var (silent fallback to 1 on non-int, ≤ 1, negative, alpha, empty, None, hex; valid ints ≥ 2 pass through).
+
+**Closes:** B-041 (rate-flag cleanup — flags deleted entirely, not retained as accepted-and-ignored). **Supersedes:** B-034A (calendar replay), B-036 (Phase B net-new + long-stay tail — the forward generator mints net-new bookings as its core loop; long-stay tail is a one-line `NIGHTS_MIX` tune). **Folds with B-030:** producer-side REVIEW emission previously deferred to B-037 is now done via deferred `review_fire_ts` scheduling.
 
 ---
 

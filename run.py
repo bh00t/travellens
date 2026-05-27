@@ -23,7 +23,7 @@ FLAGS — pick the smallest mode that lets you do what you need
                      up), so you can send your own events from another terminal.
                        python run.py --no-sim
                        # then, in another shell:
-                       python -m scripts.kafka_event_producer --rate 50 --duration 60
+                       python -m scripts.kafka_event_producer --rate-multiplier 3
 
   --server-only      Start ONLY the Flask dashboard. No consumer, no simulator,
                      and no docker bring-up — assumes the stack (and Postgres)
@@ -35,7 +35,9 @@ FLAGS — pick the smallest mode that lets you do what you need
 
   --no-docker        Assume docker is already up; start only the python procs
                      (consumer + simulator + dashboard).
-  --sim-rate N       Pass --rate N to the simulator (events per second).
+  --rate-multiplier N  Integer > 1 scales the forward generator's diurnal rate
+                       curve AND daily cap uniformly. Invalid values fall back
+                       to 1 silently. Omit for the default (1×). Folds in B-041.
   --chaos            Simulator injects malformed + late events at the bundled
                      5% / 2% / seed=42 testing defaults. Populates the monitor's
                      quarantine cards.
@@ -180,12 +182,13 @@ CONSUMER = {
     "cmd": [PY, "-m", "scripts.stream_consumer"],
 }
 
-# The simulator takes an optional rate via --sim-rate (wired through below).
-# If your producer script uses a different flag name, change "--rate" here.
+# Forward generator — B-047 Stage 2a.  Throughput is shaped by a diurnal IST
+# rate curve; the only operator knob is `--rate-multiplier` (integer > 1; any
+# invalid value silently falls back to 1).  See the producer's docstring for
+# the curve + per-event-type hour distributions.
 SIMULATOR = {
     "name": "simulator",
     "cmd": [PY, "-m", "scripts.kafka_event_producer"],
-    "rate_flag": "--rate",   # <-- the flag YOUR producer expects for events/sec, if any
 }
 
 # The dashboard / Flask server. Set DASHBOARD_PORT to whatever it binds.
@@ -701,12 +704,12 @@ class Launcher:
                 "  send events manually, e.g.:",
                 "error")
             log("system",
-                "    python -m scripts.kafka_event_producer --rate 50 --duration 60",
+                "    python -m scripts.kafka_event_producer --rate-multiplier 3",
                 "error")
         else:
             extra = []
-            if self.args.sim_rate is not None:
-                extra = [SIMULATOR["rate_flag"], str(self.args.sim_rate)]
+            if self.args.rate_multiplier is not None:
+                extra = ["--rate-multiplier", str(self.args.rate_multiplier)]
             chaos = chaos_env_from_args(self.args)
             if chaos:
                 log("system",
@@ -798,7 +801,7 @@ def main():
     p.add_argument("--no-sim", action="store_true",
                    help="Skip the event simulator. Docker + consumer + dashboard still "
                         "start; you send events yourself, e.g. "
-                        "`python -m scripts.kafka_event_producer --rate 50 --duration 60`.")
+                        "`python -m scripts.kafka_event_producer --rate-multiplier 3`.")
 
     # --server-only: skip docker bring-up, skip consumer, skip simulator. Start
     # ONLY the Flask dashboard. Most-stripped mode; assumes the stack is
@@ -810,8 +813,12 @@ def main():
                         "--no-sim if both are passed. --window is a no-op under this mode "
                         "(no consumer to receive it).")
 
-    p.add_argument("--sim-rate", type=int, default=None,
-                   help="events/sec passed to the simulator")
+    p.add_argument("--rate-multiplier", type=int, default=None, metavar="N",
+                   help="integer > 1 scales the forward generator's diurnal rate "
+                        "curve AND daily cap uniformly (peak ≈ 20×N evt/s @ 19 IST; "
+                        "daily_cap = 1_000_000 × N). Any invalid value is silently "
+                        "treated as 1. Omit for the default 1×. Folds in B-041 "
+                        "(the prior --sim-rate / --rate / --duration no-ops are gone).")
     p.add_argument("--no-docker", action="store_true",
                    help="assume the docker stack is already up")
     p.add_argument("--chaos", action="store_true",

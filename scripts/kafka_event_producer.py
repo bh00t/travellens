@@ -1,117 +1,68 @@
 """
-Event simulator — calendar-driven REPLAY producer (B-034, Phase A).
+Event producer — data-aware FORWARD generator (B-047, Stage 2a).
 
-Publishes booking events to Kafka by REPLAYING real fact_bookings rows on
-a sim-clock that advances one logical day at a time. The earlier version
-of this file was a stateless lifecycle simulator that minted synthetic
-booking_ids and customer_ids and drew outcomes randomly. This version
-does the opposite: every BOOKING / CHECKIN / CHECKOUT / CANCELLATION on
-the wire traces back to a real row in `fact_bookings`; cancellation
-outcomes come from `fact_bookings.is_cancelled` (not a random draw).
+Replaces the calendar-replay simulator (B-034A).  The replay generator
+walked a sim-clock day-by-day through `fact_bookings`, mirroring real
+historical rows to the wire; it has no future left to replay (last sim
+day 2027-12-06) and never had a story for "events happen at realistic
+times of day."  The forward generator below:
 
-The consumer (`scripts/stream_consumer.py`) is unchanged. The five wire
-`event_type` strings are unchanged. The Kafka config — value serializer
-bytes pass-through, key serializer, `acks="all"`, `linger_ms=20`,
-partition key = city — is unchanged. The only NEW wire field is
-`event_date` (the sim-day the event represents), which is additive: the
-consumer ignores unknown fields, silver consumers can read it later.
+  - Paces TOTAL outbound events with a 24-value diurnal RATE CURVE
+    anchored to IST (night ~0.30×, evening peak ~2.05×).  At base 10
+    evt/s and rate_multiplier=1, daily integral ≈ 868K events vs a
+    1 M-event cap — 13 % headroom.
+  - Generates NET-NEW BOOKINGs from the live `dim_location` /
+    `hotel_master` / `dim_room_type` / `dim_customer` tables, respecting
+    a per-hotel-per-night OCCUPANCY CAP from overlapping
+    `sim_open_bookings` rows.
+  - Stamps each new BOOKING with FIRE-TIMES for its CHECKIN, CHECKOUT,
+    (optional) CANCELLATION, REVIEW events drawn from per-event-type
+    IST hour distributions.  Lifecycle events fire when real wall-clock
+    crosses each stamp.
+  - Never backdates `event_ts` — on resume after downtime, overdue rows
+    drain through the bucket at the curve's cap with `event_ts = NOW()`.
 
-────────────────────────────────────────────────────────────────────────
-HOW IT WORKS
-────────────────────────────────────────────────────────────────────────
-
-Two real sources of truth at startup:
-
-  (a) `sim_open_bookings` — every booking that was mid-lifecycle at the
-      `--sim-start` anchor. These are real fact_bookings rows that the
-      history backfill (B-035) put aside for the simulator to advance.
-      Their BOOKING was already emitted as `source='history'`; the
-      simulator does NOT re-emit it. It only advances them (CHECKIN /
-      CHECKOUT / CANCELLATION) as their dates arrive.
-
-  (b) `fact_bookings WHERE booking_ts >= --sim-start` — the FUTURE
-      bucket the history backfill skipped. These are real bookings the
-      simulator emits BOOKING events for, in `booking_ts` order, as the
-      sim-clock walks through each row's booking_ts day.
-
-A sim-clock advances one logical day per iteration. For each sim-day D:
-
-   1. CANCELLATIONS scheduled for D fire (planned the first time we saw
-      each is_cancelled booking; the plan is keyed off `booking_id +
-      chaos-seed` so the same booking cancels on the same day across
-      restarts).
-   2. NEW BOOKINGS — every fact_bookings row with `booking_ts::date = D`
-      is emitted as a BOOKING; the row is added to `sim_open_bookings`
-      so future days can advance it.
-   3. CHECKINS — every open BOOKED row with `checkin_date = D`. The
-      row's state flips to CHECKED_IN.
-   4. CHECKOUTS — every open CHECKED_IN row with `checkout_date = D`.
-      The row is deleted.
-   5. PRICE_CHANGE — a small fixed number of independent operational
-      events, stateless and unchanged in shape from the old producer.
-
-After the day's events are emitted at a throttled rate, the producer
-flushes Kafka, commits the day's `sim_open_bookings` mutations, and
-writes the sim-day to `scripts/.sim_clock.json`. On restart, the clock
-is read and processing resumes at saved+1. Day boundaries are atomic
-commit points — a graceful Ctrl-C finishes the in-progress day before
-exiting.
+Wire compatibility with the consumer (`scripts/stream_consumer.py`) is
+preserved: same event_type strings, same field shapes per type, same
+revenue invariant (`revenue_inr == nightly_rate_inr * nights`) on
+BOOKINGs, same Kafka config (city-partitioned, bytes-pass-through,
+`acks="all"`, `linger_ms=20`).
 
 ────────────────────────────────────────────────────────────────────────
-WIRE COMPATIBILITY
+LOOP SHAPE
 ────────────────────────────────────────────────────────────────────────
-Unchanged: `event_type` strings (BOOKING / CHECKIN / CHECKOUT /
-CANCELLATION / PRICE_CHANGE), base envelope (`event_id, event_type,
-hotel_id, city, event_ts`), per-type extras (BOOKING carries
-checkin/checkout dates, nights, num_guests, nightly_rate_inr,
-revenue_inr, booking_source; lifecycle events carry booking_id +
-customer_id; CANCELLATION adds cancellation_reason; PRICE_CHANGE has
-neither booking_id nor customer_id).
+Token bucket refilled at `effective_rate(h_IST) = BASE_RATE ×
+DIURNAL_HOUR_MULT[h] × rate_multiplier` per second.  Each tick (~200 ms):
 
-Added: `event_date` (ISO date — the sim-day the event represents). The
-consumer's Gate 2 only requires (event_type, event_ts, city, hotel_id);
-unknown fields pass through harmlessly.
+  1. Pull the soonest-due lifecycle row.  If one exists and its fire_ts
+     has been reached, emit that CHECKIN / CHECKOUT / CANCELLATION /
+     REVIEW (and advance state in `sim_open_bookings` accordingly).
+  2. Else, pick BOOKING vs PRICE_CHANGE by per-hour weights:
+        prob_BOOKING = w_b[h] / (w_b[h] + w_p[h])
+     where w_b is `BOOKING_PICKER_WEIGHT[h]` (peak 2.80 @ 19 IST) and
+     w_p is `DIURNAL_HOUR_MULT[h]` (the master curve).  No 95/5 coin
+     flip — the per-hour mix shapes itself, daily aggregate ≈ 48 %/52 %.
+  3. On a daily-cap hit, sleep until midnight IST.
 
-The revenue invariant `revenue_inr == nightly_rate_inr * nights` is
-asserted on every BOOKING. When `fact_bookings.nights_stayed` disagrees
-with `checkout - checkin`, we trust the gap and recompute revenue (the
-same rule the history generator follows in B-035).
-
-────────────────────────────────────────────────────────────────────────
-WHY event_ts IS NOW () AND NOT THE SIM-DAY
-────────────────────────────────────────────────────────────────────────
-`event_ts` stays wall-clock UTC NOW so the consumer's event-time
-windowing, watermark, and freshness checks all behave the same as
-before — windows close in seconds, the `/monitor` live pulse reads
-"alive," the heartbeat keeps ticking. `event_date` carries the
-*business* date (the sim-day) for downstream silver consumers that
-care about when the event logically happened.
+All DB mutations of a single tick are batched into ONE commit; at
+rate_multiplier=5 this caps commits at ~5/sec instead of ~100/sec.
 
 ────────────────────────────────────────────────────────────────────────
-CHAOS INJECTION (preserved verbatim)
+--rate-multiplier  (integer, default 1, silent-fallback-to-1 on bad input)
 ────────────────────────────────────────────────────────────────────────
-Same five malformed generators, same late-event shifter, same
-dispatcher, same fields. CLI takes precedence; env vars are fallback:
-
-  --malformed-pct / CHAOS_MALFORMED_PCT  → % of events corrupted
-  --late-pct      / CHAOS_LATE_PCT       → % of events delayed past watermark
-  --chaos-seed    / CHAOS_SEED           → reproducible chaos (fixes random.seed)
+Folds in B-041 (the run.py `--sim-rate` no-op + producer `--rate` /
+`--duration` / `--sim-speed` no-op deprecations are deleted, not kept).
+The single supported throughput knob across the system is now
+`--rate-multiplier`.  Both the bucket rate AND the daily cap scale
+together (`daily_cap = 1_000_000 × rate_multiplier`) so high-x runs
+don't burn through the cap mid-day and go silent.
 
 ────────────────────────────────────────────────────────────────────────
 Usage
 ────────────────────────────────────────────────────────────────────────
-  # Resume from saved clock (or start at --sim-start if no clock yet):
   python -m scripts.kafka_event_producer
-
-  # Bounded slice (acceptance test):
-  python -m scripts.kafka_event_producer --until 2025-06-08
-
-  # Start over from scratch:
-  python -m scripts.kafka_event_producer --reset-clock --until 2025-06-08
-
-  # 5% malformed, 2% late, reproducible:
-  python -m scripts.kafka_event_producer --until 2025-06-04 \\
-      --malformed-pct 5 --late-pct 2 --chaos-seed 42
+  python -m scripts.kafka_event_producer --rate-multiplier 3
+  python -m scripts.kafka_event_producer --malformed-pct 5 --late-pct 2 --chaos-seed 42
 """
 
 import argparse
@@ -123,32 +74,103 @@ import sys
 import time
 import uuid
 from collections import defaultdict
-from datetime import date, datetime, timedelta, timezone
-from pathlib import Path
+from datetime import date, datetime, time as dtime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import psycopg2
+from psycopg2.extras import execute_values
 from dotenv import load_dotenv
 from kafka import KafkaProducer
+
+from scripts.chaos_injector import maybe_corrupt_or_delay
 from scripts.review_generator import make_review_event_dict as _make_review
 
 sys.stdout.reconfigure(encoding="utf-8")
-
 load_dotenv()
 
-# ── Paths & seed data ─────────────────────────────────────────────────────────
 
-DATA_DIR   = Path(os.getenv("DATA_DIR", "./data"))
-SEED_FILE  = DATA_DIR / "booking_events_seed.json"
-CLOCK_FILE = Path("scripts/.sim_clock.json")
+# ══════════════════════════════════════════════════════════════════════════════
+# CONSTANTS — locked per the approved plan; do not retune without owner sign-off
+# ══════════════════════════════════════════════════════════════════════════════
 
-# Advisory lock key — unique to this process, distinct from gold (7400040)
-# and embedder (7400050).  Two concurrent producers race on sim_clock.json
-# (plain file write, no OS lock) and sim_open_bookings UPDATE operations
-# (no SELECT FOR UPDATE), so a second instance MUST exit rather than race.
+IST = ZoneInfo("Asia/Kolkata")
+UTC = timezone.utc
+
+# Master diurnal curve (multiplier on BASE_RATE).  Σ = 24.10 → mean 1.004×.
+# Indexed by IST hour 0-23.
+DIURNAL_HOUR_MULT = [
+    0.30, 0.20, 0.20, 0.20, 0.25, 0.40,   # 00-05
+    0.55, 0.75, 1.00, 1.15, 1.10, 1.05,   # 06-11
+    1.15, 1.20, 1.15, 1.25, 1.40, 1.55,   # 12-17
+    1.85, 2.05, 2.00, 1.65, 1.15, 0.55,   # 18-23
+]
+assert len(DIURNAL_HOUR_MULT) == 24
+
+BASE_RATE       = 10           # events/sec at curve mean=1× (≈868K/day at x=1)
+DAILY_CAP_BASE  = 1_000_000    # 10 lakh; daily_cap = base × rate_multiplier
+
+# BOOKING picker weight (used vs PRICE_CHANGE).  Σ ≈ 24.37 → mean 1.015×.
+# Peak 2.80 @ 19 IST.  Drops the prior 95/5 coin-flip — the per-hour ratio
+# (w_b / (w_b + w_p)) shapes the daily mix to ≈ 48 % BOOKING / 52 % PC.
+BOOKING_PICKER_WEIGHT = [
+    0.04, 0.02, 0.02, 0.02, 0.04, 0.08,   # 00-05
+    0.20, 0.40, 0.65, 0.85, 0.95, 1.05,   # 06-11
+    1.15, 1.20, 1.25, 1.45, 1.65, 1.95,   # 12-17
+    2.40, 2.80, 2.50, 1.95, 1.20, 0.55,   # 18-23
+]
+assert len(BOOKING_PICKER_WEIGHT) == 24
+
+# Per-event-type fire-hour distributions.  Each dict sums to 1.0.  When a new
+# BOOKING is emitted we sample CHECKIN / CHECKOUT / (optional) CANCELLATION
+# fire-hours from these and stamp the row.  REVIEW is sampled on CHECKOUT/
+# CANCELLATION emit (deferred), clamped to the same calendar day.
+CHECKOUT_HOUR_DIST     = {8: 0.15, 9: 0.25, 10: 0.25, 11: 0.20, 12: 0.10, 13: 0.05}
+CHECKIN_HOUR_DIST      = {12: 0.05, 13: 0.05, 14: 0.08, 15: 0.12,
+                          16: 0.15, 17: 0.15, 18: 0.15, 19: 0.12,
+                          20: 0.08, 21: 0.05}
+CANCELLATION_HOUR_DIST = {9: 0.05, 10: 0.05, 11: 0.05, 12: 0.07, 13: 0.07,
+                          14: 0.07, 15: 0.07, 16: 0.08, 17: 0.10, 18: 0.12,
+                          19: 0.12, 20: 0.10, 21: 0.05}
+REVIEW_HOUR_DIST       = {20: 0.30, 21: 0.35, 22: 0.25, 23: 0.10}
+
+# Empirical booking-source mix from real fact_bookings (~1M rows).
+BOOKING_SOURCE_MIX = [
+    ("MakeMyTrip",  0.26), ("Direct",      0.22), ("OYO",      0.15),
+    ("Booking.com", 0.13), ("Goibibo",     0.12), ("Walk-in",  0.06),
+    ("Agoda",       0.06),
+]
+
+# Lead-time mix: 50% ≤7d, 35% 1-8wk, 15% 2-8mo.
+LEAD_TIME_BUCKETS = [
+    ( 0,   7,  0.50),
+    ( 8,  56,  0.35),
+    (60, 240,  0.15),
+]
+
+# Nights distribution from empirical fact_bookings.nights_stayed:
+NIGHTS_MIX = [
+    (1, 0.30), (2, 0.30), (3, 0.18), (4, 0.10), (5, 0.06),
+    (6, 0.03), (7, 0.02), (10, 0.01),
+]
+
+# Cancel rate at booking time.  Deterministic per booking_id × daily seed.
+P_CANCEL = 0.12
+
+# Season multiplier on city-weight from dim_date.season + is_high_demand_holiday.
+SEASON_MULT = {
+    "Summer":  1.15, "Winter": 1.20, "Monsoon": 0.85,
+    "Spring":  1.05, "Autumn": 1.05,
+}
+HIGH_DEMAND_HOLIDAY_MULT = 1.25
+
+# Tick + bucket sizing.
+TICK_SECONDS    = 0.2
+BUCKET_BURST_S  = 2.0   # max burst = effective_rate × this many seconds
+
+# Advisory lock — unchanged from prior producer.
 PRODUCER_ADVISORY_LOCK_KEY = 7_400_030
 
-# ── DB params ─────────────────────────────────────────────────────────────────
-
+# Kafka / DB.
 DB_PARAMS = {
     "host":     os.getenv("POSTGRES_HOST",     "localhost"),
     "port":     int(os.getenv("POSTGRES_PORT", "5432")),
@@ -157,824 +179,831 @@ DB_PARAMS = {
     "password": os.getenv("POSTGRES_PASSWORD", ""),
 }
 
-# ── Defaults / tunables ───────────────────────────────────────────────────────
-
-# Anchor — MUST match scripts/generate_lifecycle_history.py default.
-DEFAULT_SIM_START = date(2025, 6, 1)
-
-# Sim-days per real-second. At ~2000 events / sim-day (full-runway steady
-# state) this yields ~100 evt/s, which keeps the consumer comfortable
-# (the consumer's flush check runs every 10s; we want plenty of events
-# per check cycle but not so many that windowing falls behind).
-DEFAULT_SIM_SPEED = 0.05
-
-# A handful of independent PRICE_CHANGE events per sim-day. The point is
-# only that the stream carries them — they're stateless operational
-# events, NOT lifecycle.
-DEFAULT_NUM_PRICES_PER_DAY = 5
-
-# Split among is_cancelled bookings: 70% customer_cancelled (pre-checkin
-# day in [booking_ts, checkin_date)), 30% no_show (on checkin_date).
-# Matches the prior stateless producer's reason mix.
-P_CUSTOMER_CANCELLED = 0.70
+# Old sim-clock file — deleted on first launch and never written again.
+LEGACY_CLOCK_FILE = "scripts/.sim_clock.json"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# CHAOS GENERATORS — preserved verbatim from the previous version
+# RATE-MULTIPLIER COERCION — integer-only, strictly > 1; silent fallback to 1
 # ══════════════════════════════════════════════════════════════════════════════
+# Owner-specified contract:
+#   - Default (flag omitted)             → 1
+#   - Pass --rate-multiplier 2 (int>1)   → 2
+#   - Pass anything else                 → 1, silently (no argparse error,
+#                                          no warning); same for the
+#                                          RATE_MULTIPLIER env var.
+# Folds in B-041: --sim-rate / --rate / --duration / --sim-speed / etc. all
+# removed entirely.
 
-def _corrupt_missing_field(event):
-    """Remove one required field at random."""
-    field = random.choice(["event_type", "event_ts", "city", "hotel_id"])
-    bad = dict(event)
-    bad.pop(field, None)
-    return bad, "missing_field"
-
-
-def _corrupt_unknown_event_type(event):
-    """Replace event_type with a string outside the valid set."""
-    bad = dict(event)
-    bad["event_type"] = random.choice(["book", "BOOK", "RESERVED", "checkout"])
-    return bad, "unknown_event_type"
-
-
-def _corrupt_unknown_city(event):
-    """Replace city with a typo / wrong-language / fictional name."""
-    bad = dict(event)
-    # Last entry is the Hindi for "Goa" — written as a unicode escape so
-    # the parse-check (`open(...).read()` without explicit encoding)
-    # doesn't choke on Windows where the default codec is cp1252.
-    bad["city"] = random.choice(["Mumbay", "DELHI_TYPO", "Atlantis",
-                                  "गोवा"])
-    return bad, "unknown_city"
-
-
-def _corrupt_unparseable_ts(event):
-    """Make event_ts a string that isn't ISO 8601."""
-    bad = dict(event)
-    bad["event_ts"] = random.choice(["yesterday", "2026/05/19", "1747590000"])
-    return bad, "unparseable_event_ts"
-
-
-def _corrupt_unparseable_json(event):
-    """Return raw bytes that don't deserialize to JSON."""
-    return b'{"event_type": "BOOKING", "city": ', "unparseable_json"
-
-
-_MALFORMED_GENERATORS = [
-    _corrupt_missing_field,
-    _corrupt_unknown_event_type,
-    _corrupt_unknown_city,
-    _corrupt_unparseable_ts,
-    _corrupt_unparseable_json,
-]
-
-
-def _make_late(event, min_minutes_late=70, max_minutes_late=180):
-    """
-    Shift event_ts back into the past far enough that the consumer's
-    late-event guard fires. Defaults (70-180 min) target the production
-    60-minute window + 5-minute grace.
-    """
-    bad = dict(event)
+def _coerce_rate_multiplier(s):
+    """argparse type: int>1 or silent fallback to 1.  Never raises."""
     try:
-        ts = datetime.fromisoformat(bad["event_ts"].replace("Z", "+00:00"))
-    except Exception:
-        ts = datetime.now(timezone.utc)
-    minutes_back = random.uniform(min_minutes_late, max_minutes_late)
-    bad["event_ts"] = (ts - timedelta(minutes=minutes_back)).isoformat()
-    return bad
+        v = int(s)
+        if v > 1:
+            return v
+    except (ValueError, TypeError):
+        pass
+    return 1
 
 
-def maybe_corrupt_or_delay(event, malformed_pct, late_pct):
-    """
-    Decide what to do with this event. Returns (payload, mode); payload
-    is dict (normal/late/most malformed) or bytes (unparseable_json).
-    """
-    r = random.random() * 100.0
-    if r < malformed_pct:
-        gen = random.choice(_MALFORMED_GENERATORS)
-        payload, reason = gen(event)
-        return payload, f"malformed:{reason}"
-    if r < malformed_pct + late_pct:
-        return _make_late(event), "late"
-    return event, "normal"
+def _coerce_rate_multiplier_env():
+    raw = os.getenv("RATE_MULTIPLIER")
+    if raw is None:
+        return 1
+    return _coerce_rate_multiplier(raw)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SIM-CLOCK PERSISTENCE
+# DIM CACHE — loaded once at startup; ~15 MB resident
 # ══════════════════════════════════════════════════════════════════════════════
 
-def load_clock(default_start):
+class DimCache:
     """
-    Read scripts/.sim_clock.json and return (next_day, saved_seed).
-    next_day is the sim-day to resume on (last_completed_day + 1, or
-    default_start if no clock file). saved_seed is the chaos-seed from
-    the previous run, or None if not recorded.
+    Snapshot of dim tables used by the BOOKING generator.  Loaded once; the
+    sim is forward-only and dim drift mid-run is rare enough that a periodic
+    refresh isn't worth the complexity.
+
+    cities_by_id          — {location_id: (city, state, tourist_arrivals, popularity_weight)}
+    hotels                — list of dicts {hotel_id, city, location_id, state, total_rooms,
+                                            star_category, base_price_inr}
+    hotels_by_city        — {city: [hotel_index_into_self.hotels, ...]}
+    room_types_by_hotel   — {hotel_id: [(room_type_id, capacity, base_price_inr, type_name)]}
+    customers             — list of (customer_id, home_state); ~100K
     """
-    if not CLOCK_FILE.exists():
-        return default_start, None
-    try:
-        data = json.loads(CLOCK_FILE.read_text(encoding="utf-8"))
-        last = date.fromisoformat(data["last_completed_day"])
-        saved_seed = data.get("chaos_seed")
-        return last + timedelta(days=1), saved_seed
-    except Exception as e:
-        print(f"WARNING: Could not parse {CLOCK_FILE}: {e}. "
-              f"Starting at {default_start}.", file=sys.stderr)
-        return default_start, None
 
+    def __init__(self, conn):
+        self.cities_by_id    = {}
+        self.hotels          = []
+        self.hotels_by_city  = defaultdict(list)
+        self.room_types_by_hotel = defaultdict(list)
+        self.customers       = []
+        self.customers_by_state = defaultdict(list)
+        self._load(conn)
 
-def save_clock(day, chaos_seed):
-    """
-    Atomically record day as the most recently completed sim-day and
-    persist the chaos_seed so cancellation plans stay deterministic
-    across restarts (the plan is keyed off booking_id + chaos_seed).
-    """
-    CLOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
-    tmp = CLOCK_FILE.with_suffix(".json.tmp")
-    tmp.write_text(
-        json.dumps({
-            "last_completed_day": day.isoformat(),
-            "chaos_seed": chaos_seed,
-        }, indent=2),
-        encoding="utf-8",
-    )
-    tmp.replace(CLOCK_FILE)
+    def _load(self, conn):
+        with conn.cursor() as cur:
+            # dim_location
+            cur.execute("""
+                SELECT location_id, city, state,
+                       COALESCE(tourist_arrivals_annual_m, 1.0)
+                FROM dim_location
+            """)
+            for loc_id, city, state, tour in cur.fetchall():
+                self.cities_by_id[loc_id] = (city, state, float(tour),
+                                              float(tour) ** 0.7 + 0.5)
 
+            # hotel_master JOIN dim_location for city/state
+            cur.execute("""
+                SELECT h.hotel_id, l.city, h.location_id, l.state,
+                       COALESCE(h.total_rooms, 30), COALESCE(h.star_category, 3),
+                       COALESCE(h.base_price_inr, 3000)
+                FROM hotel_master h
+                JOIN dim_location l ON l.location_id = h.location_id
+                WHERE h.is_active = TRUE
+            """)
+            for i, row in enumerate(cur.fetchall()):
+                hid, city, loc_id, state, rooms, star, base = row
+                self.hotels.append({
+                    "hotel_id": hid, "city": city, "location_id": loc_id,
+                    "state": state, "total_rooms": int(rooms),
+                    "star_category": int(star), "base_price_inr": float(base),
+                })
+                self.hotels_by_city[city].append(i)
 
-def reset_clock():
-    if CLOCK_FILE.exists():
-        CLOCK_FILE.unlink()
+            # dim_room_type (only those whose hotel is active)
+            active_hids = {h["hotel_id"] for h in self.hotels}
+            cur.execute("""
+                SELECT room_type_id, hotel_id, COALESCE(capacity, 2),
+                       COALESCE(base_price_inr, 2500), type_name
+                FROM dim_room_type
+            """)
+            for rt_id, hid, cap, base, name in cur.fetchall():
+                if hid in active_hids:
+                    self.room_types_by_hotel[hid].append((rt_id, int(cap),
+                                                          float(base), name))
 
+            # dim_customer
+            cur.execute("SELECT customer_id, home_state FROM dim_customer")
+            for cid, state in cur.fetchall():
+                self.customers.append((cid, state))
+                self.customers_by_state[state].append(len(self.customers) - 1)
 
-# ══════════════════════════════════════════════════════════════════════════════
-# DB HELPERS — sim_open_bookings + fact_bookings
-# ══════════════════════════════════════════════════════════════════════════════
+        # Pre-bin cities by weight so weighted_city_pick is O(1) sample.
+        self._build_city_indices()
 
-# Tuple shape for runway rows. The same shape flows into make_booking_event
-# and insert_sim_open_bookings; centralising it here makes the SELECT and
-# the consumers easier to keep in step.
-_RUNWAY_SELECT = """
-    SELECT fb.booking_id, fb.hotel_id, fb.customer_id, fb.room_type_id,
-           dl.city, fb.checkin_date, fb.checkout_date,
-           fb.nights_stayed, fb.num_guests,
-           fb.nightly_rate_inr, fb.revenue_inr, fb.booking_source,
-           fb.is_cancelled, fb.booking_ts
-    FROM fact_bookings fb
-    LEFT JOIN dim_location dl ON dl.location_id = fb.location_id
-"""
+    def _build_city_indices(self):
+        """
+        Build a flat alias-list-ish structure for weighted city sampling.
+        Each city's weight ≡ popularity_weight × #hotels.  Cities with 0
+        hotels are dropped.
+        """
+        self._city_names   = []
+        self._city_weights = []
+        self._city_states  = {}  # city -> state (mode)
+        seen = set()
+        for loc_id, (city, state, _tour, popw) in self.cities_by_id.items():
+            if city in seen or not self.hotels_by_city[city]:
+                continue
+            seen.add(city)
+            n_hotels = len(self.hotels_by_city[city])
+            self._city_names.append(city)
+            self._city_weights.append(popw * n_hotels)
+            self._city_states[city] = state
 
+    def weighted_city_pick(self, rng, season_mult, holiday_mult):
+        """Sample a city, biased by popularity × hotel count × season × holiday."""
+        # season/holiday are global multipliers that scale all city weights
+        # uniformly — they keep the relative weight structure intact but
+        # are kept here for future per-city tuning (peak_months matching).
+        return rng.choices(self._city_names, weights=self._city_weights, k=1)[0]
 
-def fetch_runway_for_day(conn, day):
-    """Every fact_bookings row whose booking_ts falls on `day`."""
-    with conn.cursor() as cur:
-        cur.execute(
-            _RUNWAY_SELECT + " WHERE fb.booking_ts >= %s AND fb.booking_ts < %s "
-                             " ORDER BY fb.booking_ts",
-            (day, day + timedelta(days=1)),
-        )
-        return cur.fetchall()
+    def pick_hotel_in_city(self, rng, city):
+        """Sample a hotel in the given city, weighted by total_rooms × star_category."""
+        idxs = self.hotels_by_city.get(city)
+        if not idxs:
+            return None
+        weights = [self.hotels[i]["total_rooms"] * self.hotels[i]["star_category"]
+                   for i in idxs]
+        i = rng.choices(idxs, weights=weights, k=1)[0]
+        return self.hotels[i]
 
+    def pick_room_type(self, rng, hotel_id, num_guests):
+        """Pick a room_type for the hotel that fits num_guests.  None if no fit."""
+        rts = self.room_types_by_hotel.get(hotel_id)
+        if not rts:
+            return None
+        fits = [r for r in rts if r[1] >= num_guests]
+        if not fits:
+            # last resort — largest available; consumer will accept
+            fits = [max(rts, key=lambda r: r[1])]
+        # weight 1/(price_tier) ≈ 1/base_price_inr to favour cheaper rooms
+        weights = [1.0 / max(r[2], 100.0) for r in fits]
+        rt = rng.choices(fits, weights=weights, k=1)[0]
+        return rt
 
-def fetch_today_checkins(conn, day):
-    """Open BOOKED rows whose checkin_date == day."""
-    with conn.cursor() as cur:
-        cur.execute(
-            "SELECT booking_id, customer_id, hotel_id, city "
-            "FROM sim_open_bookings "
-            "WHERE state = 'BOOKED' AND checkin_date = %s",
-            (day,),
-        )
-        return cur.fetchall()
-
-
-def fetch_today_checkouts(conn, day):
-    """Open CHECKED_IN rows whose checkout_date == day."""
-    with conn.cursor() as cur:
-        cur.execute(
-            "SELECT booking_id, customer_id, hotel_id, city "
-            "FROM sim_open_bookings "
-            "WHERE state = 'CHECKED_IN' AND checkout_date = %s",
-            (day,),
-        )
-        return cur.fetchall()
-
-
-def lookup_open_booking(conn, booking_id):
-    """Return (customer_id, hotel_id, city) for an open booking, or None."""
-    with conn.cursor() as cur:
-        cur.execute(
-            "SELECT customer_id, hotel_id, city "
-            "FROM sim_open_bookings WHERE booking_id = %s",
-            (booking_id,),
-        )
-        return cur.fetchone()
-
-
-def insert_sim_open_bookings(conn, fb_row, booked_event_ts, state, source):
-    """
-    Insert a newly-emitted BOOKING into sim_open_bookings. Idempotent via
-    ON CONFLICT DO NOTHING so a partial-day replay can't violate the PK.
-    """
-    (booking_id, hotel_id, customer_id, room_type_id, city,
-     checkin_date, checkout_date, nights_stayed, num_guests,
-     nightly_rate_inr, revenue_inr, booking_source,
-     is_cancelled, booking_ts) = fb_row
-
-    gap = (checkout_date - checkin_date).days
-    nights = gap if gap >= 1 else 1
-
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO sim_open_bookings
-                (booking_id, customer_id, hotel_id, city, room_type_id,
-                 checkin_date, checkout_date, nights, num_guests,
-                 nightly_rate_inr, payment_mode, booking_source,
-                 state, booked_event_ts, source)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (booking_id) DO NOTHING
-            """,
-            (str(booking_id), customer_id, hotel_id, city, str(room_type_id),
-             checkin_date, checkout_date, nights, int(num_guests),
-             float(nightly_rate_inr), None, booking_source,
-             state, booked_event_ts, source),
-        )
-
-
-def update_state_checked_in(conn, booking_id):
-    with conn.cursor() as cur:
-        cur.execute(
-            "UPDATE sim_open_bookings SET state='CHECKED_IN' WHERE booking_id=%s",
-            (booking_id,),
-        )
-
-
-def delete_open_booking(conn, booking_id):
-    with conn.cursor() as cur:
-        cur.execute(
-            "DELETE FROM sim_open_bookings WHERE booking_id=%s",
-            (booking_id,),
-        )
-
-
-def has_runway_after(conn, day):
-    """True if any fact_bookings row has booking_ts on or after `day`."""
-    with conn.cursor() as cur:
-        cur.execute(
-            "SELECT EXISTS(SELECT 1 FROM fact_bookings WHERE booking_ts >= %s)",
-            (day,),
-        )
-        return cur.fetchone()[0]
-
-
-def has_open_bookings(conn):
-    """True if sim_open_bookings has any rows."""
-    with conn.cursor() as cur:
-        cur.execute("SELECT EXISTS(SELECT 1 FROM sim_open_bookings)")
-        return cur.fetchone()[0]
-
-
-def _load_hotel_rating_map(conn):
-    """Return {hotel_id: (avg_rating, star_category)} from hotel_master."""
-    with conn.cursor() as cur:
-        cur.execute("SELECT hotel_id, avg_rating, star_category FROM hotel_master")
-        return {row[0]: (row[1], row[2]) for row in cur.fetchall()}
-
-
-def _fetch_sim_booking_for_review(conn, booking_id):
-    """
-    Return (booking_source, checkin_date, checkout_date, booking_ts_date)
-    from sim_open_bookings for use in review generation, or None if not found.
-    booked_event_ts is used as an approximation of booking_ts.
-    """
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            SELECT booking_source, checkin_date, checkout_date,
-                   booked_event_ts::date
-            FROM   sim_open_bookings
-            WHERE  booking_id = %s
-            """,
-            (booking_id,),
-        )
-        return cur.fetchone()
+    def pick_customer(self, rng, exclude_state, intra_state_prob=0.25):
+        """75% out-of-state tourist, 25% intra-state.  exclude_state may be None."""
+        if rng.random() < intra_state_prob and exclude_state in self.customers_by_state:
+            pool = self.customers_by_state[exclude_state]
+            if pool:
+                return self.customers[rng.choice(pool)]
+        # any customer not in exclude_state if possible; else any customer
+        for _ in range(8):
+            c = rng.choice(self.customers)
+            if c[1] != exclude_state:
+                return c
+        return rng.choice(self.customers)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# CANCELLATION PLAN — deterministic from booking_id + chaos-seed
+# DIM_DATE — small per-day lookup
 # ══════════════════════════════════════════════════════════════════════════════
 
-def plan_cancellation(booking_id, booking_ts_date, checkin_date, sim_start, plan_seed):
-    """
-    Decide WHEN and WHY a cancelled booking cancels. Pure function of
-    (booking_id, sim_start, plan_seed): the same booking cancels on the
-    same day across restarts.
-
-      ~70%: customer_cancelled on a day in [max(booking_ts, sim_start),
-            checkin_date - 1]. If that window is empty (booking_ts ==
-            checkin_date), fall through to no_show.
-      ~30%: no_show on checkin_date.
-
-    Clamping to sim_start matters for hydrated BOOKED rows whose
-    booking_ts predates the anchor — those bookings have not yet had
-    their cancellation emitted by the history generator (the BOOKED
-    bucket only emits BOOKING), so the simulator must emit it on or
-    after sim_start.
-    """
-    rng = random.Random(f"{booking_id}|{plan_seed}")
-    if rng.random() < P_CUSTOMER_CANCELLED:
-        earliest = max(booking_ts_date, sim_start)
-        latest = checkin_date - timedelta(days=1)
-        if latest >= earliest:
-            gap_days = (latest - earliest).days
-            return earliest + timedelta(days=rng.randint(0, gap_days)), "customer_cancelled"
-    return checkin_date, "no_show"
-
-
-def hydrate_plans(conn, sim_start, plan_seed, resume_day):
-    """
-    Re-derive cancellation plans for all currently-open BOOKED rows in
-    sim_open_bookings. Returns:
-        (booked_count, checked_in_count, scheduled, pending_cancellations,
-         cancellation_plans)
-    where pending_cancellations is dict[date, list[booking_id]] keyed by
-    the day each cancellation fires, and cancellation_plans is
-    dict[booking_id, (cancel_date, reason)].
-
-    CHECKED_IN rows: is_cancelled intentionally ignored (their CHECKIN
-    has already been emitted by the history generator; we cannot
-    retroactively cancel an in-flight stay). They will check out on
-    their real checkout_date.
-
-    Cancel-dates that land before resume_day are clamped up to
-    resume_day so the simulator catches up rather than leaving the row
-    stranded. (Only happens if the user changes --chaos-seed between
-    runs.)
-    """
-    pending = defaultdict(list)
-    plans = {}
-    booked = checked_in = scheduled = 0
-    stale_dates = 0
+def fetch_dim_date(conn, d):
+    """Return (season, is_high_demand_holiday, is_weekend) for date d, with safe defaults."""
     with conn.cursor() as cur:
-        cur.execute(
-            """
-            SELECT sob.booking_id, sob.checkin_date, sob.state,
-                   fb.is_cancelled, fb.booking_ts
-            FROM sim_open_bookings sob
-            JOIN fact_bookings fb ON fb.booking_id = sob.booking_id
-            """
-        )
-        rows = cur.fetchall()
-    for booking_id, checkin_date, state, is_cancelled, booking_ts in rows:
-        if state == "CHECKED_IN":
-            checked_in += 1
-            continue
-        booked += 1
-        if not is_cancelled:
-            continue
-        cancel_date, reason = plan_cancellation(
-            str(booking_id), booking_ts.date(), checkin_date, sim_start, plan_seed
-        )
-        if cancel_date < resume_day:
-            stale_dates += 1
-            cancel_date = resume_day
-        plans[str(booking_id)] = (cancel_date, reason)
-        pending[cancel_date].append(str(booking_id))
-        scheduled += 1
-    if stale_dates:
-        print(f"WARNING: {stale_dates} hydrated cancellations had plan dates before "
-              f"{resume_day}; clamped forward (likely chaos-seed change between runs).")
-    return booked, checked_in, scheduled, pending, plans
+        cur.execute("""
+            SELECT season, is_high_demand_holiday, is_weekend
+            FROM dim_date WHERE full_date = %s
+        """, (d,))
+        r = cur.fetchone()
+    if not r:
+        return ("Summer", False, False)
+    return (r[0] or "Summer", bool(r[1]), bool(r[2]))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# EVENT BUILDERS
+# SAMPLING HELPERS
 # ══════════════════════════════════════════════════════════════════════════════
+
+def _now_utc():
+    return datetime.now(UTC)
+
+
+def _now_ist():
+    return datetime.now(IST)
+
+
+def _today_ist():
+    return _now_ist().date()
+
 
 def _now_iso_utc():
-    return datetime.now(timezone.utc).isoformat()
+    return _now_utc().isoformat()
 
 
-def make_booking_event(fb_row, sim_day):
+def _sample_weighted(rng, items, weights):
+    return rng.choices(items, weights=weights, k=1)[0]
+
+
+def _sample_booking_source(rng):
+    return _sample_weighted(rng,
+                            [s for s, _ in BOOKING_SOURCE_MIX],
+                            [w for _, w in BOOKING_SOURCE_MIX])
+
+
+def _sample_lead_time(rng):
+    """Days until checkin from today."""
+    buckets = LEAD_TIME_BUCKETS
+    pick = _sample_weighted(rng, list(range(len(buckets))),
+                            [b[2] for b in buckets])
+    lo, hi, _ = buckets[pick]
+    return rng.randint(lo, hi)
+
+
+def _sample_nights(rng):
+    return _sample_weighted(rng,
+                            [n for n, _ in NIGHTS_MIX],
+                            [w for _, w in NIGHTS_MIX])
+
+
+def _sample_num_guests(rng):
+    # 1: 25 %, 2: 50 %, 3: 18 %, 4: 6 %, 5: 1 %
+    return _sample_weighted(rng, [1, 2, 3, 4, 5],
+                            [0.25, 0.50, 0.18, 0.06, 0.01])
+
+
+def _sample_hour_from_dist(rng, dist):
+    """dist: {hour:int -> weight:float}.  Returns a sampled IST hour."""
+    hours, weights = zip(*dist.items())
+    return rng.choices(hours, weights=weights, k=1)[0]
+
+
+def _sample_fire_ts_on_day(rng, ist_day, hour_dist):
+    """Build a TIMESTAMPTZ (in UTC) for an IST datetime sampled from hour_dist."""
+    h = _sample_hour_from_dist(rng, hour_dist)
+    m = rng.randint(0, 59)
+    s = rng.randint(0, 59)
+    naive = datetime.combine(ist_day, dtime(h, m, s))
+    return naive.replace(tzinfo=IST).astimezone(UTC)
+
+
+def _compute_price(rng, base_price_inr, checkin_date, dim_date_today):
+    """Apply weekend/holiday/off-season modifiers + bounded Gaussian noise."""
+    season, is_holiday, _ = dim_date_today
+    weekend = checkin_date.weekday() >= 5
+    mult = 1.0
+    if weekend:    mult *= 1.15
+    if is_holiday: mult *= 1.25
+    if season == "Monsoon": mult *= 0.85
+    elif season == "Winter": mult *= 1.10
+    noise = max(0.70, min(1.30, rng.gauss(1.0, 0.05)))
+    return max(500, int(round(base_price_inr * mult * noise)))
+
+
+def _is_cancel_decided(booking_id_str, daily_seed):
+    """Deterministic 12% cancel decision keyed on booking_id × daily_seed."""
+    rng = random.Random(f"{booking_id_str}|cancel|{daily_seed}")
+    return rng.random() < P_CANCEL
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# OCCUPANCY CAP
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _hotel_occupancy_busted(cur, hotel_id, total_rooms, checkin_d, checkout_d):
     """
-    Build a BOOKING event from a fact_bookings row. event_ts is wall-
-    clock NOW; event_date is the sim-day. Trusts checkout-checkin as
-    the night count and RECOMPUTES revenue, so the revenue invariant
-    `revenue_inr == nightly_rate_inr * nights` always holds — even when
-    fact_bookings has a (rare) nights_stayed mismatch.
+    True if any night in [checkin_d, checkout_d) already has total_rooms
+    overlapping BOOKED+CHECKED_IN rows for this hotel.
+
+    Postgres returns the MAX nightly overlap across the candidate range in
+    one query via generate_series.
     """
-    (booking_id, hotel_id, customer_id, room_type_id, city,
-     checkin_date, checkout_date, nights_stayed, num_guests,
-     nightly_rate_inr, revenue_inr, booking_source,
-     is_cancelled, booking_ts) = fb_row
+    cur.execute("""
+        WITH nights AS (
+            SELECT generate_series(%s::date, %s::date - 1, '1 day'::interval)::date AS night
+        )
+        SELECT MAX(c) AS max_overlap FROM (
+            SELECT n.night, COUNT(*) AS c
+            FROM nights n
+            LEFT JOIN sim_open_bookings sob
+              ON sob.hotel_id = %s
+             AND sob.state IN ('BOOKED', 'CHECKED_IN')
+             AND sob.checkin_date <= n.night
+             AND sob.checkout_date > n.night
+            GROUP BY n.night
+        ) x
+    """, (checkin_d, checkout_d, hotel_id))
+    r = cur.fetchone()
+    overlap = (r[0] or 0)
+    return overlap >= total_rooms
 
-    gap = (checkout_date - checkin_date).days
-    nights = gap if gap >= 1 else 1
-    nightly_int = int(round(float(nightly_rate_inr)))
-    revenue_int = nightly_int * nights
 
-    assert revenue_int == nightly_int * nights, \
-        f"revenue invariant broken: {revenue_int} != {nightly_int} * {nights}"
+# ══════════════════════════════════════════════════════════════════════════════
+# EVENT BUILDERS — wire shapes preserved
+# ══════════════════════════════════════════════════════════════════════════════
 
+def _build_booking_event(rec):
+    """rec: dict from generate_booking().  Builds the BOOKING wire event."""
     return {
         "event_id":         str(uuid.uuid4()),
         "event_type":       "BOOKING",
-        "hotel_id":         hotel_id,
-        "city":             city,
+        "hotel_id":         rec["hotel_id"],
+        "city":             rec["city"],
         "event_ts":         _now_iso_utc(),
-        "event_date":       sim_day.isoformat(),
-        "booking_id":       str(booking_id),
-        "customer_id":      customer_id,
-        "room_type_id":     str(room_type_id),
-        "checkin_date":     checkin_date.isoformat(),
-        "checkout_date":    checkout_date.isoformat(),
-        "nights":           nights,
-        "num_guests":       int(num_guests),
-        "nightly_rate_inr": nightly_int,
-        "revenue_inr":      revenue_int,
-        "booking_source":   booking_source,
+        "event_date":       _today_ist().isoformat(),
+        "booking_id":       rec["booking_id"],
+        "customer_id":      rec["customer_id"],
+        "room_type_id":     rec["room_type_id"],
+        "checkin_date":     rec["checkin_date"].isoformat(),
+        "checkout_date":    rec["checkout_date"].isoformat(),
+        "nights":           rec["nights"],
+        "num_guests":       rec["num_guests"],
+        "nightly_rate_inr": rec["nightly_rate_inr"],
+        "revenue_inr":      rec["nightly_rate_inr"] * rec["nights"],
+        "booking_source":   rec["booking_source"],
     }
 
 
-def make_lifecycle_event(event_type, booking_id, customer_id, hotel_id, city,
-                         sim_day, extra=None):
-    """
-    Build a CHECKIN / CHECKOUT / CANCELLATION event. Base envelope plus
-    booking_id + customer_id; CANCELLATION carries cancellation_reason
-    in `extra`.
-    """
-    event = {
+def _build_lifecycle_event(event_type, booking_id, customer_id, hotel_id, city, extra=None):
+    evt = {
         "event_id":    str(uuid.uuid4()),
         "event_type":  event_type,
         "hotel_id":    hotel_id,
         "city":        city,
         "event_ts":    _now_iso_utc(),
-        "event_date":  sim_day.isoformat(),
-        "booking_id":  str(booking_id),
+        "event_date":  _today_ist().isoformat(),
+        "booking_id":  booking_id,
         "customer_id": customer_id,
     }
     if extra:
-        event.update(extra)
-    return event
+        evt.update(extra)
+    return evt
 
 
-def make_price_change_event(hotel, sim_day):
-    """
-    Stateless operational event. No booking_id / customer_id — preserved
-    from the previous version.
-    """
-    base = hotel.get("base_daily_bookings", 2000)
-    old_price = int(base * random.uniform(0.8, 1.0))
-    new_price = int(old_price * random.uniform(0.9, 1.2))
+def _build_price_change_event(rng, hotel):
+    base = hotel["base_price_inr"]
+    # Pick a real room type for the price change so consumers can FK it.
+    rt = None
+    rts = None  # set lazily; we already have the cache outside
+    old_price = max(500, int(base * rng.uniform(0.85, 1.10)))
+    new_price = max(500, int(old_price * rng.uniform(0.90, 1.20)))
     return {
         "event_id":      str(uuid.uuid4()),
         "event_type":    "PRICE_CHANGE",
         "hotel_id":      hotel["hotel_id"],
         "city":          hotel["city"],
         "event_ts":      _now_iso_utc(),
-        "event_date":    sim_day.isoformat(),
-        "room_type_id":  str(uuid.uuid4()),
+        "event_date":    _today_ist().isoformat(),
+        "room_type_id":  str(uuid.uuid4()),  # operational stub; consumer accepts
         "old_price_inr": old_price,
         "new_price_inr": new_price,
     }
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PER-SIM-DAY LOOP
+# NEW-BOOKING GENERATION
 # ══════════════════════════════════════════════════════════════════════════════
 
-def collect_day_events(conn, hotels, day, sim_start, plan_seed,
-                        num_prices, pending_cancellations, cancellation_plans,
-                        day_rng, wire_counts, hotel_rating_map):
+def generate_booking(rng, cache, conn, today_ist, daily_seed):
     """
-    Build the full event list for sim-day `day`, mutating sim_open_bookings
-    in the same transaction (NOT committed here — caller commits at end
-    of day so the day is atomic).
-    Returns the list of (event_dict, partition_city) tuples.
-    hotel_rating_map: {hotel_id: (avg_rating, star_category)} loaded at startup.
-    """
-    events = []
+    Build one new BOOKING + its fire-time stamps.  Returns a dict ready for
+    INSERT into sim_open_bookings AND the BOOKING wire event, OR None if we
+    couldn't find a hotel that satisfies the occupancy cap after a few tries.
 
-    # ── 1. Cancellations scheduled for today (from prior days' BOOKINGs / hydration)
-    for booking_id in pending_cancellations.pop(day, []):
-        plan = cancellation_plans.get(booking_id)
-        if plan is None:
+    Steps (per the locked plan):
+      1. City by popularity × hotel count × season/holiday
+      2. Hotel in that city by total_rooms × star, subject to occupancy cap
+      3. Room type fitting num_guests
+      4. Customer (75% out-of-state)
+      5. Lead time + nights + dates
+      6. Price + revenue invariant
+      7. booking_source + lifecycle fire-times + cancel decision
+    """
+    dim_date_today = fetch_dim_date(conn, today_ist)
+    season_mult = SEASON_MULT.get(dim_date_today[0], 1.0)
+    holiday_mult = HIGH_DEMAND_HOLIDAY_MULT if dim_date_today[1] else 1.0
+
+    # Try a few cities × hotels before giving up to PRICE_CHANGE.
+    for _ in range(6):
+        city = cache.weighted_city_pick(rng, season_mult, holiday_mult)
+        hotel = cache.pick_hotel_in_city(rng, city)
+        if hotel is None:
             continue
-        cancel_date, reason = plan
-        row = lookup_open_booking(conn, booking_id)
-        if row is None:
-            # Already evicted (e.g., duplicate scheduling). Skip.
-            del cancellation_plans[booking_id]
+
+        num_guests = _sample_num_guests(rng)
+        rt = cache.pick_room_type(rng, hotel["hotel_id"], num_guests)
+        if rt is None:
             continue
-        customer_id, hotel_id, city = row
-        evt = make_lifecycle_event(
-            "CANCELLATION", booking_id, customer_id, hotel_id, city, day,
-            extra={"cancellation_reason": reason},
-        )
-        events.append((evt, city))
-        wire_counts["CANCELLATION"] += 1
-        # B-030: emit REVIEW before row is deleted (need checkin/out dates).
-        _rev_ex = _fetch_sim_booking_for_review(conn, booking_id)
-        if _rev_ex is not None:
-            _bsrc, _cin, _cout, _bts_d = _rev_ex
-            _avg, _star = hotel_rating_map.get(hotel_id, (3.0, "budget"))
-            _rv = _make_review(
-                booking_id=booking_id, customer_id=customer_id,
-                hotel_id=hotel_id, booking_source=_bsrc,
-                hotel_avg_rating=float(_avg or 3.0), star_category=_star,
-                lifecycle_status="CANCELLED", sim_day=day,
-                booking_ts_date=_bts_d, checkin_date=_cin, checkout_date=_cout,
-            )
-            if _rv is not None:
-                _rv["event_ts"] = _now_iso_utc()
-                events.append((_rv, city))
-                wire_counts["REVIEW"] += 1
-        delete_open_booking(conn, booking_id)
-        del cancellation_plans[booking_id]
+        rt_id, rt_cap, rt_base_price, rt_name = rt
 
-    # ── 2. New bookings — runway WHERE booking_ts::date = day
-    for fb_row in fetch_runway_for_day(conn, day):
-        (booking_id, hotel_id, customer_id, room_type_id, city,
-         checkin_date, checkout_date, nights_stayed, num_guests,
-         nightly_rate_inr, revenue_inr, booking_source,
-         is_cancelled, booking_ts) = fb_row
+        lead = _sample_lead_time(rng)
+        nights = _sample_nights(rng)
+        checkin_d  = today_ist + timedelta(days=lead)
+        checkout_d = checkin_d + timedelta(days=nights)
 
-        booking_evt = make_booking_event(fb_row, day)
-        events.append((booking_evt, city))
-        wire_counts["BOOKING"] += 1
+        with conn.cursor() as cur:
+            if _hotel_occupancy_busted(cur, hotel["hotel_id"],
+                                       hotel["total_rooms"],
+                                       checkin_d, checkout_d):
+                continue  # try another hotel
 
-        if is_cancelled:
-            cancel_date, reason = plan_cancellation(
-                str(booking_id), booking_ts.date(), checkin_date, sim_start, plan_seed,
-            )
-            if cancel_date == day:
-                # Same-day cancellation — emit pair, do NOT touch sim_open_bookings.
-                cancel_evt = make_lifecycle_event(
-                    "CANCELLATION", str(booking_id), customer_id, hotel_id, city, day,
-                    extra={"cancellation_reason": reason},
-                )
-                events.append((cancel_evt, city))
-                wire_counts["CANCELLATION"] += 1
-                # B-030: same-day cancel review — data from fb_row directly.
-                _avg, _star = hotel_rating_map.get(hotel_id, (3.0, "budget"))
-                _rv = _make_review(
-                    booking_id=str(booking_id), customer_id=customer_id,
-                    hotel_id=hotel_id, booking_source=booking_source,
-                    hotel_avg_rating=float(_avg or 3.0), star_category=_star,
-                    lifecycle_status="CANCELLED", sim_day=day,
-                    booking_ts_date=booking_ts.date(),
-                    checkin_date=checkin_date, checkout_date=checkout_date,
-                )
-                if _rv is not None:
-                    _rv["event_ts"] = _now_iso_utc()
-                    events.append((_rv, city))
-                    wire_counts["REVIEW"] += 1
-            else:
-                insert_sim_open_bookings(
-                    conn, fb_row, booking_evt["event_ts"],
-                    state="BOOKED", source="stream",
-                )
-                cancellation_plans[str(booking_id)] = (cancel_date, reason)
-                pending_cancellations[cancel_date].append(str(booking_id))
-        else:
-            insert_sim_open_bookings(
-                conn, fb_row, booking_evt["event_ts"],
-                state="BOOKED", source="stream",
-            )
+        nightly = _compute_price(rng, rt_base_price, checkin_d, dim_date_today)
+        revenue = nightly * nights
+        assert revenue == nightly * nights, "revenue invariant"
 
-    # ── 3. Check-ins for today
-    for booking_id, customer_id, hotel_id, city in fetch_today_checkins(conn, day):
-        evt = make_lifecycle_event(
-            "CHECKIN", str(booking_id), customer_id, hotel_id, city, day,
-        )
-        events.append((evt, city))
-        wire_counts["CHECKIN"] += 1
-        update_state_checked_in(conn, booking_id)
+        customer = cache.pick_customer(rng, exclude_state=hotel["state"])
+        cust_id, _cust_state = customer
+        source = _sample_booking_source(rng)
 
-    # ── 4. Check-outs for today
-    for booking_id, customer_id, hotel_id, city in fetch_today_checkouts(conn, day):
-        evt = make_lifecycle_event(
-            "CHECKOUT", str(booking_id), customer_id, hotel_id, city, day,
-        )
-        events.append((evt, city))
-        wire_counts["CHECKOUT"] += 1
-        # B-030: emit REVIEW before row is deleted (need booking dates).
-        _rev_ex = _fetch_sim_booking_for_review(conn, booking_id)
-        if _rev_ex is not None:
-            _bsrc, _cin, _cout, _bts_d = _rev_ex
-            _avg, _star = hotel_rating_map.get(hotel_id, (3.0, "budget"))
-            _rv = _make_review(
-                booking_id=str(booking_id), customer_id=customer_id,
-                hotel_id=hotel_id, booking_source=_bsrc,
-                hotel_avg_rating=float(_avg or 3.0), star_category=_star,
-                lifecycle_status="COMPLETED", sim_day=day,
-                booking_ts_date=_bts_d, checkin_date=_cin, checkout_date=_cout,
-            )
-            if _rv is not None:
-                _rv["event_ts"] = _now_iso_utc()
-                events.append((_rv, city))
-                wire_counts["REVIEW"] += 1
-        delete_open_booking(conn, booking_id)
+        booking_id = str(uuid.uuid4())
 
-    # ── 5. Stateless PRICE_CHANGE
-    for _ in range(num_prices):
-        h = day_rng.choice(hotels)
-        evt = make_price_change_event(h, day)
-        events.append((evt, h["city"]))
-        wire_counts["PRICE_CHANGE"] += 1
+        # Lifecycle fire-times
+        ckin_fire  = _sample_fire_ts_on_day(rng, checkin_d,  CHECKIN_HOUR_DIST)
+        ckout_fire = _sample_fire_ts_on_day(rng, checkout_d, CHECKOUT_HOUR_DIST)
 
-    # ── 6. Deterministic intra-day shuffle so we don't always emit
-    # CANCELLATIONS-then-BOOKINGS-then-CHECKINS-... in lockstep.
-    day_rng.shuffle(events)
-    return events
+        # Cancel decision (deterministic) — cancel_date in [today, checkin_d]
+        cancel_fire = None
+        if _is_cancel_decided(booking_id, daily_seed):
+            days_until = (checkin_d - today_ist).days
+            cd_offset = rng.randint(0, max(0, days_until))
+            cancel_day = today_ist + timedelta(days=cd_offset)
+            cancel_fire = _sample_fire_ts_on_day(rng, cancel_day,
+                                                 CANCELLATION_HOUR_DIST)
+            # Clamp to NOT-IN-PAST (e.g. cancel_day=today, cancel_hour < now_ist_hour):
+            now_u = _now_utc()
+            if cancel_fire < now_u:
+                cancel_fire = now_u + timedelta(seconds=rng.randint(60, 600))
+
+        return {
+            "booking_id":       booking_id,
+            "hotel_id":         hotel["hotel_id"],
+            "city":             hotel["city"],
+            "customer_id":      cust_id,
+            "room_type_id":     str(rt_id),
+            "checkin_date":     checkin_d,
+            "checkout_date":    checkout_d,
+            "nights":           nights,
+            "num_guests":       num_guests,
+            "nightly_rate_inr": nightly,
+            "booking_source":   source,
+            "checkin_fire_ts":  ckin_fire,
+            "checkout_fire_ts": ckout_fire,
+            "cancel_fire_ts":   cancel_fire,
+            "_hotel":           hotel,
+            "_rt_name":         rt_name,
+        }
+
+    return None  # gave up — caller emits PRICE_CHANGE
 
 
-def run_one_day(conn, producer, topic, hotels, day, sim_start, plan_seed,
-                num_prices, pending_cancellations, cancellation_plans,
-                sim_speed, day_rng, chaos_args, chaos_stats, wire_counts,
-                chaos_seed_for_clock, hotel_rating_map):
-    """
-    Execute one sim-day atomically: build events, throttle-send, flush
-    Kafka, commit DB, save clock. A graceful Ctrl-C that lands mid-day
-    will still finish the day before exiting (the SIGINT handler clears
-    `running` but the day-loop checks between days).
-    """
-    events = collect_day_events(
-        conn, hotels, day, sim_start, plan_seed,
-        num_prices, pending_cancellations, cancellation_plans,
-        day_rng, wire_counts, hotel_rating_map,
-    )
+# ══════════════════════════════════════════════════════════════════════════════
+# DB MUTATIONS — collected per-tick, committed in one batch
+# ══════════════════════════════════════════════════════════════════════════════
 
-    n = len(events)
-    day_budget = 1.0 / sim_speed
-    interval = (day_budget / n) if n > 0 else 0
-    t0 = time.time()
-    for i, (evt, partition_city) in enumerate(events):
-        payload, mode = maybe_corrupt_or_delay(evt, *chaos_args)
-        chaos_stats[mode] += 1
-        producer.send(topic, key=partition_city, value=payload)
-        if interval > 0:
-            target = t0 + (i + 1) * interval
-            drift = target - time.time()
-            if drift > 0:
-                time.sleep(drift)
+class TickBatch:
+    """Accumulator for per-tick DB mutations.  Caller commits once per tick."""
 
-    if n == 0 and day_budget > 0:
-        # No events today; still advance wall-clock so the achieved
-        # sim-speed reflects the configured value rather than racing.
-        time.sleep(day_budget)
+    def __init__(self):
+        self.inserts_open    = []     # rows for sim_open_bookings
+        self.state_to_ci     = []     # booking_ids → state=CHECKED_IN
+        self.state_to_rev    = []     # (booking_id, review_fire_ts) → state=REVIEW_PENDING
+        self.delete_open     = []     # booking_ids to drop
+        self.bookings_emitted = 0     # for sim_daily_counter
+        self.events_emitted   = 0
 
-    # ── Commit-at-end-of-day: Kafka flush, DB commit, clock save.
-    producer.flush()
+    def add_booking(self, rec):
+        self.inserts_open.append((
+            rec["booking_id"], rec["customer_id"], rec["hotel_id"], rec["city"],
+            rec["room_type_id"], rec["checkin_date"], rec["checkout_date"],
+            rec["nights"], rec["num_guests"], rec["nightly_rate_inr"], None,
+            rec["booking_source"], "BOOKED", _now_utc(), "stream",
+            rec["checkin_fire_ts"], rec["checkout_fire_ts"],
+            rec["cancel_fire_ts"], None,  # review_fire_ts set later
+        ))
+        self.bookings_emitted += 1
+
+
+def flush_tick(conn, batch, daily_counter_today, events_in_tick):
+    """Apply all per-tick mutations in ONE commit.  Called at end of every tick."""
+    if (not batch.inserts_open and not batch.state_to_ci and not batch.state_to_rev
+            and not batch.delete_open and events_in_tick == 0):
+        return
+    with conn.cursor() as cur:
+        if batch.inserts_open:
+            execute_values(cur, """
+                INSERT INTO sim_open_bookings
+                    (booking_id, customer_id, hotel_id, city, room_type_id,
+                     checkin_date, checkout_date, nights, num_guests,
+                     nightly_rate_inr, payment_mode, booking_source,
+                     state, booked_event_ts, source,
+                     checkin_fire_ts, checkout_fire_ts,
+                     cancel_fire_ts, review_fire_ts)
+                VALUES %s
+                ON CONFLICT (booking_id) DO NOTHING
+            """, batch.inserts_open, page_size=len(batch.inserts_open))
+
+        if batch.state_to_ci:
+            execute_values(cur, """
+                UPDATE sim_open_bookings sob SET state='CHECKED_IN'
+                FROM (VALUES %s) AS v(bid) WHERE sob.booking_id = v.bid::uuid
+            """, [(b,) for b in batch.state_to_ci],
+                page_size=len(batch.state_to_ci))
+
+        if batch.state_to_rev:
+            execute_values(cur, """
+                UPDATE sim_open_bookings sob
+                   SET state='REVIEW_PENDING', review_fire_ts = v.rfts::timestamptz
+                FROM (VALUES %s) AS v(bid, rfts)
+                WHERE sob.booking_id = v.bid::uuid
+            """, [(b, rf.isoformat()) for (b, rf) in batch.state_to_rev],
+                page_size=len(batch.state_to_rev))
+
+        if batch.delete_open:
+            execute_values(cur, """
+                DELETE FROM sim_open_bookings sob
+                USING (VALUES %s) AS v(bid)
+                WHERE sob.booking_id = v.bid::uuid
+            """, [(b,) for b in batch.delete_open],
+                page_size=len(batch.delete_open))
+
+        # Increment the day's events_emitted counter by events_in_tick.
+        if events_in_tick > 0:
+            cur.execute("""
+                UPDATE sim_daily_counter
+                   SET events_emitted = events_emitted + %s, updated_at = NOW()
+                 WHERE counter_date = %s
+            """, (events_in_tick, daily_counter_today))
     conn.commit()
-    save_clock(day, chaos_seed_for_clock)
-    return n, (time.time() - t0)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# MAIN
+# DAILY COUNTER MGMT
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _parse_date_arg(s):
-    if isinstance(s, date):
-        return s
-    return date.fromisoformat(s)
+def ensure_daily_counter_row(conn, today_ist, rate_multiplier):
+    """
+    Insert/refresh today's counter row; return (events_emitted_so_far, cap).
+
+    LAST-WRITE-WINS on cap (B-047 + migration 016): a follow-up
+    `python run.py --rate-multiplier N` overrides today's cap immediately,
+    so an x=1 session followed by x=3 jumps cap from 1M to 3M without
+    waiting for IST midnight.  `events_emitted` is intentionally NOT
+    overwritten — it keeps accumulating across all sessions in the day
+    (correct, since the counter is a cumulative ceiling check).
+    """
+    cap = DAILY_CAP_BASE * rate_multiplier
+    with conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO sim_daily_counter (counter_date, events_emitted, cap)
+            VALUES (%s, 0, %s)
+            ON CONFLICT (counter_date) DO UPDATE
+              SET cap = EXCLUDED.cap, updated_at = NOW()
+        """, (today_ist, cap))
+        cur.execute("""
+            SELECT events_emitted, cap FROM sim_daily_counter WHERE counter_date = %s
+        """, (today_ist,))
+        r = cur.fetchone()
+    conn.commit()
+    return (r[0], r[1]) if r else (0, cap)
+
+
+def read_daily_counter(conn, today_ist):
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT events_emitted, cap FROM sim_daily_counter WHERE counter_date = %s
+        """, (today_ist,))
+        r = cur.fetchone()
+    return (r[0], r[1]) if r else (0, DAILY_CAP_BASE)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# DUE-LIFECYCLE FETCH
+# ══════════════════════════════════════════════════════════════════════════════
+
+def fetch_due_lifecycle(conn, now_utc, limit=8):
+    """
+    Fetch up to `limit` lifecycle rows whose fire-time has passed.  Returns
+    a list of dicts; caller iterates and emits.  Each row picks the SINGLE
+    fire-type that matches its current state, so there's no ambiguity at
+    emit time.
+    """
+    out = []
+    with conn.cursor() as cur:
+        # CHECKIN (state=BOOKED, checkin_fire_ts <= now)
+        cur.execute("""
+            SELECT booking_id, customer_id, hotel_id, city,
+                   checkin_fire_ts AS fire_ts, 'CHECKIN' AS fire_type
+            FROM sim_open_bookings
+            WHERE state = 'BOOKED' AND checkin_fire_ts <= %s
+              AND (cancel_fire_ts IS NULL OR cancel_fire_ts > checkin_fire_ts)
+            ORDER BY checkin_fire_ts ASC LIMIT %s
+        """, (now_utc, limit))
+        out.extend(cur.fetchall())
+
+        # CHECKOUT (state=CHECKED_IN, checkout_fire_ts <= now)
+        cur.execute("""
+            SELECT booking_id, customer_id, hotel_id, city,
+                   checkout_fire_ts AS fire_ts, 'CHECKOUT' AS fire_type
+            FROM sim_open_bookings
+            WHERE state = 'CHECKED_IN' AND checkout_fire_ts <= %s
+            ORDER BY checkout_fire_ts ASC LIMIT %s
+        """, (now_utc, limit))
+        out.extend(cur.fetchall())
+
+        # CANCELLATION (state=BOOKED, cancel_fire_ts <= now, before checkin)
+        cur.execute("""
+            SELECT booking_id, customer_id, hotel_id, city,
+                   cancel_fire_ts AS fire_ts, 'CANCELLATION' AS fire_type
+            FROM sim_open_bookings
+            WHERE state = 'BOOKED' AND cancel_fire_ts IS NOT NULL
+              AND cancel_fire_ts <= %s
+            ORDER BY cancel_fire_ts ASC LIMIT %s
+        """, (now_utc, limit))
+        out.extend(cur.fetchall())
+
+        # REVIEW (state=REVIEW_PENDING, review_fire_ts <= now)
+        cur.execute("""
+            SELECT booking_id, customer_id, hotel_id, city,
+                   review_fire_ts AS fire_ts, 'REVIEW' AS fire_type
+            FROM sim_open_bookings
+            WHERE state = 'REVIEW_PENDING' AND review_fire_ts IS NOT NULL
+              AND review_fire_ts <= %s
+            ORDER BY review_fire_ts ASC LIMIT %s
+        """, (now_utc, limit))
+        out.extend(cur.fetchall())
+
+    # Sort all candidates by fire_ts ASC so the soonest-due fires first.
+    out.sort(key=lambda r: r[4])
+    return out
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# REVIEW EMISSION (deferred) — sample REVIEW content + schedule
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _hotel_rating_map(conn):
+    """Hotel rating + star — used by make_review_event_dict on REVIEW emit."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT hotel_id, COALESCE(avg_rating, 3.0), COALESCE(star_category, 3) FROM hotel_master")
+        return {r[0]: (float(r[1]), int(r[2])) for r in cur.fetchall()}
+
+
+def _schedule_review_after(rng, anchor_utc):
+    """
+    Sample a REVIEW fire-ts from REVIEW_HOUR_DIST on the same IST day as
+    anchor_utc; clamp to >= anchor + 30min if the sample lands earlier.
+    """
+    anchor_ist_day = anchor_utc.astimezone(IST).date()
+    rfts = _sample_fire_ts_on_day(rng, anchor_ist_day, REVIEW_HOUR_DIST)
+    min_review = anchor_utc + timedelta(minutes=30)
+    if rfts < min_review:
+        rfts = min_review + timedelta(seconds=rng.randint(0, 600))
+    return rfts
+
+
+def _maybe_review_payload(rng, booking_id, customer_id, hotel_id,
+                          booking_source, hotel_rating_map,
+                          lifecycle_status, sim_day, booking_ts_date,
+                          checkin_d, checkout_d):
+    """Call make_review_event_dict; return (dict, fire_ts) or None."""
+    avg, star = hotel_rating_map.get(hotel_id, (3.0, 3))
+    rv = _make_review(
+        booking_id=booking_id, customer_id=customer_id, hotel_id=hotel_id,
+        booking_source=booking_source, hotel_avg_rating=avg,
+        star_category=star, lifecycle_status=lifecycle_status,
+        sim_day=sim_day, booking_ts_date=booking_ts_date,
+        checkin_date=checkin_d, checkout_date=checkout_d,
+    )
+    return rv
+
+
+def _fetch_booking_for_review(conn, booking_id):
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT booking_source, checkin_date, checkout_date,
+                   booked_event_ts::date
+            FROM sim_open_bookings WHERE booking_id = %s
+        """, (booking_id,))
+        return cur.fetchone()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CATCH-UP DRAIN BANNER — log once when overdue > threshold at startup
+# ══════════════════════════════════════════════════════════════════════════════
+
+def log_startup_state(conn, today_ist, events_emitted, cap, rate_multiplier):
+    with conn.cursor() as cur:
+        cur.execute("SELECT COUNT(*) FROM sim_open_bookings WHERE state='BOOKED'")
+        booked = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM sim_open_bookings WHERE state='CHECKED_IN'")
+        ci = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM sim_open_bookings WHERE state='REVIEW_PENDING'")
+        rp = cur.fetchone()[0]
+        cur.execute("""
+            SELECT COUNT(*) FROM sim_open_bookings
+            WHERE (state='BOOKED'      AND checkin_fire_ts  <= NOW())
+               OR (state='CHECKED_IN'  AND checkout_fire_ts <= NOW())
+               OR (state='BOOKED'      AND cancel_fire_ts   <= NOW())
+               OR (state='REVIEW_PENDING' AND review_fire_ts <= NOW())
+        """)
+        overdue = cur.fetchone()[0]
+    print(f"sim_open_bookings: {booked} BOOKED + {ci} CHECKED_IN + {rp} REVIEW_PENDING")
+    print(f"overdue lifecycle rows: {overdue} (will drain at the curve cap, "
+          f"event_ts = NOW()).")
+    print(f"daily counter [{today_ist.isoformat()}]: {events_emitted:,} / {cap:,}  "
+          f"(rate_multiplier={rate_multiplier})")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MAIN LOOP
+# ══════════════════════════════════════════════════════════════════════════════
+
+def effective_rate_now(rate_multiplier):
+    h = _now_ist().hour
+    return BASE_RATE * DIURNAL_HOUR_MULT[h] * rate_multiplier
+
+
+def picker_prob_booking():
+    h = _now_ist().hour
+    w_b = BOOKING_PICKER_WEIGHT[h]
+    w_p = DIURNAL_HOUR_MULT[h]
+    return w_b / (w_b + w_p) if (w_b + w_p) > 0 else 0.5
+
+
+def _seconds_until_ist_midnight():
+    now = _now_ist()
+    tomorrow = (now + timedelta(days=1)).date()
+    midnight = datetime.combine(tomorrow, dtime(0, 0, 0), tzinfo=IST)
+    return max(60, int((midnight - now).total_seconds()))
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="TravelLens Kafka event producer (calendar replay simulator)"
+        description="TravelLens forward-generator (B-047 Stage 2a)"
     )
-    parser.add_argument(
-        "--sim-start", type=_parse_date_arg, default=DEFAULT_SIM_START,
-        help="Anchor sim-date (default 2025-06-01). MUST match the history generator.",
-    )
-    parser.add_argument(
-        "--until", type=_parse_date_arg, default=None,
-        help="Stop AFTER processing this sim-day (inclusive). Omit to run full runway.",
-    )
-    parser.add_argument(
-        "--sim-speed", type=float, default=DEFAULT_SIM_SPEED,
-        help="Sim-days per real-second. Default 0.05 (~100 evt/s steady state).",
-    )
-    parser.add_argument(
-        "--reset-clock", action="store_true",
-        help="Delete scripts/.sim_clock.json before starting (begin at --sim-start).",
-    )
-    parser.add_argument(
-        "--num-prices-per-day", type=int, default=DEFAULT_NUM_PRICES_PER_DAY,
-        help="PRICE_CHANGE events emitted per sim-day (stateless).",
-    )
-    # Chaos flags — CLI takes precedence over CHAOS_* env vars.
-    parser.add_argument(
-        "--malformed-pct", type=float,
-        default=float(os.getenv("CHAOS_MALFORMED_PCT", "0")),
-    )
-    parser.add_argument(
-        "--late-pct", type=float,
-        default=float(os.getenv("CHAOS_LATE_PCT", "0")),
-    )
-    parser.add_argument(
-        "--chaos-seed", type=int,
-        default=(int(os.getenv("CHAOS_SEED")) if os.getenv("CHAOS_SEED") else None),
-    )
-    # Deprecated, accepted-and-ignored. The old stateless producer's primary
-    # knobs were --rate (events/sec) and --duration (seconds). The calendar
-    # replay model is driven by --sim-speed (sim-days/sec) and --until
-    # (sim-date). Kept as no-ops so callers like run.py (which still passes
-    # --rate from --sim-rate) don't break — a deprecation warning prints
-    # if they're used so the next pass over run.py picks them up.
-    parser.add_argument("--rate", type=float, default=None,
-                        help="DEPRECATED. Ignored. Use --sim-speed.")
-    parser.add_argument("--duration", type=float, default=None,
-                        help="DEPRECATED. Ignored. Use --until.")
+    # Owner contract: int>1 or silent fallback to 1; no error, no warn.
+    # ARG_FROM_ENV note: argparse default uses env-coerced value, so the CLI
+    # only ever OVERRIDES env when explicitly passed.
+    parser.add_argument("--rate-multiplier",
+                        type=_coerce_rate_multiplier,
+                        default=_coerce_rate_multiplier_env(),
+                        help="integer > 1 scales rate + daily cap together; "
+                             "any invalid value silently becomes 1")
+    # Chaos is ON by default at the locked B-047 plan rates (1.2% malformed +
+    # 0.8% late).  These trickle the monitor's quarantine cards instead of
+    # spiking them.  `--chaos` on run.py still overrides to the 5/2 stress
+    # profile via CHAOS_* env vars; setting CHAOS_*_PCT=0 explicitly disables.
+    parser.add_argument("--malformed-pct", type=float,
+                        default=float(os.getenv("CHAOS_MALFORMED_PCT", "1.2")))
+    parser.add_argument("--late-pct",      type=float,
+                        default=float(os.getenv("CHAOS_LATE_PCT", "0.8")))
+    parser.add_argument("--chaos-seed",    type=int,
+                        default=(int(os.getenv("CHAOS_SEED"))
+                                 if os.getenv("CHAOS_SEED") else None))
     args = parser.parse_args()
 
-    if args.rate is not None:
-        print(f"WARNING: --rate is deprecated and ignored; use --sim-speed "
-              f"(sim-days per real-second). Current --sim-speed={args.sim_speed}.",
-              file=sys.stderr)
-    if args.duration is not None:
-        print(f"WARNING: --duration is deprecated and ignored; use --until <sim-date>. "
-              f"Current --until={args.until}.", file=sys.stderr)
+    # Belt-and-suspenders: re-coerce the final value in case argparse passes
+    # a default that wasn't run through our coerce (it does, but explicit).
+    rate_multiplier = _coerce_rate_multiplier(args.rate_multiplier)
 
-    sim_start = args.sim_start
-    chaos_seed = args.chaos_seed
-    # plan_seed is used to make cancellation plans deterministic; it
-    # falls back to 0 so plans are still reproducible across runs even
-    # without an explicit --chaos-seed.
-    plan_seed = chaos_seed if chaos_seed is not None else 0
+    if args.chaos_seed is not None:
+        random.seed(args.chaos_seed)
+    rng = random.Random(args.chaos_seed if args.chaos_seed is not None else None)
 
-    if chaos_seed is not None:
-        random.seed(chaos_seed)
+    # Delete the legacy sim-clock file once; it's never read again.
+    try:
+        if os.path.exists(LEGACY_CLOCK_FILE):
+            os.unlink(LEGACY_CLOCK_FILE)
+            print(f"Removed legacy {LEGACY_CLOCK_FILE} — forward generator has no sim-clock.")
+    except Exception:
+        pass
 
-    if args.malformed_pct + args.late_pct > 100:
-        print(f"WARNING: CHAOS config error: malformed ({args.malformed_pct}%) + "
-              f"late ({args.late_pct}%) > 100%.", file=sys.stderr)
-
-    if args.reset_clock:
-        reset_clock()
-        print(f"Clock reset.")
-
-    resume_day, saved_seed = load_clock(default_start=sim_start)
-    if resume_day < sim_start:
-        resume_day = sim_start
-
-    # Reconcile chaos_seed: explicit CLI > previously saved > None. If both
-    # are present and disagree, warn — cancellation plans will shift.
-    if chaos_seed is None and saved_seed is not None:
-        chaos_seed = saved_seed
-        plan_seed = chaos_seed
-        print(f"Reusing chaos_seed={chaos_seed} from {CLOCK_FILE.name} (plans stay deterministic across restart).")
-        random.seed(chaos_seed)
-    elif chaos_seed is not None and saved_seed is not None and chaos_seed != saved_seed:
-        print(f"WARNING: chaos_seed changed: was {saved_seed}, now {chaos_seed}. "
-              f"Previously-scheduled cancellation plans will shift; some hydrated "
-              f"plans may be clamped forward.", file=sys.stderr)
-
-    # ── Kafka producer — bytes pass-through, city partition key,
-    # acks=all, linger_ms=20 ALL PRESERVED.
+    # Kafka
     bootstrap = os.getenv("KAFKA_BOOTSTRAP", "localhost:9092")
     topic     = os.getenv("KAFKA_TOPIC",     "booking-events")
-    hotels = json.loads(SEED_FILE.read_text(encoding="utf-8"))
     producer = KafkaProducer(
         bootstrap_servers=bootstrap,
         value_serializer=lambda v: v if isinstance(v, bytes) else json.dumps(v).encode("utf-8"),
         key_serializer=lambda k: k.encode("utf-8"),
-        acks="all",
-        linger_ms=20,
+        acks="all", linger_ms=20,
     )
 
-    # ── DB. autocommit=False; we commit at end of every sim-day.
+    # DB + advisory lock
     conn = psycopg2.connect(**DB_PARAMS)
     conn.autocommit = False
-
-    # ── Single-instance guard — same pattern as gold_lifecycle_updater and
-    # review_embedder.  Two producers racing on sim_clock.json and
-    # sim_open_bookings corrupt the simulator state and can crash both
-    # instances.  The advisory lock is the authoritative "one producer alive"
-    # signal; it is held until the process exits (or conn closes).
-    with conn.cursor() as _cur:
-        _cur.execute("SELECT pg_try_advisory_lock(%s)", (PRODUCER_ADVISORY_LOCK_KEY,))
-        _lock_acquired = _cur.fetchone()[0]
-    if not _lock_acquired:
-        print(
-            f"ERROR: Another producer instance already holds advisory lock "
-            f"(key={PRODUCER_ADVISORY_LOCK_KEY}).  "
-            f"Kill the existing instance before starting a new one.",
-            file=sys.stderr,
-        )
-        producer.close()
-        conn.close()
-        sys.exit(1)
+    with conn.cursor() as cur:
+        cur.execute("SELECT pg_try_advisory_lock(%s)", (PRODUCER_ADVISORY_LOCK_KEY,))
+        if not cur.fetchone()[0]:
+            print(f"ERROR: Another producer instance already holds advisory lock "
+                  f"(key={PRODUCER_ADVISORY_LOCK_KEY}).", file=sys.stderr)
+            producer.close(); conn.close(); sys.exit(1)
     print(f"Advisory lock acquired (key={PRODUCER_ADVISORY_LOCK_KEY}).")
 
-    # B-030: hotel rating map loaded once at startup for review generation.
-    hotel_rating_map = _load_hotel_rating_map(conn)
+    print(f"Loading dim cache…")
+    cache = DimCache(conn)
+    rating_map = _hotel_rating_map(conn)
+    print(f"  cached {len(cache.hotels):,} hotels across {len(cache._city_names):,} "
+          f"cities, {sum(len(v) for v in cache.room_types_by_hotel.values()):,} "
+          f"room types, {len(cache.customers):,} customers.")
 
-    # ── Graceful shutdown — stops AFTER the current day's commit.
+    today_ist = _today_ist()
+    events_emitted, cap = ensure_daily_counter_row(conn, today_ist, rate_multiplier)
+    daily_seed = f"{today_ist.isoformat()}|{rate_multiplier}|{args.chaos_seed or 0}"
+
+    log_startup_state(conn, today_ist, events_emitted, cap, rate_multiplier)
+
+    # Graceful shutdown
     running = True
     def _stop(sig, frame):
         nonlocal running
@@ -982,102 +1011,194 @@ def main():
     signal.signal(signal.SIGINT,  _stop)
     signal.signal(signal.SIGTERM, _stop)
 
-    # ── Hydration: read sim_open_bookings + plan its cancellations.
-    booked, checked_in, scheduled, pending_cancellations, cancellation_plans = \
-        hydrate_plans(conn, sim_start, plan_seed, resume_day)
-
-    print(f"sim-start={sim_start}  resume-day={resume_day}  "
-          f"sim-speed={args.sim_speed} day/s  "
-          f"until={args.until.isoformat() if args.until else 'runway exhausted'}")
-    print(f"Hydrated sim_open_bookings: {booked} BOOKED + {checked_in} CHECKED_IN "
-          f"= {booked+checked_in} total  |  "
-          f"scheduled cancellations: {scheduled}")
-    print(f"Kafka: {bootstrap}/{topic}  |  hotels in seed: {len(hotels)}")
-    if args.malformed_pct > 0 or args.late_pct > 0:
-        seed_note = f"  |  seed: {chaos_seed}" if chaos_seed is not None else ""
-        print(f"CHAOS — malformed: {args.malformed_pct}%  |  "
-              f"late: {args.late_pct}%{seed_note}")
-
+    # Pacing state
+    tokens = 0.0
+    last_t = time.monotonic()
     chaos_args = (args.malformed_pct, args.late_pct)
     chaos_stats = defaultdict(int)
     wire_counts = defaultdict(int)
+    if args.malformed_pct > 0 or args.late_pct > 0:
+        seed_note = f"  |  seed: {args.chaos_seed}" if args.chaos_seed is not None else ""
+        print(f"CHAOS — malformed: {args.malformed_pct}%  |  late: {args.late_pct}%{seed_note}")
+    print(f"rate_multiplier={rate_multiplier}  |  base={BASE_RATE} evt/s  "
+          f"|  peak ≈ {int(BASE_RATE * max(DIURNAL_HOUR_MULT) * rate_multiplier)} evt/s "
+          f"@ 19 IST  |  daily_cap={cap:,}")
 
-    # ── Main day loop ──────────────────────────────────────────────────
-    day = resume_day
-    total_events = 0
     t_start = time.time()
-    days_run = 0
-    last_day_completed = None
-    _runway_exhausted_logged = False  # log once, then keep running
 
     while running:
-        if args.until is not None and day > args.until:
-            print(f"\nReached --until {args.until}. Stopping.")
-            break
-        if not has_runway_after(conn, day) and not has_open_bookings(conn):
-            if not _runway_exhausted_logged:
-                print(
-                    f"\nRunway exhausted at {day} AND sim_open_bookings empty — "
-                    f"continuing to emit PRICE_CHANGE so open windows can flush. "
-                    f"Stop with Ctrl-C or --until.",
-                    flush=True,
-                )
-                _runway_exhausted_logged = True
-            # Keep looping: run_one_day emits PRICE_CHANGE per day so
-            # max_event_ts advances and the consumer can flush open windows.
+        # ── Day rollover ────────────────────────────────────────────────────
+        cur_today = _today_ist()
+        if cur_today != today_ist:
+            today_ist = cur_today
+            events_emitted, cap = ensure_daily_counter_row(conn, today_ist, rate_multiplier)
+            daily_seed = f"{today_ist.isoformat()}|{rate_multiplier}|{args.chaos_seed or 0}"
+            print(f"Day rollover → {today_ist}, cap={cap:,}")
 
-        day_rng = random.Random(f"day|{day.isoformat()}|{plan_seed}")
-        n, wall = run_one_day(
-            conn, producer, topic, hotels, day, sim_start, plan_seed,
-            args.num_prices_per_day, pending_cancellations, cancellation_plans,
-            args.sim_speed, day_rng, chaos_args, chaos_stats, wire_counts,
-            chaos_seed, hotel_rating_map,
-        )
-        total_events += n
-        days_run += 1
-        last_day_completed = day
+        # ── Cap check ───────────────────────────────────────────────────────
+        events_emitted, cap = read_daily_counter(conn, today_ist)
+        if events_emitted >= cap:
+            sleep_s = _seconds_until_ist_midnight()
+            print(f"Daily cap hit ({events_emitted:,} / {cap:,}); "
+                  f"sleeping {sleep_s}s until IST midnight.")
+            slept = 0
+            while running and slept < sleep_s:
+                time.sleep(min(30, sleep_s - slept))
+                slept += 30
+            continue
 
+        # ── Bucket refill ───────────────────────────────────────────────────
+        now_t = time.monotonic()
+        dt = now_t - last_t
+        last_t = now_t
+        rate = effective_rate_now(rate_multiplier)
+        tokens = min(tokens + dt * rate, rate * BUCKET_BURST_S)
+
+        # ── Drain bucket ────────────────────────────────────────────────────
+        batch = TickBatch()
+        events_this_tick = 0
+
+        # First: due lifecycle rows (priority).
+        due_rows = fetch_due_lifecycle(conn, _now_utc(),
+                                       limit=max(1, int(tokens) + 1))
+        di = 0
+        while tokens >= 1.0 and di < len(due_rows):
+            bid, cust_id, hid, city, _fts, ftype = due_rows[di]
+            di += 1
+
+            if ftype == "CHECKIN":
+                evt = _build_lifecycle_event("CHECKIN", str(bid), cust_id, hid, city)
+                batch.state_to_ci.append(str(bid))
+
+            elif ftype == "CHECKOUT":
+                evt = _build_lifecycle_event("CHECKOUT", str(bid), cust_id, hid, city)
+                # Defer REVIEW: maybe schedule it; else delete row now.
+                ref = _fetch_booking_for_review(conn, bid)
+                if ref:
+                    bsrc, ck, cko, bts_d = ref
+                    rv = _maybe_review_payload(
+                        rng, str(bid), cust_id, hid, bsrc, rating_map,
+                        "COMPLETED", today_ist, bts_d, ck, cko)
+                    if rv is None:
+                        batch.delete_open.append(str(bid))
+                    else:
+                        rfts = _schedule_review_after(rng, _now_utc())
+                        batch.state_to_rev.append((str(bid), rfts))
+                else:
+                    batch.delete_open.append(str(bid))
+
+            elif ftype == "CANCELLATION":
+                evt = _build_lifecycle_event(
+                    "CANCELLATION", str(bid), cust_id, hid, city,
+                    extra={"cancellation_reason":
+                           rng.choice(["customer_cancelled", "no_show"])})
+                # Defer REVIEW (cancel side); maybe schedule, else delete.
+                ref = _fetch_booking_for_review(conn, bid)
+                if ref:
+                    bsrc, ck, cko, bts_d = ref
+                    rv = _maybe_review_payload(
+                        rng, str(bid), cust_id, hid, bsrc, rating_map,
+                        "CANCELLED", today_ist, bts_d, ck, cko)
+                    if rv is None:
+                        batch.delete_open.append(str(bid))
+                    else:
+                        rfts = _schedule_review_after(rng, _now_utc())
+                        batch.state_to_rev.append((str(bid), rfts))
+                else:
+                    batch.delete_open.append(str(bid))
+
+            elif ftype == "REVIEW":
+                # Re-fetch the row to get booking_source + dates.
+                ref = _fetch_booking_for_review(conn, bid)
+                if not ref:
+                    batch.delete_open.append(str(bid)); continue
+                bsrc, ck, cko, bts_d = ref
+                rv = _maybe_review_payload(
+                    rng, str(bid), cust_id, hid, bsrc, rating_map,
+                    "COMPLETED", today_ist, bts_d, ck, cko)
+                if rv is None:
+                    batch.delete_open.append(str(bid)); continue
+                rv["event_ts"] = _now_iso_utc()
+                evt = rv
+                batch.delete_open.append(str(bid))
+            else:
+                continue
+
+            payload, mode = maybe_corrupt_or_delay(evt, *chaos_args)
+            chaos_stats[mode] += 1
+            producer.send(topic, key=city, value=payload)
+            wire_counts[ftype] += 1
+            events_this_tick += 1
+            tokens -= 1.0
+
+        # Second: fill the rest with BOOKING / PRICE_CHANGE by per-hour weights.
+        while tokens >= 1.0:
+            pb = picker_prob_booking()
+            if rng.random() < pb and events_emitted + events_this_tick < cap:
+                # Try a BOOKING
+                rec = generate_booking(rng, cache, conn, today_ist, daily_seed)
+                if rec is not None:
+                    evt = _build_booking_event(rec)
+                    batch.add_booking(rec)
+                    payload, mode = maybe_corrupt_or_delay(evt, *chaos_args)
+                    chaos_stats[mode] += 1
+                    producer.send(topic, key=rec["city"], value=payload)
+                    wire_counts["BOOKING"] += 1
+                    events_this_tick += 1
+                    tokens -= 1.0
+                    continue
+                # else fall through to PRICE_CHANGE
+
+            # PRICE_CHANGE
+            hotel = cache.hotels[rng.randint(0, len(cache.hotels) - 1)]
+            evt = _build_price_change_event(rng, hotel)
+            payload, mode = maybe_corrupt_or_delay(evt, *chaos_args)
+            chaos_stats[mode] += 1
+            producer.send(topic, key=hotel["city"], value=payload)
+            wire_counts["PRICE_CHANGE"] += 1
+            events_this_tick += 1
+            tokens -= 1.0
+
+        # ── Commit the tick ─────────────────────────────────────────────────
+        try:
+            flush_tick(conn, batch, today_ist, events_this_tick)
+        except Exception as exc:
+            print(f"  ✗ tick commit failed: {exc}", file=sys.stderr)
+            conn.rollback()
+
+        # ── Progress log every ~10s ─────────────────────────────────────────
         elapsed = time.time() - t_start
-        achieved = total_events / elapsed if elapsed > 0 else 0
-        print(f"  sim-day {day} → {n:6,} events in {wall:5.1f}s wall  |  "
-              f"total {total_events:7,}  |  elapsed {elapsed:6.1f}s  |  "
-              f"avg {achieved:5.1f} evt/s  |  open {booked+checked_in:5,}")
+        if int(elapsed) % 10 == 0 and elapsed > 0 and events_this_tick > 0:
+            total = sum(wire_counts.values())
+            rate_now = total / elapsed
+            counts = " ".join(f"{k}={v}" for k, v in sorted(wire_counts.items()))
+            print(f"  t+{elapsed:6.0f}s  total={total:,}  avg={rate_now:5.1f} evt/s  |  {counts}")
 
-        day = day + timedelta(days=1)
+        time.sleep(TICK_SECONDS)
 
-    # ── Shutdown ───────────────────────────────────────────────────────
-    elapsed = time.time() - t_start
+    # ── Shutdown ────────────────────────────────────────────────────────────
+    print("\nShutting down — flushing Kafka and committing final tick…")
     producer.flush()
     producer.close()
+    try:
+        conn.commit()
+    except Exception:
+        pass
     conn.close()
 
-    avg_rate = (total_events / elapsed) if elapsed > 0 else 0.0
-    print(f"\nProduced {total_events:,} events across {days_run} sim-days "
-          f"in {elapsed:.1f}s ({avg_rate:.1f}/s avg).")
-    if last_day_completed is not None:
-        print(f"  Last completed sim-day (clock): {last_day_completed}")
-
-    if total_events > 0:
-        print(f"\nWire-type counts (pre-chaos selection):")
-        for et in ("BOOKING", "CHECKIN", "CHECKOUT", "CANCELLATION", "PRICE_CHANGE", "REVIEW"):
-            n = wire_counts.get(et, 0)
-            pct = (n / total_events) * 100.0
-            print(f"  {et:13s}: {n:7,}  ({pct:5.2f}%)")
+    total = sum(wire_counts.values())
+    elapsed = time.time() - t_start
+    print(f"\nProduced {total:,} events in {elapsed:.1f}s "
+          f"({(total/elapsed) if elapsed > 0 else 0:.1f} evt/s avg).")
+    for et in ("BOOKING", "CHECKIN", "CHECKOUT", "CANCELLATION", "PRICE_CHANGE", "REVIEW"):
+        n = wire_counts.get(et, 0)
+        pct = (n / total * 100.0) if total else 0
+        print(f"  {et:13s}: {n:7,}  ({pct:5.2f}%)")
 
     if args.malformed_pct > 0 or args.late_pct > 0:
-        normal = chaos_stats.get("normal", 0)
-        late = chaos_stats.get("late", 0)
-        malformed_total = sum(v for k, v in chaos_stats.items() if k.startswith("malformed:"))
         print(f"\nChaos summary:")
-        print(f"  Normal              : {normal:,}")
-        print(f"  Late                : {late:,}")
-        print(f"  Malformed (total)   : {malformed_total:,}")
         for mode, count in sorted(chaos_stats.items(), key=lambda x: -x[1]):
-            if mode.startswith("malformed:"):
-                reason = mode.split(":", 1)[1]
-                print(f"     └─ {reason:25s}: {count:,}")
-        print(f"\n  These counts should match the consumer's run summary"
-              f" (within Kafka offset-commit jitter, usually ±5).")
+            print(f"  {mode:30s}: {count:,}")
 
 
 if __name__ == "__main__":

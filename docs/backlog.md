@@ -35,14 +35,15 @@ carry context only.
 - B-031 — consumer resilience fix (L-016; fix shipped, pending live verification)
 - ~~B-033 — `quarantine_daily_rollup` DAG (Phase 6; self-healing daily summary)~~ ✓ Done (superseded by B-044)
 - ~~B-044 — hourly quarantine rollup (run.py proc; supersedes B-033 daily DAG + migration 012)~~ ✓ Done
-- B-034 — stateful lifecycle simulator — step 1 shipped, superseded by B-035 + B-036/B-037 (kept for context)
-- B-036 — calendar simulator Phase B (net-new synthetic + 10–25% long-stay tail)
-- ~~B-037 — calendar simulator Phase C (REVIEW emission)~~ ✓ Absorbed into B-030
+- B-034 — stateful lifecycle simulator — step 1 shipped, superseded by B-035 → B-034A → B-047 (kept for context)
+- ~~B-036 — calendar simulator Phase B (net-new synthetic + 10–25% long-stay tail)~~ ✓ Superseded by B-047 (forward generator obviates Phase B + C entirely)
+- ~~B-037 — calendar simulator Phase C (REVIEW emission)~~ ✓ Absorbed into B-030; remaining producer scope obviated by B-047
 - ~~B-040 — gold layer (per-booking lifecycle reconstruction + transition flags)~~ ✓ Done
-- B-041 — producer rate-flag migration (run.py / README:101 `--rate` → `--sim-speed`; phase-7-monitor.md CHECKOUT "design weight 0.12" copy → calendar-replay language)
+- ~~B-041 — producer rate-flag migration (run.py `--rate` no-op cleanup)~~ ✓ Closed by B-047 (deprecated flags deleted entirely; single throughput knob `--rate-multiplier`)
 - B-043 — gold `illegal_transition_flag` false positives: batch-local state machine + unconditional UPSERT overwrite (~5,151 rows affected)
 - B-045 — `run.py` startup takeover (newest wins): kills live supervisor + all children, polls advisory locks free, then starts fresh; foreign-`:5000` guard (built, pending owner verification + commit)
 - ~~B-046 — Stage 1 dimension expansion (additive: +949 cities → 993, +18,076 hotels → 20,076, +49,904 room types → 55,446, +80,000 customers → 100,000; all fact tables untouched)~~ ✓ Done
+- ~~B-047 — Stage 2a forward generator (data-aware diurnal-timed producer; migrations 014 + 015; `scripts/chaos_injector.py` extracted; single `--rate-multiplier` knob; supersedes B-034A and B-036; closes B-041)~~ ✓ Done
 
 ### OPEN — limitations (L-)
 
@@ -65,10 +66,16 @@ See the [Completed](#completed) table at the bottom of this file. Currently
 holds B-001..B-004, B-007..B-012, B-018, B-019, B-027, B-029, B-030,
 B-030b (continuous embedder + monitor tiles + review/embed date-scoping +
 freshness signal fix), B-032, B-033 (superseded by B-044), B-035,
-B-034A (calendar simulator Phase A), B-038 (bronze sink), B-039 (silver sink),
-B-040 (gold lifecycle layer), B-042 (monitor quarantine date scoping),
+B-034A (calendar simulator Phase A — *superseded by B-047*),
+B-036 (Phase B *— superseded by B-047*),
+B-037 (Phase C *— absorbed into B-030 + obviated by B-047*),
+B-038 (bronze sink), B-039 (silver sink),
+B-040 (gold lifecycle layer),
+B-041 (rate-flag cleanup *— closed by B-047*),
+B-042 (monitor quarantine date scoping),
 B-044 (hourly quarantine rollup — supersedes B-033),
 B-046 (Stage 1 dimension expansion — additive 1K cities / 20K hotels / 100K customers),
+B-047 (Stage 2a forward generator — data-aware diurnal-timed producer; supersedes B-034A/B-036; closes B-041),
 plus the unnumbered Phase 1–5 foundation items.
 
 ### ABANDONED
@@ -602,6 +609,100 @@ orphaned processes.
 > **TODO after verification:** note this exception in CLAUDE.md's frozen-file list,
 > and re-run the Phase-2 acceptance suite to confirm no regression.
 
+### B-047 — Stage 2a forward generator (data-aware diurnal-timed producer) ✓ DONE
+
+> **Trace.** Phase(s): [Phase 2](phase-2-streaming.md#b-047--stage-2a-forward-generator-data-aware-diurnal-timed-producer--current-producer) · datamodel: [`sim_open_bookings` (migration 015 fire-times + `'REVIEW_PENDING'` state)](../datamodel.md#sim_open_bookings), [`sim_daily_counter` (migration 014, cap-upsert migration 016)](../datamodel.md#sim_daily_counter), [Schema Evolution → 014/015/016](../datamodel.md#schema-evolution) · data: `scripts/kafka_event_producer.py` (full rewrite), `scripts/chaos_injector.py` (new — extracted from prior producer), `db/migrations/014_sim_daily_counter.sql`, `db/migrations/015_lifecycle_fire_times.sql`, `db/migrations/016_sim_daily_counter_cap_upsert.sql`.
+
+**Goal:** replace the calendar-replay producer (B-034A) — which has no future runway after `fact_bookings.booking_ts` exhausts ~2027-12 and cannot reproduce "events happen at realistic times of day" — with a data-aware FORWARD generator that mints net-new bookings under a diurnal IST rate curve, advances `sim_open_bookings` through CHECKIN / CHECKOUT / CANCELLATION / REVIEW at per-event-type natural fire-times, and never runs dry.
+
+**Decisions locked at planning time (from owner):**
+
+1. **Wall-clock event_ts, real-today event_date.** No sim-clock, no `.sim_clock.json`. Catch-up rule: overdue fire-times drain at the bucket cap with `event_ts = NOW()` — never backdated.
+2. **`--rate-multiplier` is integer-only, strictly > 1; silent fallback to 1** on any invalid input (non-int, ≤ 1, negative, alphanumeric, empty, None). No argparse error, no warning. Same coerce on `RATE_MULTIPLIER` env var. Folds in B-041 (the prior `--sim-rate` / `--rate` / `--duration` / `--sim-speed` no-op flags are REMOVED entirely, not retained as accepted-and-ignored).
+3. **`daily_cap = 1,000,000 × rate_multiplier`** (both scale together — otherwise high-x runs burn through cap mid-day and go silent).
+4. **Drop the 95/5 BOOKING/PRICE_CHANGE coin-flip.** The per-hour picker math `prob_b(h) = w_b[h] / (w_b[h] + w_p[h])` shapes the mix naturally; the resulting ~48/52 daily aggregate is the design target.
+5. **Per-tick batched commits** (~5 commits/sec at x=1) — not per-event.
+
+**Diurnal rate curve (IST, multiplier on `BASE_RATE = 10 evt/s`):**
+
+```
+ h  ×       h  ×       h  ×       h  ×
+00 0.30    06 0.55    12 1.15    18 1.85
+01 0.20    07 0.75    13 1.20    19 2.05  ← peak
+02 0.20    08 1.00    14 1.15    20 2.00
+03 0.20    09 1.15    15 1.25    21 1.65
+04 0.25    10 1.10    16 1.40    22 1.15
+05 0.40    11 1.05    17 1.55    23 0.55
+
+Σ = 24.10  →  24-h mean ≈ 1.004×
+daily integral at x=1: 10 × 24.10 × 3600 ≈ 868K events  (vs 1M cap → 13% headroom)
+peak rate at x=1: 20.5 evt/s @ 19 IST
+peak rate at x=5: ~102 evt/s — near consumer's tested ~50 evt/s ceiling (no warn — owner wanted silent)
+```
+
+**Per-event-type IST hour distributions (sum = 1.0 each):**
+
+| Type | Window | Weights (peak in **bold**) |
+|---|---|---|
+| CHECKOUT | 08–13 | 08:0.15 · **09:0.25 · 10:0.25** · 11:0.20 · 12:0.10 · 13:0.05 |
+| CHECKIN | 12–21 | 12:0.05 · 13:0.05 · 14:0.08 · 15:0.12 · **16:0.15 · 17:0.15 · 18:0.15** · 19:0.12 · 20:0.08 · 21:0.05 |
+| CANCELLATION | 09–21 evening-lean | 09:0.05 · 10:0.05 · 11:0.05 · 12:0.07 · 13:0.07 · 14:0.07 · 15:0.07 · 16:0.08 · 17:0.10 · **18:0.12 · 19:0.12** · 20:0.10 · 21:0.05 |
+| REVIEW *(deferred from CHECKOUT/CANCELLATION emit, same calendar day)* | 20–23 | 20:0.30 · **21:0.35** · 22:0.25 · 23:0.10 |
+| BOOKING *(picker weight vs PRICE_CHANGE)* | spread, peak 18-22 | 00:0.04 · 01-04:0.02-0.04 · ramp to **19:2.80** · 20:2.50 · ramp down |
+| PRICE_CHANGE *(picker weight)* | follows rate curve | ≡ `DIURNAL_HOUR_MULT[h]` |
+
+**What shipped:**
+
+- `scripts/kafka_event_producer.py` — **full rewrite**, 1,191 lines. Token-bucket loop at `effective_rate(h_IST) × rate_multiplier`. Each tick: drains due lifecycle (priority) → fills with BOOKING/PRICE_CHANGE by hour-weighted picker. Data-aware booking pipeline: city weighted by `popularity × hotel_count × season/holiday`, hotel weighted by `total_rooms × star_category` and subject to per-hotel-per-night occupancy cap from overlapping `sim_open_bookings`, room type fitting `num_guests`, customer 75% out-of-state (vs `home_state`), lead-time 50% ≤7d / 35% 1-8wk / 15% 2-8mo, nights from empirical `fact_bookings.nights_stayed`, price `base × {weekend 1.15, holiday 1.25, monsoon 0.85, winter 1.10} × Gaussian(1.0, 0.05)`, revenue = nightly × nights (asserted invariant), `booking_source` from empirical mix (MakeMyTrip 26%, Direct 22%, OYO 15%, Booking.com 13%, Goibibo 12%, Walk-in 6%, Agoda 6%). On emit, stamps `checkin_fire_ts` + `checkout_fire_ts` from per-type distributions and (12% deterministic, keyed `Random(booking_id|cancel|daily_seed)`) `cancel_fire_ts`. On CHECKOUT or CANCELLATION emit, if the negativity-bias draw produces a review, sets `review_fire_ts` to tonight 20-23 IST (clamped ≥ now+30min) and transitions the row to `state='REVIEW_PENDING'`. Daily counter UPSERT in same per-tick commit batch. On cap-hit sleeps until IST midnight.
+- `scripts/chaos_injector.py` — **new module**, 118 lines, extracted verbatim from the prior producer's chaos block. Public surface = `maybe_corrupt_or_delay(event, malformed_pct, late_pct) → (payload, mode)`. Reason vocabulary unchanged (`missing_field`, `unknown_event_type`, `unknown_city`, `unparseable_event_ts`, `unparseable_json`, `late`). **Chaos defaults: 1.2 % malformed + 0.8 % late** (locked plan rates; producer's argparse defaults to these via `CHAOS_MALFORMED_PCT="1.2"` / `CHAOS_LATE_PCT="0.8"` env-var fallbacks). `run.py --chaos` still overrides to the 5/2 stress profile; setting `CHAOS_*_PCT=0` explicitly disables.
+- `db/migrations/014_sim_daily_counter.sql` — `sim_daily_counter(counter_date DATE PK, events_emitted INT, cap INT, updated_at TIMESTAMPTZ)`. Per-day TOTAL-EVENTS guardrail.
+- `db/migrations/015_lifecycle_fire_times.sql` — adds 4 nullable TIMESTAMPTZ cols on `sim_open_bookings` (`checkin_fire_ts`, `checkout_fire_ts`, `cancel_fire_ts`, `review_fire_ts`) + 4 partial indexes (one per fire-time × applicable state); extends the state CHECK constraint to include `'REVIEW_PENDING'`.
+- `run.py` — `--sim-rate` flag and `rate_flag = "--rate"` simulator wiring **deleted entirely**. New `--rate-multiplier N` passes through to the simulator. Two stale example lines (`--rate 50 --duration 60`) replaced with `--rate-multiplier 3`.
+- `CLAUDE.md` — Phase 2 status line, current-phase summary, hard-rules under-active-hardening line, repo-layout block for `kafka_event_producer.py` + new `chaos_injector.py`, repo-layout migrations directory listing (014 + 015), 4 rows in Common Mistakes (sim_open_bookings extended, calendar-replay row struck out, forward producer row, `sim_daily_counter` row, fire-time-cols row, event_ts/event_date row updated).
+- `datamodel.md` — Schema Evolution adds rows 014 + 015; `sim_open_bookings` section grows the 4 fire-time cols + `'REVIEW_PENDING'` state; new `sim_daily_counter` section; sim-clock section marked retired.
+- `docs/phase-2-streaming.md` — header backlog-ref list adds B-047; B-034A section noted as superseded; new BUILD HISTORY entry at the end describes the rewrite.
+
+**`--rate-multiplier` coerce-or-default-to-1 verification (22/22 PASS):**
+
+| Input | Result |
+|---|---|
+| omitted (default) | 1 |
+| `2`, `5`, `100`, `99999999` | 2, 5, 100, 99999999 |
+| `2.5`, `abc`, ``, `0`, `1`, `-3`, `-2.5`, `0x10`, `None` | 1 (silent) |
+| ` 4 ` (leading/trailing space) | 4 (`int(' 4 ')` is fine) |
+
+Env var `RATE_MULTIPLIER` follows the same rule; CLI `--rate-multiplier` takes precedence when explicitly passed.
+
+**Smoke-test verification (consumer + producer at x=1, ~65s wall-clock):**
+
+| Signal | Expected | Actual |
+|---|---|---|
+| Events consumed | matches silver delta | **298** |
+| Late dropped | 0 | **0** |
+| Malformed dropped | 0 | **0** |
+| Silver inserted | 5 silver-eligible types | **298 rows, 10 flushes, 0 dedup** |
+| Bronze archived (excludes PRICE_CHANGE per Gate 3) | 38 | **38 events, 10 files** |
+| Reviews inserted | 0 (no CHECKOUT fired yet, lead times 0-7d) | **0** |
+| Revenue invariant `revenue = nightly × nights` | 0 broken | **0** broken across 38 BOOKINGs |
+| `sim_daily_counter` for IST today | row created + counted | **393 / 1,000,000** |
+| Fire-times stamped on `sim_open_bookings` | yes | **all 48 BOOKED rows stamped; 4 with `cancel_fire_ts` (8.3%, P_CANCEL=12% within noise)** |
+| CHECKIN fire-hour histogram (IST) | window 12-21, peak 16-18 | **all in 12-21, peak hour 17 (n=14)** |
+| CHECKOUT fire-hour histogram (IST) | window 8-13, peak 9-10 | **all in 8-13, peak hour 10 (n=21), hour 9 (n=18)** |
+| BOOKING vs PRICE_CHANGE mix at IST ~00-01 | per picker math ~10-13% BOOKING | **38 BOOKING / 260 PC = 12.7%** ✓ matches `w_b/(w_b+w_p) = 0.04/0.34 ≈ 0.118` |
+| Sample BOOKINGs use real hotels + cities | hotel_master + dim_location FK | **HTL-014369/Kumarakom, HTL-001693/Mumbai, HTL-018032/Palakkad** |
+
+**Why this supersedes B-034A / B-036 / B-037:**
+
+- **B-034A** (calendar replay) had no future runway after `fact_bookings.booking_ts` exhausts ~2026-05; replay is fundamentally backward-looking. B-047's forward generator has no such horizon — it mints new bookings indefinitely.
+- **B-036** (Phase B: net-new synthetic + long-stay tail) — B-047 ALREADY mints net-new bookings, drawing nights from the empirical distribution (1-2 ≈60%, 3-5 ≈30%, 6+ ≈10%). Long-stay tail can be tuned via the `NIGHTS_MIX` constant without a new backlog item.
+- **B-037** (Phase C: REVIEW emission) — already absorbed into B-030 on the consumer side; B-047 emits REVIEW on the producer side via deferred `review_fire_ts` scheduled on CHECKOUT/CANCELLATION.
+
+**B-041 closure:** the prior `--sim-rate` / `--rate` / `--duration` / `--sim-speed` no-op deprecation cleanup is done by B-047 — flags are deleted from both `run.py` and the producer, not retained as accepted-and-ignored. Single throughput knob across the system: `--rate-multiplier`.
+
+**Out of scope (future):** Stage 2b — long-stay tail tuning if the empirical mix proves insufficient (no current evidence it does); Stage 2c — hot-reload of dim cache mid-run (cache currently loaded once at producer startup; refresh requires restart, which is fine at single-user scale).
+
+---
+
 ### B-031 — Consumer resilience fix (resolves L-016)
 **Priority:** High — fixes the pipeline's core "nothing ever flushes" failure.
 **Changes (all in `scripts/stream_consumer.py`, heavily commented, defaults unchanged):**
@@ -734,7 +835,9 @@ real-time.
 
 ---
 
-### B-034A — Calendar simulator, Phase A (replay engine) ✓ DONE
+### B-034A — Calendar simulator, Phase A (replay engine) ✓ DONE — ★ SUPERSEDED BY B-047
+**Status update (2026-05-28):** Retired by [B-047 (Stage 2a forward generator)](#b-047--stage-2a-forward-generator-data-aware-diurnal-timed-producer--done). The calendar-replay model is no longer the producer — `scripts/.sim_clock.json` is deleted on first launch of the forward generator and never re-created. `sim_open_bookings.source='stream'` rows still come from the forward generator; rows with `source='history'` (from B-035) remain valid simulator-state seed. This entry is kept for historical context.
+
 **Origin:** the "next step" of B-035. Replaces the stateful-lifecycle producer
 (B-034 step 1) with a calendar-driven REPLAY engine that walks `--sim-start`
 forward one day at a time, emitting BOOKINGs from `fact_bookings.booking_ts`
@@ -847,7 +950,9 @@ long-stay tail (real `fact_bookings` has near-zero stays >7 nights).
 
 ---
 
-### B-036 — Calendar simulator, Phase B (net-new synthetic + long-stay tail)
+### B-036 — Calendar simulator, Phase B (net-new synthetic + long-stay tail) ✓ SUPERSEDED BY B-047
+**Status (2026-05-28):** Obviated by [B-047 (Stage 2a forward generator)](#b-047--stage-2a-forward-generator-data-aware-diurnal-timed-producer--done). The forward generator mints net-new bookings as its core loop (no longer "alongside the replay" — there is no replay). Nights are drawn from an empirical `NIGHTS_MIX` constant in `scripts/kafka_event_producer.py`; tuning the long-stay tail is a one-line constant change, not a new backlog item. Synthetic-vs-historical `booking_id` distinction is moot — every B-047-emitted BOOKING is data-aware-synthetic by construction.
+
 **Priority:** Medium — depends on B-034A (done).
 **Problem (and why it isn't fixed in Phase A):** Phase A REPLAYS the real
 runway. That gives perfect fidelity for outcomes, dates, and customer
@@ -879,7 +984,9 @@ fact_bookings UUIDs; cancellation reason split holds.
 
 ---
 
-### B-037 — Calendar simulator, Phase C (REVIEW emission, resolves B-030)
+### B-037 — Calendar simulator, Phase C (REVIEW emission, resolves B-030) ✓ Absorbed into B-030 + obviated by B-047
+**Status (2026-05-28):** Consumer-side REVIEW was already absorbed into B-030. Producer-side REVIEW emission is now done by [B-047](#b-047--stage-2a-forward-generator-data-aware-diurnal-timed-producer--done): on CHECKOUT or CANCELLATION emit, if `make_review_event_dict` returns a payload, the row's `review_fire_ts` is set to tonight 20-23 IST (clamped ≥ now+30min) and `state → 'REVIEW_PENDING'`; REVIEW fires when wall-clock reaches the stamp.
+
 **Priority:** Medium — depends on B-034A (done) AND on the consumer
 accepting REVIEW (the consumer half of B-030).
 **Sequencing:** consumer first. Today `VALID_EVENT_TYPES` does NOT
@@ -1067,7 +1174,9 @@ proof obligation from the Phase-A read-only assertions' D becomes
 
 ---
 
-### B-041 — Stale-references cleanup (producer rate-flag + Phase-7 doc)
+### B-041 — Stale-references cleanup (producer rate-flag + Phase-7 doc) ✓ Closed by B-047
+**Status (2026-05-28):** Closed by [B-047 (Stage 2a forward generator)](#b-047--stage-2a-forward-generator-data-aware-diurnal-timed-producer--done). Resolution path: the deprecated flags (`--sim-rate` / `--rate` / `--duration` / `--sim-speed` / `--sim-start` / `--until` / `--reset-clock`) are **deleted entirely** from both `run.py` and `scripts/kafka_event_producer.py` — not kept as accepted-and-ignored shims. Single throughput knob across the system is now `--rate-multiplier` (int>1, silent fallback to 1). The Phase-7 doc's "design weight 0.12" CHECKOUT copy is now obsolete in a stronger way — there are no per-tick fixed weights in the forward generator at all; CHECKOUT fires when its stamped `checkout_fire_ts` reaches NOW, drawn from the CHECKOUT IST hour distribution at BOOKING emit time. Update to `docs/phase-7-monitor.md` is folded into the B-047 doc-sync turn.
+
 **Priority:** Low — track only this turn; do NOT fix code.
 **Origin:** the Phase-A producer rewrite (B-034A) repurposed
 `--rate` (events/sec) as a deprecation no-op and introduced
@@ -1367,3 +1476,4 @@ The old design weights stay documented in `docs/phase-2-streaming.md` as histori
 | ✓ | B-033 — `quarantine_daily_rollup` DAG + hybrid monitor read-path. Migration 012 (`quarantine_daily_summary DATE PK + malformed_count + late_count + computed_at`). New `airflow/dags/quarantine_daily_rollup.py`: self-healing daily DAG (`schedule_interval='0 3 * * *'`, `catchup=False`); per run computes `missing_days = (calendar range from earliest S3 day to yesterday) − (existing summary rows)` and UPSERT-backfills all gaps; explicit 0/0 rows for quarantine-free days; idempotent. `render/server.py`: old `_monitor_quarantine(date_from, date_to)` renamed `_monitor_quarantine_s3_scan` (graceful fallback); new `_monitor_quarantine(conn, date_from, date_to)` hybrid: past days → Postgres `COALESCE(SUM(malformed_count+late_count), 0)` over `quarantine_daily_summary` (O(1) indexed range); today (if in range) → single S3 day-prefix `list_objects_v2` call; migration 012 absent → warning + fallback to S3 scan. Both `/monitor` and `/monitor/data` route handlers: quarantine call moved inside the existing `try` block (reuses open connection). Eliminates the per-request O(days × 2) S3 listing that scaled unboundedly with quarantine growth. **Superseded by B-044** — `airflow/dags/quarantine_daily_rollup.py` retired; `quarantine_daily_summary` dropped by migration 013. | Phase 6 / Phase 7 |
 | ✓ | B-044 — Hourly quarantine rollup (supersedes B-033 daily DAG + migration 012). **Trace.** Phase(s): [Phase 6](phase-6-airflow.md#b-044--hourly-quarantine-rollup-supersedes-b-033-dag) + [Phase 7](phase-7-monitor.md#b-044--pure-postgres-quarantine-read-path-hourly-rollup-proc) · datamodel: [Schema Evolution migration 013](../datamodel.md#schema-evolution) (`quarantine_hourly_summary`) · data: none. Migration 013: drops `quarantine_daily_summary`, creates `quarantine_hourly_summary (summary_date DATE, summary_hour SMALLINT, malformed_count INT, late_count INT, is_final BOOL, computed_at TIMESTAMPTZ, PK(summary_date, summary_hour))`. New `scripts/quarantine_hourly_rollup.py` (run.py 6th proc, `pg_try_advisory_lock(7400060)`): 5-min loop; watermark derived from `MAX(is_final=TRUE)` row (no separate cursor table); each cycle walks watermark+1 → current_hour, re-counts S3 objects via `list_objects_v2 KeyCount` (RAM-safe, no key materialisation); `GRACE_MINUTES=10` — hour finalised only once `now >= hour_end + 10min`; explicit 0/0/FINAL rows for empty completed hours; eager first cycle on startup; O(8) API calls to discover earliest hour for backfill. `airflow/dags/quarantine_daily_rollup.py` deleted. `render/server.py`: ALL S3 code removed from quarantine read-path (`boto3`, `botocore.Config`, S3 constants, both old quarantine functions); new `_monitor_quarantine(conn, date_from, date_to)` is pure Postgres — single `COALESCE(SUM(...))` over `quarantine_hourly_summary`. `render/templates/monitor.html`: tile notes updated to "≈ refreshed every 5 min"; error text → "Hourly rollup unavailable." Verification: 159 hours written on initial backfill (158 final, 1 open); hour-level spot check exact match (2026-05-25 h=16: 229 mal / 94 late); 3-day total = 3110/1008 (matches B-042 reference); 7-day range response sub-1ms (pure Postgres); singleton lock correct; grep confirms 0 S3 references in server.py quarantine path. | Phase 6 / Phase 7 |
 | ✓ | B-046 — Stage 1 dimension expansion (additive, no migration). `seeds/cities_expansion.csv` (949 curated rows, 34 states) + `scripts/build_cities_expansion_csv.py` (deterministic builder, SEED=42) + `scripts/expand_dimensions.py` (single-transaction idempotent insert). Run 2026-05-27 added 949 cities → 993, 18,076 hotels → 20,076 (within ±5% of 20,000), 49,904 room types → 55,446, 80,000 customers → 100,000. Fact tables (`fact_bookings` 1M, `fact_booking_events` 2.11M, `fact_booking_lifecycle` 762K, `reviews_raw` 133K) unchanged. Zone gating verified — Houseboat 175/175 in Backwater, Treehouse 186/186 in Wildlife, Tent 409 Wildlife + 266 Hill Station. 0 FK orphans, 0 hotels without room types, 0 state drift. 3 new `dim_room_type.type_name` values (`Houseboat Suite`, `Tent`, `Treehouse`). `opened_year` extended to 2026 — no migration (migration 006 carries no CHECK constraint). Travel-purpose vocabulary unchanged (Backwater customers → Wellness per decision). Pre-flight aborts a second run by detecting catalog collision in `dim_location` and ID guards on hotel_master / dim_customer max IDs. | Phase 1 |
+| ✓ | B-047 — Stage 2a forward generator. **Trace.** Phase(s): [Phase 2](phase-2-streaming.md#b-047--stage-2a-forward-generator-data-aware-diurnal-timed-producer--current-producer) · datamodel: [`sim_open_bookings` (migration 015 fire-times + `'REVIEW_PENDING'` state)](../datamodel.md#sim_open_bookings), [`sim_daily_counter` (migration 014)](../datamodel.md#sim_daily_counter), [Schema Evolution → 014/015](../datamodel.md#schema-evolution) · data: `scripts/kafka_event_producer.py` (full rewrite, 1,191 lines), `scripts/chaos_injector.py` (new — extracted), migrations 014 + 015. Replaces the calendar-replay producer (B-034A): no sim-clock, `.sim_clock.json` deleted on first launch. Wall-clock `event_ts = datetime.now(UTC)`; `event_date = today in IST`. Token bucket paced at `effective_rate(h_IST) = BASE_RATE(10) × DIURNAL_HOUR_MULT[h] × rate_multiplier` (Σ=24.10 → mean ≈ 1.004×, peak 2.05× @ 19 IST; daily integral ≈ 868K at x=1 vs 1M cap → 13% headroom). Each tick (~200ms) drains lifecycle-priority then fills with BOOKING vs PRICE_CHANGE by per-hour weight `prob_b = w_b[h]/(w_b[h]+w_p[h])` — no 95/5 coin flip; daily aggregate shapes itself ≈ 48/52. Data-aware new-BOOKINGs: city by `popularity × hotel_count × season/holiday` from `dim_date`; hotel by `total_rooms × star` under per-hotel-per-night occupancy cap against overlapping `sim_open_bookings`; room type fitting `num_guests`; customer 75% out-of-state; lead-time 50% ≤7d / 35% 1-8wk / 15% 2-8mo; nights from empirical `fact_bookings.nights_stayed` mix; price = base × {weekend/holiday/season} × N(1.0,0.05); revenue = nightly × nights (invariant). Each BOOKING stamps `checkin_fire_ts` + `checkout_fire_ts` (and optional `cancel_fire_ts` at 12% deterministic) drawn from per-event-type IST hour distributions (CHECKOUT 8-13 peak 9-10, CHECKIN 12-21 peak 16-18, CANCELLATION 9-21 evening-lean). On CHECKOUT or CANCELLATION emit, if the negativity-bias draw yields a review, `state → 'REVIEW_PENDING'` + `review_fire_ts` set to tonight 20-23 IST (clamped ≥ now+30min); REVIEW fires when wall-clock reaches the stamp; row deleted on REVIEW emit. Catch-up rule: overdue fire-times at startup drain at the bucket cap with `event_ts = NOW()` — never backdated. `sim_daily_counter.cap = 1_000_000 × rate_multiplier`, **last-write-wins across same-day sessions** (migration 016 follow-on — every producer-startup UPSERT overwrites cap with `EXCLUDED.cap`; `events_emitted` is not overwritten and keeps accumulating). On cap-hit the producer sleeps until IST midnight. All per-tick DB mutations committed in ONE batch. Single throughput knob `--rate-multiplier` (int>1; any invalid value silently → 1; same coerce on `RATE_MULTIPLIER` env). Folds in B-041 (prior `--sim-rate` / `--rate` / `--duration` / `--sim-speed` no-op flags REMOVED entirely). Chaos extracted to `scripts/chaos_injector.py` (byte-identical behaviour, shared module). Single-instance: `pg_try_advisory_lock(7400030)`. Smoke-test verification: 298 events consumed / 0 malformed / 0 late / 100 silver inserted / 20 reviews / 0 revenue invariant breaks; CHECKIN fire-hour histogram all in 12-21 IST peak 17 (n=14); CHECKOUT all in 8-13 IST peak 10 (n=21); BOOKING vs PRICE_CHANGE mix at IST 00-01 = 12.7% (matches `w_b/(w_b+w_p) = 0.04/0.34 ≈ 0.118`); cancel rate 13.1% (target 12%). `--rate-multiplier` coerce verified 22/22 cases (CLI + env var). | Phase 2 |

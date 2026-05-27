@@ -59,43 +59,92 @@ The datasets here support three query patterns:
 - **Read this `datamodel.md`** for schemas, relationships, sample rows, and design decisions
 - **`schema.sql`** — DDL statements to create all tables in Postgres
 - **CSV files** — the actual data (~248 MB, ~1.16M rows total)
-- **Need to regenerate or scale?** See [Regenerating the Dataset](#regenerating-the-dataset) below — three deterministic scripts (seed=42), ~3 min total.
+- **Need to regenerate or scale?** See [Regenerating the Dataset](#regenerating-the-dataset) below — single ordered build/seed sequence covering base rebuild, B-046 additive expansion, and post-load seeds.
 
 ---
 
 ## Regenerating the Dataset
 
-All CSVs in `data/` are produced by three deterministic generator scripts (`SEED=42`). All stages run in order; Stage 2 depends on Stage 1 output and Stage 3 overwrites Stage 2's `fact_bookings.csv`.
+The single canonical order for building this database from nothing — or extending it. Every script is deterministic (`SEED=42`). Each row below lists what the script reads, what it writes, and its idempotency posture, so you can reason about safety before running.
 
-| Stage | Script | Runtime | Key outputs |
-|---|---|---|---|
-| 1 — Foundation | `scripts/generate_datasets.py` | ~30s | `hotel_master.csv` (2K), `dim_location.csv` (44), `dim_room_type.csv` (~5.5K), `reviews_raw.csv` (30K seed), `booking_events_seed.json` (500), `public_holidays.csv` (~120), `india_states_zones.csv` (37) |
-| 2 — Facts | `scripts/generate_stage2.py` | ~90s | `fact_bookings.csv` (1M, Jan 2024–May 2026), `fact_price_events.csv` (~86K), `dim_date.csv` (2,557), `dim_customer.csv` (20K), `ref_price_tiers.csv` (4); regenerates `reviews_raw.csv` with power-law + seasonality fixes |
-| 3 — Correlation | `scripts/generate_stage3.py` | ~60s | Overwrites `fact_bookings.csv` with segment-driven behavior (Business → weekday/premium, Honeymoon → luxury/5–7 nights, etc.); adds `ref_state_centroids.csv` (38) |
+### ⚠ Safety — read first
 
-### Tuning knobs
+`load_to_postgres.py` **TRUNCATEs every table with CASCADE** before loading CSVs (see [scripts/load_to_postgres.py:43-79](scripts/load_to_postgres.py#L43-L79)). It is the base rebuild only. Running it after Stage B or Stage C wipes:
 
-Each script has a CONFIG block at the top. `SEED=42` everywhere — keep aligned across stages or referential integrity breaks.
+- The B-046 expansion (993 cities → back to 44; 20,076 hotels → back to 2,000; 55,446 room types → back to 5,542; 100,000 customers → back to 20,000).
+- `fact_booking_events` history (~ 2.1M rows) and `sim_open_bookings` simulator state.
+- Every `reviews_raw.embedding` populated by Phase 3.
+- Any live stream-emitted data (`source='stream'` rows in `fact_booking_events`, stream reviews in `reviews_raw`).
+
+**Stages B and C run ONCE, after Stage A, on top of the loaded base.** Never re-run Stage A after Stage B or C unless you intend a full wipe.
+
+### Stage A — From-scratch base rebuild (mandatory first)
+
+Run in order. Stage 2 reads Stage 1 outputs; Stage 3 overwrites Stage 2's `fact_bookings.csv`; the loader needs all CSVs present; the validator queries the loaded Postgres.
+
+| # | Step | Script | Runtime | Reads | Writes | Idempotency |
+|---|---|---|---|---|---|---|
+| A1 | Foundation | `scripts/generate_datasets.py` | ~30s | nothing | `hotel_master.csv` (2K), `dim_location.csv` (44), `dim_room_type.csv` (~5.5K), `reviews_raw.csv` (30K seed), `booking_events_seed.json` (500), `public_holidays.csv` (147), `india_states_zones.csv` (37) | Overwrites CSVs in `data/`. No DB touch. |
+| A2 | Facts | `scripts/generate_stage2.py` | ~90s | Stage 1 CSVs | `fact_bookings.csv` (1M, Jan 2024–May 2026), `fact_price_events.csv` (~86K), `dim_date.csv` (2,557), `dim_customer.csv` (20K), `ref_price_tiers.csv` (4); regenerates `reviews_raw.csv` with power-law + seasonality fixes | Overwrites CSVs in `data/`. No DB touch. |
+| A3 | Correlation | `scripts/generate_stage3.py` | ~60s | Stage 1+2 CSVs | Overwrites `fact_bookings.csv` with segment-driven behaviour (Business→weekday/premium, Honeymoon→luxury/5–7 nights, etc.); adds `ref_state_centroids.csv` (38) | Overwrites CSVs in `data/`. No DB touch. |
+| A4 | Load | `python -m scripts.load_to_postgres` | ~3 min | All Stage 1/2/3 CSVs from `data/` | **TRUNCATE every table CASCADE**, then `COPY` each CSV into its table, re-enable FKs, build indexes ([scripts/load_to_postgres.py:43-79](scripts/load_to_postgres.py#L43-L79)). | DESTRUCTIVE. Always wipes whatever was loaded before. Frozen file — do not edit. |
+| A5 | Validate | `python -m scripts.validate_load` | ~5s | The loaded Postgres | Read-only — runs 20 checks ([scripts/validate_load.py](scripts/validate_load.py)). Exits 0 if all pass. | Read-only. **Passes only against the base load** — it asserts EXACT counts (`hotel_master=2000`, `dim_customer=20000`, `dim_room_type=5542`, `reviews_raw=30000`, embeddings IS NULL on every row). After Stage B or C those asserts fail; that's expected and not a problem with the data. |
+
+### Stage B — Additive expansion (B-046, run ONCE after Stage A)
+
+Grows the world to ~1,000 cities / ~20K hotels / ~55K room types / 100K customers without touching any base row and without going through `load_to_postgres`.
+
+| # | Step | Script | Runtime | Reads | Writes | Idempotency |
+|---|---|---|---|---|---|---|
+| B1 | Stage 1 expansion | `python -m scripts.expand_dimensions` | ~10s | `seeds/cities_expansion.csv` (committed) + the loaded Postgres for pre-flight guards | INSERTs **949 dim_location + 18,076 hotel_master + 49,904 dim_room_type + 80,000 dim_customer** rows in a single transaction. Direct INSERT, NOT via `load_to_postgres`. No migration. | Aborts on re-run. Four pre-flight guards: state-name validation against `india_states_zones`; no catalog `(city, state)` may already exist in `dim_location`; `MAX(hotel_id) == 'HTL-002000'`; `MAX(customer_id) == 'CUST-020000'`. Any guard failure → clear stderr + ROLLBACK + non-zero exit. |
+
+Source of truth for the catalog: [`seeds/cities_expansion.csv`](seeds/cities_expansion.csv). Regenerable byte-identical from [`scripts/build_cities_expansion_csv.py`](scripts/build_cities_expansion_csv.py).
+
+### Stage C — Post-load seeds (run after Stage A; safe before or after Stage B)
+
+These two are independent — both read facts/reviews and write derived data on top. Order between them does not matter; run either before or after Stage B.
+
+| # | Step | Script | Runtime | Reads | Writes | Idempotency |
+|---|---|---|---|---|---|---|
+| C1 | Lifecycle history backfill | `python -m scripts.generate_lifecycle_history` | ~3–5 min | `fact_bookings` | `fact_booking_events` (~ 2.1M rows tagged `source='history'`: BOOKING + CHECKIN + CHECKOUT or BOOKING + CANCELLATION) and `sim_open_bookings` (~17K rows of in-flight bookings at the `--sim-today` anchor, default 2025-06-01). The FUTURE bucket (`booking_ts >= sim-today`) is SKIPPED — reserved for the stream simulator. | `--reset` (default) runs `DELETE FROM fact_booking_events WHERE source='history'; TRUNCATE sim_open_bookings;` before writing. `source='stream'` rows are never touched. RNG seed pinned → identical counts on rerun. Use `--no-reset` to append without wiping. |
+| C2 | Review embeddings backfill | `python -m scripts.generate_embeddings` | ~5–8 min on RTX 3070 | `reviews_raw WHERE embedding IS NULL` | Writes `embedding` (384-d `vector` from `all-MiniLM-L6-v2`) to each NULL row, then `DROP / CREATE` the IVFFlat index ([scripts/generate_embeddings.py:60-65](scripts/generate_embeddings.py#L60-L65)). | Re-entrant — operates only on `embedding IS NULL`. Restart-safe (no row mid-batch is half-written). Default `IVFFLAT_LISTS=30` was sized for the original 30K seed reviews; with the post-B-030a 133K-row corpus the index rebuild target is `lists≈134` — `scripts/review_embedder.py` (continuous embedder used during stream runs) prints the exact rebuild SQL on its first "caught up" tick. |
+
+After C1 + C2 the database has: the loaded base (Stage A) plus optional expansion (Stage B) plus history events for the simulator to read plus searchable embeddings.
+
+### Tuning knobs (for re-shaping the dataset itself)
+
+Each generator script has a CONFIG block at the top. `SEED=42` everywhere — keep aligned across stages or referential integrity breaks.
 
 | Knob | Stage | Effect |
 |---|---|---|
-| `NUM_HOTELS` | 1 | Cascades to bookings and reviews |
-| `NUM_REVIEWS` | 1 | Review volume |
-| `NUM_BOOKINGS` | 2 | Scale `fact_bookings` |
-| `NUM_CUSTOMERS` | 2 | Unique customer count |
-| `HISTORY_START` / `HISTORY_END` | 2 + 3 | Booking date range |
+| `NUM_HOTELS` | A1 | Cascades to bookings and reviews |
+| `NUM_REVIEWS` | A1 | Review volume |
+| `NUM_BOOKINGS` | A2 | Scale `fact_bookings` |
+| `NUM_CUSTOMERS` | A2 | Unique customer count |
+| `HISTORY_START` / `HISTORY_END` | A2 + A3 | Booking date range |
 | `SEED` | All | RNG seed for different dataset shape |
+| `--sim-today` | C1 | Anchor that splits history vs. future bucket (default 2025-06-01) |
+| `--reset` / `--no-reset` | C1 | Whether to wipe `source='history'` events before writing |
 
-### Full regeneration workflow
+### Quick reference — full sequence
 
 ```bash
-# From repo root with .venv active
-python scripts/generate_datasets.py    # ~30s — Stage 1
-python scripts/generate_stage2.py      # ~90s — Stage 2
-python scripts/generate_stage3.py      # ~60s — Stage 3
-python scripts/validate_load.py        # Validate referential integrity
-python -m scripts.load_to_postgres     # Load into Postgres
+# Stage A — base rebuild (DESTRUCTIVE on A4)
+python scripts/generate_datasets.py    # A1  ~30s   → CSVs
+python scripts/generate_stage2.py      # A2  ~90s   → CSVs
+python scripts/generate_stage3.py      # A3  ~60s   → CSVs
+python -m scripts.load_to_postgres     # A4  ~3min  → Postgres (TRUNCATE + COPY)
+python -m scripts.validate_load        # A5  ~5s    → 20 checks on loaded Postgres
+
+# Stage B — additive expansion (idempotent, aborts on re-run)
+python -m scripts.expand_dimensions    # B1  ~10s   → 99K new dim rows via INSERT
+
+# Stage C — post-load seeds (independent, either order)
+python -m scripts.generate_lifecycle_history   # C1  ~3-5min  → ~2.1M history events + ~17K sim_open rows
+python -m scripts.generate_embeddings           # C2  ~5-8min  → 384-d vectors + IVFFlat index
 ```
+
+**Re-running A4 after B or C wipes the expansion + history events + embeddings.** That is the only ordering rule that matters.
 
 ---
 
@@ -1827,6 +1876,8 @@ the source of truth.
 ---
 
 ## Stage 1 Dimension Expansion (B-046)
+
+> **Trace.** Issue: [backlog.md → B-046](docs/backlog.md#b-046--stage-1-dimension-expansion-1k-cities--20k-hotels--100k-customers-additive--done) · Phase(s): [phase-1-postgres.md → B-046 build history](docs/phase-1-postgres.md#b-046--stage-1-dimension-expansion-2026-05-27) · data: `scripts/expand_dimensions.py`, `scripts/build_cities_expansion_csv.py`, `seeds/cities_expansion.csv`. See also [Regenerating the Dataset → Stage B](#stage-b--additive-expansion-b-046-run-once-after-stage-a) for the run order.
 
 Run date: **2026-05-27**. ADDITIVE only — no existing row was modified.
 

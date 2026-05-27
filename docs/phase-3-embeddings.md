@@ -173,6 +173,8 @@ Embedding: 100%|████████████████| 30000/30000 [0
 21:36:25 [INFO] Done.
 ```
 
+> **Build/seed sequence.** `generate_embeddings` runs as **Stage C2** of the canonical post-load sequence — see [`datamodel.md` → Regenerating the Dataset](../datamodel.md#regenerating-the-dataset) for when it runs relative to the base load and the B-046 expansion.
+
 ---
 
 ### Step 4 — Run acceptance tests

@@ -141,6 +141,8 @@ Current phase: **6** — Phase 7 shipped (monitor redesign done end-to-end). Rea
 
 ## Repo layout
 
+> **Build/seed sequence:** for the single ordered sequence (Stage A base rebuild · Stage B B-046 additive expansion · Stage C post-load seeds for lifecycle history and embeddings), see [`datamodel.md` → "Regenerating the Dataset"](datamodel.md#regenerating-the-dataset). Never re-run `load_to_postgres` after Stage B or C — it TRUNCATEs everything.
+
 ```
 travellens/
 ├── CLAUDE.md                        ← this file
@@ -383,6 +385,21 @@ just say "this is history."
 - A forward-looking spec (phase not yet shipped, or phase in-progress with no completed evolution)
   uses a banner that says "planned build steps" and carries **no BUILD HISTORY section** until at
   least one component has shipped and been superseded.
+
+### Cross-doc traceability — trace tags on backlog items
+
+A reader landing on any node — issue, phase, datamodel, sim data — must be able to reach every other node in one hop. Every backlog item (B-XXX or L-XXX) carries a single-line trace tag at the top of its full body section, in this exact shape:
+
+```
+> **Trace.** Phase(s): <phase-N or "ops/dev"> · datamodel: <tables / sections / "none"> · data: <gen/seed scripts, seed CSVs, or "none">
+```
+
+**Reciprocity rule** — every doc the trace tag names must back-reference the B-XXX ID:
+- A phase doc named in `Phase(s):` has the item ID in its build-history (or main flow) entry.
+- A datamodel section named in `datamodel:` mentions the item ID inline.
+- A script/seed file named in `data:` is referenced in `CLAUDE.md` repo layout or `datamodel.md` "Regenerating the Dataset" with the item ID.
+
+Tags are **cross-references, not restatements** — they tell readers where to look, never duplicate the content. The single source of truth for each detail still lives in its owning doc (per the hierarchy table above).
 
 ### Editing docs
 

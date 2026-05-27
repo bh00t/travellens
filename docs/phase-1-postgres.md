@@ -243,6 +243,8 @@ Expected final output: `✓ COMMIT — Phase 1 load complete`
 Expected runtime: 60–120 seconds. Over 5 minutes means indexes were not deferred — stop
 and investigate.
 
+> **Build/seed sequence.** This loader is **Stage A4** of the canonical build sequence and produces the **base** world (44 cities / 2,000 hotels / 5,542 room types / 20,000 customers). To reach the full ~1,000-city / ~20K-hotel / ~55K-room-type / 100K-customer world, run the **additive expansion (Stage B)** AFTER loading. The full ordered sequence (Stage A base → Stage B expansion → Stage C post-load seeds) lives in [`datamodel.md` → Regenerating the Dataset](../datamodel.md#regenerating-the-dataset). Never re-run this loader after Stage B or C — it TRUNCATEs everything.
+
 ---
 
 ### Step 8 — Write `scripts/validate_load.py`
@@ -525,6 +527,8 @@ To restart: bring the container back up and re-run Steps 3 onward.
 ## BUILD HISTORY / EVOLUTION
 
 ### B-046 — Stage 1 dimension expansion (2026-05-27)
+
+> **Trace.** Issue: [backlog.md → B-046](backlog.md#b-046--stage-1-dimension-expansion-1k-cities--20k-hotels--100k-customers-additive--done) · datamodel: [Stage B run order](../datamodel.md#stage-b--additive-expansion-b-046-run-once-after-stage-a) + [Stage 1 Dimension Expansion section](../datamodel.md#stage-1-dimension-expansion-b-046) · data: `scripts/expand_dimensions.py`, `scripts/build_cities_expansion_csv.py`, `seeds/cities_expansion.csv`.
 
 Additive scale-out of the four dimension tables. No fact data was touched; no migration was added.
 

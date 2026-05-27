@@ -736,6 +736,8 @@ feature gap; PRICE_CHANGE already lives in `fact_price_events`. Full details in
 `docs/backlog.md` (B-035) and the "Lifecycle Events + Simulator State" section in
 `datamodel.md`.
 
+> **Build/seed sequence.** `generate_lifecycle_history` runs as **Stage C1** of the canonical post-load sequence — see [`datamodel.md` → Regenerating the Dataset](../datamodel.md#regenerating-the-dataset) for when it runs relative to the base load and the B-046 expansion.
+
 ---
 
 ### B-034A — Calendar simulator (Phase A: replay engine) — CURRENT PRODUCER

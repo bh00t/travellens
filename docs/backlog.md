@@ -42,6 +42,7 @@ carry context only.
 - B-041 — producer rate-flag migration (run.py / README:101 `--rate` → `--sim-speed`; phase-7-monitor.md CHECKOUT "design weight 0.12" copy → calendar-replay language)
 - B-043 — gold `illegal_transition_flag` false positives: batch-local state machine + unconditional UPSERT overwrite (~5,151 rows affected)
 - B-045 — `run.py` startup takeover (newest wins): kills live supervisor + all children, polls advisory locks free, then starts fresh; foreign-`:5000` guard (built, pending owner verification + commit)
+- ~~B-046 — Stage 1 dimension expansion (additive: +949 cities → 993, +18,076 hotels → 20,076, +49,904 room types → 55,446, +80,000 customers → 100,000; all fact tables untouched)~~ ✓ Done
 
 ### OPEN — limitations (L-)
 
@@ -67,6 +68,7 @@ freshness signal fix), B-032, B-033 (superseded by B-044), B-035,
 B-034A (calendar simulator Phase A), B-038 (bronze sink), B-039 (silver sink),
 B-040 (gold lifecycle layer), B-042 (monitor quarantine date scoping),
 B-044 (hourly quarantine rollup — supersedes B-033),
+B-046 (Stage 1 dimension expansion — additive 1K cities / 20K hotels / 100K customers),
 plus the unnumbered Phase 1–5 foundation items.
 
 ### ABANDONED
@@ -74,6 +76,57 @@ plus the unnumbered Phase 1–5 foundation items.
 None to date. (When an item is abandoned, strike through its header and add an
 "Abandoned: <reason>" line — keep the body for context per the "never delete"
 rule.)
+
+---
+
+## Phase 1 / Foundation — Dimensional scale-out
+
+### B-046 — Stage 1 dimension expansion (1K cities / 20K hotels / 100K customers, ADDITIVE) ✓ Done
+
+**Goal:** scale the world from 44 cities / 2,000 hotels / 5,542 room types / 20,000 customers up to ~1K / ~20K / ~55K / 100K without touching any existing row and without inserting a single fact/booking/review row. Pure dimensional capacity expansion to unblock larger scenarios for downstream stages (Stage 2 fact backfill for the new hotels' Feb–May 2026 window will be a follow-up item; out of scope here).
+
+**Decisions locked at planning time (from owner):**
+
+1. `travel_purpose` vocabulary stays at the existing 9 values. No `Backwater` added — Backwater-zone customers map to `Wellness`.
+2. Hotel count target 20,000 ±5% with bucket-uniform sampling. Actual delta 18,076 → 20,076 (0.38% over).
+3. `opened_year` extended to 2026. Migration 006 carries no CHECK constraint — verified by `pg_get_constraintdef` over `hotel_master`; no migration needed.
+4. `tourist_arrivals_annual_m` capped at 24.0. It's a hotel-demand proxy for city-popularity weights, not literal Ministry-of-Tourism footfall. Documented in `datamodel.md` under the `dim_location.csv` section.
+5. `seeds/cities_expansion.csv` is the committed source of truth for the 949 net-new cities (committed path, NOT under gitignored `data/`).
+
+**What shipped:**
+
+- `seeds/cities_expansion.csv` — 949 curated rows (city, state, region, tourism_zone, latitude, longitude, tourist_arrivals_annual_m, peak_months, popularity_tier). State coverage = 34 (of 37 valid `india_states_zones` entries; the catalog has nothing in Chandigarh-UT or Dadra & Nagar Haveli, which were also absent from the pre-existing 44).
+- `scripts/build_cities_expansion_csv.py` — deterministic CSV builder (SEED=42; catalog inline). Regenerates the CSV byte-identical. Validates state names against `STATE_REGION`, asserts no within-catalog duplicates, fails loudly on either.
+- `scripts/expand_dimensions.py` — single-transaction INSERT for all four tables. Pre-flight guards: (a) every catalog state must exist in `india_states_zones`; (b) no catalog (city, state) may already exist in `dim_location` (idempotency); (c) `MAX(hotel_id)` must equal `HTL-002000`; (d) `MAX(customer_id)` must equal `CUST-020000`. Post-insert verification (still inside the transaction, before commit): fact row counts unchanged; FK orphan count = 0; every new hotel has ≥1 room type; no state drift. Any failure → ROLLBACK.
+
+**Verification — counts (run 2026-05-27):**
+
+| Table | Before | After | Delta |
+|---|---:|---:|---:|
+| `dim_location` | 44 | 993 | +949 |
+| `hotel_master` | 2,000 | 20,076 | +18,076 |
+| `dim_room_type` | 5,542 | 55,446 | +49,904 |
+| `dim_customer` | 20,000 | 100,000 | +80,000 |
+| `fact_bookings` | 1,000,000 | 1,000,000 | **0** |
+| `fact_booking_events` | 2,107,759 | 2,107,759 | **0** |
+| `fact_booking_lifecycle` | 762,230 | 762,230 | **0** |
+| `reviews_raw` | 133,463 | 133,463 | **0** |
+
+**Verification — integrity:**
+
+- 0 FK orphans on hotel→location, hotel→price_tier, room_type→hotel, room_type→price_tier.
+- 100% of hotels have ≥1 room type.
+- 0 dim_location rows have a `state` not in `india_states_zones`.
+- Zone gating intact: Houseboat 175 / 175 in Backwater, Treehouse 186 / 186 in Wildlife. Tent appears 409× in Wildlife and 266× in Hill Station (and nowhere else).
+- 3 new `dim_room_type.type_name` values added: `Houseboat Suite`, `Tent`, `Treehouse` (16 distinct names total). Free-text column, no migration needed.
+
+**Spot-check — 10 random new cities have hotels:** Auli (21), Ayodhya (148), Gangtok (70), Hampi (45), Kumarakom (60), Leh (40), Madurai (123), Pondicherry (45), Tawang (35), Tirupati (145). All non-zero, ranges plausible for the popularity_tier of each.
+
+**Why no migration:** Every column the expansion writes is already defined in the live schema (base `db/schema.sql` + migration 006 for `opened_year`). The three new room-type values and the previously-near-empty property-types (`Houseboat`, `Treehouse`, `Tent`) are all free-text VARCHAR with no CHECK constraint. The `opened_year` upper bound is data-shape only, not schema, and migration 006 has no CHECK clause (verified).
+
+**Idempotency:** A second run of `python -m scripts.expand_dimensions` aborts at the pre-flight (catalog cities already present, hotel max past `HTL-002000`, customer max past `CUST-020000`) with a clear stderr message and a ROLLBACK. Confirmed by inspection — no second-run was executed, but the four guard conditions are explicit and tested at the bash level (max-id mismatch raises `SystemExit` with the actual seen value).
+
+**Out of scope (future items, not this one):** Stage 2 fact backfill for the new ~18K hotels' Feb–May 2026 window; stream-simulator gating to avoid replaying bookings that don't exist yet; lifecycle reconstruction for the new hotels. The user flagged these in the audit; they each need an independent design pass.
 
 ---
 
@@ -1308,3 +1361,4 @@ The old design weights stay documented in `docs/phase-2-streaming.md` as histori
 | ✓ | B-030b follow-up — Review/Embedded date-scoping + Freshness signal fix. `_monitor_reviews(conn, date_from, date_to)` and `_monitor_embeddings(conn, date_from, date_to)` now filter by `reviews_raw.event_date`; seed reviews (`record_source='seed'`, `NULL event_date`) excluded (static corpus). Return shape change: `reviews` now carries `in_range/history/stream/date_scoped` (not `total/seed/history/stream`). Both `/monitor` and `/monitor/data` routes pass the active date range. Effect: today → only today's reviews, climbs with stream; yesterday → fixed count at ~100% coverage. `badge-scope` chip added to both tile labels. `updateReviews()` JS updated to `in_range`. Stream Freshness tile decoupled: `_monitor_freshness` is now informational context (window age + pill) only; consumer-alive verdict moved to `<span id="freshness-consumer-note">` driven by `live.alive` (heartbeat) on both server render and each 10s tick (new `updateFreshness(data.live)` in the poller). Eliminates the contradiction where "Stale / is the consumer running?" appeared alongside a live events/sec. | Phase 7 |
 | ✓ | B-033 — `quarantine_daily_rollup` DAG + hybrid monitor read-path. Migration 012 (`quarantine_daily_summary DATE PK + malformed_count + late_count + computed_at`). New `airflow/dags/quarantine_daily_rollup.py`: self-healing daily DAG (`schedule_interval='0 3 * * *'`, `catchup=False`); per run computes `missing_days = (calendar range from earliest S3 day to yesterday) − (existing summary rows)` and UPSERT-backfills all gaps; explicit 0/0 rows for quarantine-free days; idempotent. `render/server.py`: old `_monitor_quarantine(date_from, date_to)` renamed `_monitor_quarantine_s3_scan` (graceful fallback); new `_monitor_quarantine(conn, date_from, date_to)` hybrid: past days → Postgres `COALESCE(SUM(malformed_count+late_count), 0)` over `quarantine_daily_summary` (O(1) indexed range); today (if in range) → single S3 day-prefix `list_objects_v2` call; migration 012 absent → warning + fallback to S3 scan. Both `/monitor` and `/monitor/data` route handlers: quarantine call moved inside the existing `try` block (reuses open connection). Eliminates the per-request O(days × 2) S3 listing that scaled unboundedly with quarantine growth. **Superseded by B-044** — `airflow/dags/quarantine_daily_rollup.py` retired; `quarantine_daily_summary` dropped by migration 013. | Phase 6 / Phase 7 |
 | ✓ | B-044 — Hourly quarantine rollup (supersedes B-033 daily DAG + migration 012). Migration 013: drops `quarantine_daily_summary`, creates `quarantine_hourly_summary (summary_date DATE, summary_hour SMALLINT, malformed_count INT, late_count INT, is_final BOOL, computed_at TIMESTAMPTZ, PK(summary_date, summary_hour))`. New `scripts/quarantine_hourly_rollup.py` (run.py 6th proc, `pg_try_advisory_lock(7400060)`): 5-min loop; watermark derived from `MAX(is_final=TRUE)` row (no separate cursor table); each cycle walks watermark+1 → current_hour, re-counts S3 objects via `list_objects_v2 KeyCount` (RAM-safe, no key materialisation); `GRACE_MINUTES=10` — hour finalised only once `now >= hour_end + 10min`; explicit 0/0/FINAL rows for empty completed hours; eager first cycle on startup; O(8) API calls to discover earliest hour for backfill. `airflow/dags/quarantine_daily_rollup.py` deleted. `render/server.py`: ALL S3 code removed from quarantine read-path (`boto3`, `botocore.Config`, S3 constants, both old quarantine functions); new `_monitor_quarantine(conn, date_from, date_to)` is pure Postgres — single `COALESCE(SUM(...))` over `quarantine_hourly_summary`. `render/templates/monitor.html`: tile notes updated to "≈ refreshed every 5 min"; error text → "Hourly rollup unavailable." Verification: 159 hours written on initial backfill (158 final, 1 open); hour-level spot check exact match (2026-05-25 h=16: 229 mal / 94 late); 3-day total = 3110/1008 (matches B-042 reference); 7-day range response sub-1ms (pure Postgres); singleton lock correct; grep confirms 0 S3 references in server.py quarantine path. | Phase 6 / Phase 7 |
+| ✓ | B-046 — Stage 1 dimension expansion (additive, no migration). `seeds/cities_expansion.csv` (949 curated rows, 34 states) + `scripts/build_cities_expansion_csv.py` (deterministic builder, SEED=42) + `scripts/expand_dimensions.py` (single-transaction idempotent insert). Run 2026-05-27 added 949 cities → 993, 18,076 hotels → 20,076 (within ±5% of 20,000), 49,904 room types → 55,446, 80,000 customers → 100,000. Fact tables (`fact_bookings` 1M, `fact_booking_events` 2.11M, `fact_booking_lifecycle` 762K, `reviews_raw` 133K) unchanged. Zone gating verified — Houseboat 175/175 in Backwater, Treehouse 186/186 in Wildlife, Tent 409 Wildlife + 266 Hill Station. 0 FK orphans, 0 hotels without room types, 0 state drift. 3 new `dim_room_type.type_name` values (`Houseboat Suite`, `Tent`, `Treehouse`). `opened_year` extended to 2026 — no migration (migration 006 carries no CHECK constraint). Travel-purpose vocabulary unchanged (Backwater customers → Wellness per decision). Pre-flight aborts a second run by detecting catalog collision in `dim_location` and ID guards on hotel_master / dim_customer max IDs. | Phase 1 |

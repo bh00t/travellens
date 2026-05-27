@@ -522,6 +522,53 @@ To restart: bring the container back up and re-run Steps 3 onward.
 - Never modify `data/` or `.env`
 
 
+## BUILD HISTORY / EVOLUTION
+
+### B-046 — Stage 1 dimension expansion (2026-05-27)
+
+Additive scale-out of the four dimension tables. No fact data was touched; no migration was added.
+
+**Delta:** `dim_location` 44 → 993 (+949) · `hotel_master` 2,000 → 20,076 (+18,076) · `dim_room_type` 5,542 → 55,446 (+49,904) · `dim_customer` 20,000 → 100,000 (+80,000). `fact_bookings`, `fact_booking_events`, `fact_booking_lifecycle`, `reviews_raw` all unchanged.
+
+**Why a new path (not regen).** The Phase 1 loader `scripts/load_to_postgres.py` `TRUNCATE`s every table on every run ([scripts/load_to_postgres.py:43-79](scripts/load_to_postgres.py#L43-L79)) — that's correct behaviour for a one-shot bulk load but destructive for any in-place evolution. Re-running the Stage 1/2/3 generators would also overwrite the CSVs in `data/` rather than appending. The expansion needed a separate code path that (a) doesn't touch existing rows, (b) doesn't depend on the frozen loader, (c) is idempotent.
+
+**What shipped:**
+
+- `seeds/cities_expansion.csv` — committed catalog of 949 curated cities (city, state, region, tourism_zone, latitude, longitude, tourist_arrivals_annual_m, peak_months, popularity_tier).
+- `scripts/build_cities_expansion_csv.py` — deterministic CSV builder (SEED=42) with inline catalog. Validates state names against `india_states_zones` and rejects within-catalog (city, state) duplicates.
+- `scripts/expand_dimensions.py` — single-transaction INSERT for all four tables. Pre-flight idempotency guards: (a) no catalog (city, state) may already exist in `dim_location`; (b) `MAX(hotel_id) == 'HTL-002000'`; (c) `MAX(customer_id) == 'CUST-020000'`. Post-insert integrity guards inside the same transaction: fact-row counts unchanged, FK orphan count = 0, every new hotel has ≥1 room type, no state drift. Any failure → ROLLBACK.
+
+**Decisions made before the build (locked at planning):**
+
+| # | Decision |
+|---|---|
+| 1 | `travel_purpose` vocabulary stays at 9 values — Backwater-zone customers map to `Wellness`. No vocabulary drift. |
+| 2 | Hotel target 20,000 ±5%, bucket-uniform sampling. Actual = 20,076 (0.38% over). |
+| 3 | `opened_year` extended to 2026. Migration 006 carries no CHECK constraint — verified, no new migration needed. |
+| 4 | `tourist_arrivals_annual_m` capped at 24.0. It's a hotel-demand proxy for city-popularity weights, not Ministry-of-Tourism footfall. Documented in `datamodel.md`. |
+| 5 | `cities_expansion.csv` lives in a committed `seeds/` directory, not gitignored `data/`. |
+
+**New room-type values (free text, no migration):** `Houseboat Suite` (Backwater), `Tent` (Wildlife + Hill Station), `Treehouse` (Wildlife). Total distinct `dim_room_type.type_name` values = 16 (was 13).
+
+**Verification — independent queries after commit:**
+
+| Check | Result |
+|---|---|
+| Houseboat in Backwater hotels | 175 / 175 (no leakage) |
+| Treehouse in Wildlife hotels | 186 / 186 (no leakage) |
+| Tent in Wildlife / Hill Station | 409 / 266 (zone-gated) |
+| Distinct states in `dim_location` | 35 of 37 valid (Chandigarh-UT and Dadra & Nagar Haveli remain unrepresented — same as pre-expansion) |
+| FK orphans (hotel→loc, hotel→price_tier, room→hotel, room→price_tier) | 0 / 0 / 0 / 0 |
+| Hotels without ≥1 room type | 0 |
+| `opened_year` range | 1975 → 2026 (1,084 hotels with opened_year ≥ 2024) |
+| Spot-check: 10 random new cities have hotels | Auli 21, Ayodhya 148, Gangtok 70, Hampi 45, Kumarakom 60, Leh 40, Madurai 123, Pondicherry 45, Tawang 35, Tirupati 145 — all non-zero, ranges plausible per popularity tier |
+
+**Idempotency:** A second `python -m scripts.expand_dimensions` aborts at the pre-flight (catalog cities already present, hotel max past HTL-002000, customer max past CUST-020000) with a clear stderr message and a ROLLBACK. Total runtime for the successful run: 7.9s end-to-end (generate in Python + four bulk INSERTs + integrity checks).
+
+**Out of scope (deliberate — separate items):** Stage 2 fact backfill for the new ~18K hotels' Feb–May 2026 window; stream-simulator gating so the producer doesn't replay bookings that don't exist for the new hotels; lifecycle reconstruction. The audit flagged these as needing independent design (sim-clock anchor 2025-06-01 makes Feb–May 2026 stream-replay territory).
+
+---
+
 ## NEXT
 
 Phase 2 — `docs/phase-2-streaming.md`

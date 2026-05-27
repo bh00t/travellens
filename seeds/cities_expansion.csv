@@ -1,0 +1,950 @@
+city,state,region,tourism_zone,latitude,longitude,tourist_arrivals_annual_m,peak_months,popularity_tier
+Bharatpur,Rajasthan,North India,Heritage,27.5219,72.51,1.04,Oct|Nov|Dec|Jan|Feb,mid
+Alwar,Rajasthan,North India,Heritage,26.0236,75.0713,1.18,Oct|Nov|Dec|Jan|Feb,mid
+Mandawa,Rajasthan,North India,Heritage,28.4318,72.733,1.09,Oct|Nov|Dec|Jan|Feb,mid
+Nawalgarh,Rajasthan,North India,Heritage,25.3273,73.2071,0.35,Oct|Nov|Dec|Jan|Feb,small
+Sikar,Rajasthan,North India,Heritage,25.3155,73.1358,0.37,Oct|Nov|Dec|Jan|Feb,small
+Karauli,Rajasthan,North India,Heritage,27.1818,73.2136,0.36,Oct|Nov|Dec|Jan|Feb,small
+Tonk,Rajasthan,North India,Heritage,28.1339,72.4434,0.38,Oct|Nov|Dec|Jan|Feb,small
+Bundi,Rajasthan,North India,Heritage,27.7333,73.6449,1.0,Oct|Nov|Dec|Jan|Feb,mid
+Chittorgarh,Rajasthan,North India,Heritage,28.666,73.6317,0.98,Oct|Nov|Dec|Jan|Feb,mid
+Banswara,Rajasthan,North India,Heritage,25.5682,75.471,0.36,Oct|Nov|Dec|Jan|Feb,small
+Dungarpur,Rajasthan,North India,Heritage,28.1257,75.047,0.35,Oct|Nov|Dec|Jan|Feb,small
+Sirohi,Rajasthan,North India,Heritage,28.7232,73.7827,0.36,Oct|Nov|Dec|Jan|Feb,small
+Pali,Rajasthan,North India,Heritage,28.2059,74.6467,0.39,Oct|Nov|Dec|Jan|Feb,small
+Jalore,Rajasthan,North India,Heritage,27.2985,74.9565,0.3,Oct|Nov|Dec|Jan|Feb,small
+Barmer,Rajasthan,North India,Heritage,26.0404,73.4618,0.31,Oct|Nov|Dec|Jan|Feb,small
+Osian,Rajasthan,North India,Heritage,26.058,72.7836,0.1,Oct|Nov|Dec|Jan|Feb,obscure
+Phalodi,Rajasthan,North India,Heritage,27.5085,73.7334,0.11,Oct|Nov|Dec|Jan|Feb,obscure
+Deogarh,Rajasthan,North India,Heritage,25.9742,73.3811,0.4,Oct|Nov|Dec|Jan|Feb,small
+Kumbhalgarh,Rajasthan,North India,Heritage,27.5529,74.6129,1.01,Oct|Nov|Dec|Jan|Feb,mid
+Ranakpur,Rajasthan,North India,Heritage,27.8449,73.0082,1.08,Oct|Nov|Dec|Jan|Feb,mid
+Nagaur,Rajasthan,North India,Heritage,28.7823,74.724,0.36,Oct|Nov|Dec|Jan|Feb,small
+Bayana,Rajasthan,North India,Heritage,27.6846,75.4543,0.12,Oct|Nov|Dec|Jan|Feb,obscure
+Roopangarh,Rajasthan,North India,Heritage,26.0446,72.5356,0.11,Oct|Nov|Dec|Jan|Feb,obscure
+Lakshmangarh,Rajasthan,North India,Heritage,26.1839,73.1795,0.13,Oct|Nov|Dec|Jan|Feb,obscure
+Fatehpur Sikri,Uttar Pradesh,North India,Heritage,28.2049,80.2828,3.66,Oct|Nov|Dec|Jan|Feb,major
+Sarnath,Uttar Pradesh,North India,Heritage,26.4743,82.4424,1.11,Oct|Nov|Dec|Jan|Feb,mid
+Mahoba,Uttar Pradesh,North India,Heritage,26.0036,80.0379,0.36,Oct|Nov|Dec|Jan|Feb,small
+Kalinjar,Uttar Pradesh,North India,Heritage,25.9959,81.2545,0.39,Oct|Nov|Dec|Jan|Feb,small
+Bithoor,Uttar Pradesh,North India,Heritage,26.4878,79.9396,0.4,Oct|Nov|Dec|Jan|Feb,small
+Jhansi,Uttar Pradesh,North India,Heritage,26.8843,79.4773,0.97,Oct|Nov|Dec|Jan|Feb,mid
+Lalitpur,Uttar Pradesh,North India,Heritage,25.4447,81.4088,0.38,Oct|Nov|Dec|Jan|Feb,small
+Hastinapur,Uttar Pradesh,North India,Heritage,26.5698,79.3787,0.34,Oct|Nov|Dec|Jan|Feb,small
+Kannauj,Uttar Pradesh,North India,Heritage,28.636,81.0548,0.4,Oct|Nov|Dec|Jan|Feb,small
+Mainpuri,Uttar Pradesh,North India,Heritage,28.1488,79.1913,0.12,Oct|Nov|Dec|Jan|Feb,obscure
+Etah,Uttar Pradesh,North India,Heritage,27.5042,81.0831,0.1,Oct|Nov|Dec|Jan|Feb,obscure
+Bahraich,Uttar Pradesh,North India,Heritage,27.3575,79.5516,0.34,Oct|Nov|Dec|Jan|Feb,small
+Sankisa,Uttar Pradesh,North India,Heritage,26.6834,82.5837,0.12,Oct|Nov|Dec|Jan|Feb,obscure
+Etawah,Uttar Pradesh,North India,Heritage,25.9982,80.9521,0.1,Oct|Nov|Dec|Jan|Feb,obscure
+Pratapgarh,Uttar Pradesh,North India,Heritage,28.3355,82.2839,0.11,Oct|Nov|Dec|Jan|Feb,obscure
+Orchha,Madhya Pradesh,North India,Heritage,23.4702,79.0523,1.0,Oct|Nov|Dec|Jan|Feb,mid
+Mandu,Madhya Pradesh,North India,Heritage,23.915,78.8018,1.21,Oct|Nov|Dec|Jan|Feb,mid
+Sanchi,Madhya Pradesh,North India,Heritage,23.0793,76.8621,1.06,Oct|Nov|Dec|Jan|Feb,mid
+Gwalior,Madhya Pradesh,North India,Heritage,21.2401,80.2048,3.9,Oct|Nov|Dec|Jan|Feb,major
+Maheshwar,Madhya Pradesh,North India,Heritage,24.164,77.9671,0.3,Oct|Nov|Dec|Jan|Feb,small
+Bhojpur,Madhya Pradesh,North India,Heritage,24.3308,80.269,0.31,Oct|Nov|Dec|Jan|Feb,small
+Vidisha,Madhya Pradesh,North India,Heritage,22.9196,77.1092,0.38,Oct|Nov|Dec|Jan|Feb,small
+Burhanpur,Madhya Pradesh,North India,Heritage,23.927,77.3222,0.35,Oct|Nov|Dec|Jan|Feb,small
+Chanderi,Madhya Pradesh,North India,Heritage,23.1493,77.8142,0.39,Oct|Nov|Dec|Jan|Feb,small
+Datia,Madhya Pradesh,North India,Heritage,22.6933,77.6225,0.35,Oct|Nov|Dec|Jan|Feb,small
+Shivpuri,Madhya Pradesh,North India,Heritage,23.7978,77.5841,0.33,Oct|Nov|Dec|Jan|Feb,small
+Mandsaur,Madhya Pradesh,North India,Heritage,24.7525,79.1996,0.11,Oct|Nov|Dec|Jan|Feb,obscure
+Bagh,Madhya Pradesh,North India,Heritage,23.0333,77.2956,0.1,Oct|Nov|Dec|Jan|Feb,obscure
+Asirgarh,Madhya Pradesh,North India,Heritage,22.3871,78.9779,0.1,Oct|Nov|Dec|Jan|Feb,obscure
+Champaner,Gujarat,West India,Heritage,21.2528,69.6456,0.36,Oct|Nov|Dec|Jan|Feb,small
+Patan,Gujarat,West India,Heritage,21.2842,72.6495,0.39,Oct|Nov|Dec|Jan|Feb,small
+Modhera,Gujarat,West India,Heritage,20.7151,70.2468,0.37,Oct|Nov|Dec|Jan|Feb,small
+Junagadh,Gujarat,West India,Heritage,21.2313,69.8663,1.27,Oct|Nov|Dec|Jan|Feb,mid
+Vadnagar,Gujarat,West India,Heritage,22.5158,71.0916,0.38,Oct|Nov|Dec|Jan|Feb,small
+Lothal,Gujarat,West India,Heritage,23.367,70.0755,0.1,Oct|Nov|Dec|Jan|Feb,obscure
+Dholavira,Gujarat,West India,Heritage,22.0118,70.9149,0.35,Oct|Nov|Dec|Jan|Feb,small
+Vijaynagar,Gujarat,West India,Heritage,23.0847,71.8141,0.13,Oct|Nov|Dec|Jan|Feb,obscure
+Idar,Gujarat,West India,Heritage,20.8143,70.8394,0.11,Oct|Nov|Dec|Jan|Feb,obscure
+Sidhpur,Gujarat,West India,Heritage,23.562,70.2852,0.1,Oct|Nov|Dec|Jan|Feb,obscure
+Halvad,Gujarat,West India,Heritage,22.075,70.9088,0.1,Oct|Nov|Dec|Jan|Feb,obscure
+Halol,Gujarat,West India,Heritage,21.3593,72.7138,0.11,Oct|Nov|Dec|Jan|Feb,obscure
+Mysuru,Karnataka,South India,Heritage,16.6209,75.8912,3.03,Oct|Nov|Dec|Jan|Feb,major
+Hampi,Karnataka,South India,Heritage,17.1174,76.9197,3.99,Oct|Nov|Dec|Jan|Feb,major
+Badami,Karnataka,South India,Heritage,16.8549,76.9653,1.01,Oct|Nov|Dec|Jan|Feb,mid
+Aihole,Karnataka,South India,Heritage,15.2683,74.6795,0.34,Oct|Nov|Dec|Jan|Feb,small
+Pattadakal,Karnataka,South India,Heritage,13.7311,75.2743,0.4,Oct|Nov|Dec|Jan|Feb,small
+Bidar,Karnataka,South India,Heritage,14.4747,76.7327,1.1,Oct|Nov|Dec|Jan|Feb,mid
+Vijayapura,Karnataka,South India,Heritage,15.0428,77.3563,1.29,Oct|Nov|Dec|Jan|Feb,mid
+Halebidu,Karnataka,South India,Heritage,15.5208,76.4963,0.31,Oct|Nov|Dec|Jan|Feb,small
+Belur,Karnataka,South India,Heritage,14.5881,77.3974,0.36,Oct|Nov|Dec|Jan|Feb,small
+Sravanabelagola,Karnataka,South India,Heritage,15.4719,76.6027,0.3,Oct|Nov|Dec|Jan|Feb,small
+Lakkundi,Karnataka,South India,Heritage,15.623,75.7203,0.12,Oct|Nov|Dec|Jan|Feb,obscure
+Anegundi,Karnataka,South India,Heritage,14.0868,77.3688,0.1,Oct|Nov|Dec|Jan|Feb,obscure
+Mahabalipuram,Tamil Nadu,South India,Heritage,9.999,79.0021,3.68,Oct|Nov|Dec|Jan|Feb,major
+Kanchipuram,Tamil Nadu,South India,Heritage,10.1767,77.2916,1.25,Oct|Nov|Dec|Jan|Feb,mid
+Thanjavur,Tamil Nadu,South India,Heritage,10.2164,79.0003,1.16,Oct|Nov|Dec|Jan|Feb,mid
+Gangaikonda Cholapuram,Tamil Nadu,South India,Heritage,10.8392,78.9612,0.35,Oct|Nov|Dec|Jan|Feb,small
+Kumbakonam,Tamil Nadu,South India,Heritage,12.6949,77.5953,0.37,Oct|Nov|Dec|Jan|Feb,small
+Darasuram,Tamil Nadu,South India,Heritage,10.1893,78.2848,0.12,Oct|Nov|Dec|Jan|Feb,obscure
+Chettinad,Tamil Nadu,South India,Heritage,10.41,77.9982,1.2,Oct|Nov|Dec|Jan|Feb,mid
+Karaikudi,Tamil Nadu,South India,Heritage,9.5912,78.5098,0.4,Oct|Nov|Dec|Jan|Feb,small
+Padmanabhapuram,Tamil Nadu,South India,Heritage,12.9159,77.1237,0.32,Oct|Nov|Dec|Jan|Feb,small
+Thirumayam,Tamil Nadu,South India,Heritage,10.2847,80.2197,0.12,Oct|Nov|Dec|Jan|Feb,obscure
+Pudukkottai,Tamil Nadu,South India,Heritage,12.4954,78.1903,0.31,Oct|Nov|Dec|Jan|Feb,small
+Warangal,Telangana,South India,Heritage,19.3115,79.7527,1.16,Oct|Nov|Dec|Jan|Feb,mid
+Bhongir,Telangana,South India,Heritage,19.864,79.5743,0.3,Oct|Nov|Dec|Jan|Feb,small
+Mahbubnagar,Telangana,South India,Heritage,19.2516,78.2978,0.37,Oct|Nov|Dec|Jan|Feb,small
+Karimnagar,Telangana,South India,Heritage,19.6901,77.7034,0.31,Oct|Nov|Dec|Jan|Feb,small
+Nizamabad,Telangana,South India,Heritage,16.6953,79.2116,0.33,Oct|Nov|Dec|Jan|Feb,small
+Suryapet,Telangana,South India,Heritage,18.4874,79.8034,0.1,Oct|Nov|Dec|Jan|Feb,obscure
+Pillalamarri,Telangana,South India,Heritage,18.5933,78.1703,0.11,Oct|Nov|Dec|Jan|Feb,obscure
+Adilabad,Telangana,South India,Heritage,19.5692,80.266,0.1,Oct|Nov|Dec|Jan|Feb,obscure
+Murshidabad,West Bengal,East India,Heritage,22.7149,87.056,0.95,Oct|Nov|Dec|Jan|Feb,mid
+Bishnupur,West Bengal,East India,Heritage,23.966,88.3536,0.33,Oct|Nov|Dec|Jan|Feb,small
+Malda,West Bengal,East India,Heritage,23.8584,88.046,0.34,Oct|Nov|Dec|Jan|Feb,small
+Cooch Behar,West Bengal,East India,Heritage,21.2248,86.3309,0.39,Oct|Nov|Dec|Jan|Feb,small
+Hazarduari,West Bengal,East India,Heritage,24.4441,88.0241,0.12,Oct|Nov|Dec|Jan|Feb,obscure
+Adina,West Bengal,East India,Heritage,23.287,86.5931,0.1,Oct|Nov|Dec|Jan|Feb,obscure
+Gaur,West Bengal,East India,Heritage,22.2997,89.2963,0.12,Oct|Nov|Dec|Jan|Feb,obscure
+Pandua,West Bengal,East India,Heritage,24.2885,89.2961,0.1,Oct|Nov|Dec|Jan|Feb,obscure
+Konark,Odisha,East India,Heritage,20.0483,83.6701,3.79,Oct|Nov|Dec|Jan|Feb,major
+Khandagiri,Odisha,East India,Heritage,22.3329,84.763,0.36,Oct|Nov|Dec|Jan|Feb,small
+Udayagiri,Odisha,East India,Heritage,19.7064,86.6476,0.39,Oct|Nov|Dec|Jan|Feb,small
+Lalitgiri,Odisha,East India,Heritage,22.6643,86.2188,0.12,Oct|Nov|Dec|Jan|Feb,obscure
+Ratnagiri,Odisha,East India,Heritage,19.2392,85.9516,0.11,Oct|Nov|Dec|Jan|Feb,obscure
+Pipili,Odisha,East India,Heritage,22.5009,86.188,0.12,Oct|Nov|Dec|Jan|Feb,obscure
+Dhauli,Odisha,East India,Heritage,22.0687,84.2605,0.38,Oct|Nov|Dec|Jan|Feb,small
+Nalanda,Bihar,East India,Heritage,24.473,85.9055,1.24,Oct|Nov|Dec|Jan|Feb,mid
+Vaishali,Bihar,East India,Heritage,24.6559,85.8165,0.35,Oct|Nov|Dec|Jan|Feb,small
+Vikramshila,Bihar,East India,Heritage,24.7883,85.7826,0.32,Oct|Nov|Dec|Jan|Feb,small
+Kesariya,Bihar,East India,Heritage,24.3379,84.819,0.11,Oct|Nov|Dec|Jan|Feb,obscure
+Lauriya Nandangarh,Bihar,East India,Heritage,25.683,86.057,0.1,Oct|Nov|Dec|Jan|Feb,obscure
+Rohtas,Bihar,East India,Heritage,25.3264,85.1495,0.13,Oct|Nov|Dec|Jan|Feb,obscure
+Lepakshi,Andhra Pradesh,South India,Heritage,16.0404,81.3213,0.31,Oct|Nov|Dec|Jan|Feb,small
+Penukonda,Andhra Pradesh,South India,Heritage,17.6034,78.5828,0.4,Oct|Nov|Dec|Jan|Feb,small
+Chandragiri,Andhra Pradesh,South India,Heritage,15.0657,78.3302,0.34,Oct|Nov|Dec|Jan|Feb,small
+Gandikota,Andhra Pradesh,South India,Heritage,16.7328,79.0692,0.36,Oct|Nov|Dec|Jan|Feb,small
+Belum,Andhra Pradesh,South India,Heritage,15.9511,79.3267,0.36,Oct|Nov|Dec|Jan|Feb,small
+Anupu,Andhra Pradesh,South India,Heritage,15.027,80.4916,0.1,Oct|Nov|Dec|Jan|Feb,obscure
+Phanigiri,Andhra Pradesh,South India,Heritage,17.4421,79.8784,0.12,Oct|Nov|Dec|Jan|Feb,obscure
+Amaravati,Andhra Pradesh,South India,Heritage,16.781,80.3543,1.07,Oct|Nov|Dec|Jan|Feb,mid
+Ajanta,Maharashtra,West India,Heritage,18.2019,76.3013,3.32,Oct|Nov|Dec|Jan|Feb,major
+Ellora,Maharashtra,West India,Heritage,19.0801,76.9629,3.73,Oct|Nov|Dec|Jan|Feb,major
+Daulatabad,Maharashtra,West India,Heritage,19.0312,75.0234,1.09,Oct|Nov|Dec|Jan|Feb,mid
+Lonar,Maharashtra,West India,Heritage,19.3986,74.9744,0.31,Oct|Nov|Dec|Jan|Feb,small
+Raigad,Maharashtra,West India,Heritage,19.4636,77.2953,0.37,Oct|Nov|Dec|Jan|Feb,small
+Pratapgad,Maharashtra,West India,Heritage,21.2001,76.1259,0.33,Oct|Nov|Dec|Jan|Feb,small
+Shivneri,Maharashtra,West India,Heritage,19.9226,73.9115,0.33,Oct|Nov|Dec|Jan|Feb,small
+Sindhudurg,Maharashtra,West India,Heritage,19.4976,75.9979,0.37,Oct|Nov|Dec|Jan|Feb,small
+Janjira,Maharashtra,West India,Heritage,19.624,75.5018,0.32,Oct|Nov|Dec|Jan|Feb,small
+Murud,Maharashtra,West India,Heritage,19.6535,77.1543,0.38,Oct|Nov|Dec|Jan|Feb,small
+Old Goa,Goa,West India,Heritage,15.1018,73.8709,1.13,Oct|Nov|Dec|Jan|Feb,mid
+Reis Magos,Goa,West India,Heritage,15.3798,74.0211,0.38,Oct|Nov|Dec|Jan|Feb,small
+Cabo de Rama,Goa,West India,Heritage,15.4507,74.2237,0.1,Oct|Nov|Dec|Jan|Feb,obscure
+Tripunithura,Kerala,South India,Heritage,10.3686,75.5091,0.32,Oct|Nov|Dec|Jan|Feb,small
+Bekal,Kerala,South India,Heritage,10.8102,76.8296,0.31,Oct|Nov|Dec|Jan|Feb,small
+Thalassery,Kerala,South India,Heritage,10.7131,76.4776,0.32,Oct|Nov|Dec|Jan|Feb,small
+Anjarakkandy,Kerala,South India,Heritage,11.1642,76.261,0.1,Oct|Nov|Dec|Jan|Feb,obscure
+Krishnapuram,Kerala,South India,Heritage,11.0997,75.4789,0.12,Oct|Nov|Dec|Jan|Feb,obscure
+Patiala,Punjab,North India,Heritage,31.5821,74.7105,1.09,Oct|Nov|Dec|Jan|Feb,mid
+Kapurthala,Punjab,North India,Heritage,30.6314,76.0727,0.35,Oct|Nov|Dec|Jan|Feb,small
+Sangrur,Punjab,North India,Heritage,30.4303,74.9387,0.39,Oct|Nov|Dec|Jan|Feb,small
+Faridkot,Punjab,North India,Heritage,31.0803,75.8223,0.37,Oct|Nov|Dec|Jan|Feb,small
+Pinjore,Haryana,North India,Heritage,29.8406,76.2427,0.4,Oct|Nov|Dec|Jan|Feb,small
+Pataudi,Haryana,North India,Heritage,29.6863,76.2702,0.37,Oct|Nov|Dec|Jan|Feb,small
+Madhuban,Haryana,North India,Heritage,29.0676,76.6189,0.11,Oct|Nov|Dec|Jan|Feb,obscure
+Mathura,Uttar Pradesh,North India,Pilgrimage,28.2799,81.8272,4.96,Oct|Nov|Mar|Apr,major
+Ayodhya,Uttar Pradesh,North India,Pilgrimage,25.9831,80.0401,16.66,Oct|Nov|Mar|Apr,mega
+Chitrakoot,Uttar Pradesh,North India,Pilgrimage,27.8069,81.0267,1.66,Oct|Nov|Mar|Apr,mid
+Naimisharanya,Uttar Pradesh,North India,Pilgrimage,26.0386,79.4289,0.47,Oct|Nov|Mar|Apr,small
+Garhmukteshwar,Uttar Pradesh,North India,Pilgrimage,26.0282,80.301,0.51,Oct|Nov|Mar|Apr,small
+Govardhan,Uttar Pradesh,North India,Pilgrimage,25.5481,79.9825,1.69,Oct|Nov|Mar|Apr,mid
+Prayagraj,Uttar Pradesh,North India,Pilgrimage,27.5931,79.3812,15.56,Oct|Nov|Mar|Apr,mega
+Sambhal,Uttar Pradesh,North India,Pilgrimage,27.0034,80.6468,0.46,Oct|Nov|Mar|Apr,small
+Mirzapur,Uttar Pradesh,North India,Pilgrimage,26.5625,82.4074,0.51,Oct|Nov|Mar|Apr,small
+Soron,Uttar Pradesh,North India,Pilgrimage,27.5539,82.2342,0.17,Oct|Nov|Mar|Apr,obscure
+Vindhyachal,Uttar Pradesh,North India,Pilgrimage,26.4194,79.1712,0.48,Oct|Nov|Mar|Apr,small
+Misrikh,Uttar Pradesh,North India,Pilgrimage,27.7625,82.2224,0.18,Oct|Nov|Mar|Apr,obscure
+Barsana,Uttar Pradesh,North India,Pilgrimage,26.5585,81.8411,0.51,Oct|Nov|Mar|Apr,small
+Nandgaon,Uttar Pradesh,North India,Pilgrimage,27.2217,79.9439,0.46,Oct|Nov|Mar|Apr,small
+Gokul,Uttar Pradesh,North India,Pilgrimage,26.619,79.2545,0.48,Oct|Nov|Mar|Apr,small
+Bateshwar,Uttar Pradesh,North India,Pilgrimage,27.4949,80.6055,0.14,Oct|Nov|Mar|Apr,obscure
+Phulpur,Uttar Pradesh,North India,Pilgrimage,26.7326,79.6095,0.17,Oct|Nov|Mar|Apr,obscure
+Kushinagar,Uttar Pradesh,North India,Pilgrimage,25.1471,80.5685,1.63,Oct|Nov|Mar|Apr,mid
+Devipatan,Uttar Pradesh,North India,Pilgrimage,25.1476,81.4639,0.14,Oct|Nov|Mar|Apr,obscure
+Shringverpur,Uttar Pradesh,North India,Pilgrimage,26.7121,79.331,0.15,Oct|Nov|Mar|Apr,obscure
+Devban,Uttar Pradesh,North India,Pilgrimage,25.812,80.3266,0.17,Oct|Nov|Mar|Apr,obscure
+Ballia,Uttar Pradesh,North India,Pilgrimage,26.4149,81.8572,0.55,Oct|Nov|Mar|Apr,small
+Faizabad,Uttar Pradesh,North India,Pilgrimage,25.9582,79.4449,0.43,Oct|Nov|Mar|Apr,small
+Triveni,Uttar Pradesh,North India,Pilgrimage,26.9919,82.7497,0.15,Oct|Nov|Mar|Apr,obscure
+Sringeri,Karnataka,South India,Pilgrimage,15.8605,76.7224,1.67,Oct|Nov|Mar|Apr,mid
+Udupi,Karnataka,South India,Pilgrimage,16.2352,77.3286,1.46,Oct|Nov|Mar|Apr,mid
+Sirsi,Karnataka,South India,Pilgrimage,13.5934,74.4586,0.44,Oct|Nov|Mar|Apr,small
+Murudeshwar,Karnataka,South India,Pilgrimage,15.9301,75.9403,1.46,Oct|Nov|Mar|Apr,mid
+Dharmasthala,Karnataka,South India,Pilgrimage,16.0381,76.6708,1.44,Oct|Nov|Mar|Apr,mid
+Subramanya,Karnataka,South India,Pilgrimage,15.7061,76.6025,0.44,Oct|Nov|Mar|Apr,small
+Hornadu,Karnataka,South India,Pilgrimage,16.4695,77.383,0.44,Oct|Nov|Mar|Apr,small
+Kateel,Karnataka,South India,Pilgrimage,13.6124,75.033,0.53,Oct|Nov|Mar|Apr,small
+Kollur,Karnataka,South India,Pilgrimage,16.9694,75.338,0.53,Oct|Nov|Mar|Apr,small
+Saundatti,Karnataka,South India,Pilgrimage,13.7936,76.3962,0.52,Oct|Nov|Mar|Apr,small
+Nanjangud,Karnataka,South India,Pilgrimage,13.8868,76.6909,0.55,Oct|Nov|Mar|Apr,small
+Melukote,Karnataka,South India,Pilgrimage,15.6815,74.3458,0.57,Oct|Nov|Mar|Apr,small
+Kukke Subramanya,Karnataka,South India,Pilgrimage,16.3375,75.1599,0.49,Oct|Nov|Mar|Apr,small
+Talakad,Karnataka,South India,Pilgrimage,14.8541,75.7315,0.48,Oct|Nov|Mar|Apr,small
+Tirumakudal Narasipura,Karnataka,South India,Pilgrimage,16.5785,76.8704,0.14,Oct|Nov|Mar|Apr,obscure
+Mahakuta,Karnataka,South India,Pilgrimage,16.9788,76.1981,0.18,Oct|Nov|Mar|Apr,obscure
+Banashankari,Karnataka,South India,Pilgrimage,16.0663,75.4778,0.54,Oct|Nov|Mar|Apr,small
+Bhadravati,Karnataka,South India,Pilgrimage,16.9957,74.8823,0.55,Oct|Nov|Mar|Apr,small
+Mookambika,Karnataka,South India,Pilgrimage,15.4574,75.6506,0.16,Oct|Nov|Mar|Apr,obscure
+Madurai,Tamil Nadu,South India,Pilgrimage,11.9617,77.8262,17.69,Oct|Nov|Mar|Apr,mega
+Rameshwaram,Tamil Nadu,South India,Pilgrimage,12.3206,77.172,5.57,Oct|Nov|Mar|Apr,major
+Tiruvannamalai,Tamil Nadu,South India,Pilgrimage,10.2079,78.533,5.17,Oct|Nov|Mar|Apr,major
+Palani,Tamil Nadu,South India,Pilgrimage,10.6944,76.9633,1.77,Oct|Nov|Mar|Apr,mid
+Srirangam,Tamil Nadu,South India,Pilgrimage,9.9846,77.6236,1.74,Oct|Nov|Mar|Apr,mid
+Tiruchendur,Tamil Nadu,South India,Pilgrimage,10.5552,80.0292,0.53,Oct|Nov|Mar|Apr,small
+Chidambaram,Tamil Nadu,South India,Pilgrimage,10.3246,76.8965,0.57,Oct|Nov|Mar|Apr,small
+Tiruvarur,Tamil Nadu,South India,Pilgrimage,9.6382,79.4523,0.5,Oct|Nov|Mar|Apr,small
+Velankanni,Tamil Nadu,South India,Pilgrimage,12.0594,79.3462,1.67,Oct|Nov|Mar|Apr,mid
+Tirukkalukundram,Tamil Nadu,South India,Pilgrimage,11.097,79.7146,0.44,Oct|Nov|Mar|Apr,small
+Tirukkadaiyur,Tamil Nadu,South India,Pilgrimage,10.1277,79.3504,0.15,Oct|Nov|Mar|Apr,obscure
+Sirkali,Tamil Nadu,South India,Pilgrimage,11.4236,78.5637,0.5,Oct|Nov|Mar|Apr,small
+Mailam,Tamil Nadu,South India,Pilgrimage,10.8618,79.5454,0.15,Oct|Nov|Mar|Apr,obscure
+Samayapuram,Tamil Nadu,South India,Pilgrimage,11.8603,77.8353,0.15,Oct|Nov|Mar|Apr,obscure
+Marudhamalai,Tamil Nadu,South India,Pilgrimage,9.7644,77.5533,0.14,Oct|Nov|Mar|Apr,obscure
+Sankarankoil,Tamil Nadu,South India,Pilgrimage,11.2591,79.6039,0.45,Oct|Nov|Mar|Apr,small
+Tirukoshtiyur,Tamil Nadu,South India,Pilgrimage,10.109,78.6031,0.17,Oct|Nov|Mar|Apr,obscure
+Tirukurungudi,Tamil Nadu,South India,Pilgrimage,12.8458,78.7487,0.15,Oct|Nov|Mar|Apr,obscure
+Tiruparankundram,Tamil Nadu,South India,Pilgrimage,9.6919,77.5588,0.46,Oct|Nov|Mar|Apr,small
+Thiruvotriyur,Tamil Nadu,South India,Pilgrimage,9.976,76.9109,0.16,Oct|Nov|Mar|Apr,obscure
+Tirupati,Andhra Pradesh,South India,Pilgrimage,15.0975,81.4475,16.26,Oct|Nov|Mar|Apr,mega
+Srisailam,Andhra Pradesh,South India,Pilgrimage,16.6207,78.3946,5.55,Oct|Nov|Mar|Apr,major
+Annavaram,Andhra Pradesh,South India,Pilgrimage,15.8772,81.0818,0.51,Oct|Nov|Mar|Apr,small
+Pithapuram,Andhra Pradesh,South India,Pilgrimage,15.7998,79.5257,0.45,Oct|Nov|Mar|Apr,small
+Simhachalam,Andhra Pradesh,South India,Pilgrimage,14.295,81.3278,0.5,Oct|Nov|Mar|Apr,small
+Ahobilam,Andhra Pradesh,South India,Pilgrimage,17.0696,79.3825,0.44,Oct|Nov|Mar|Apr,small
+Mahanandi,Andhra Pradesh,South India,Pilgrimage,16.376,78.133,0.45,Oct|Nov|Mar|Apr,small
+Antarvedi,Andhra Pradesh,South India,Pilgrimage,16.1362,79.0338,0.18,Oct|Nov|Mar|Apr,obscure
+Kanipakam,Andhra Pradesh,South India,Pilgrimage,14.5364,80.692,0.52,Oct|Nov|Mar|Apr,small
+Mangalagiri,Andhra Pradesh,South India,Pilgrimage,16.9567,78.7525,0.5,Oct|Nov|Mar|Apr,small
+Kalahasti,Andhra Pradesh,South India,Pilgrimage,15.7319,79.5338,1.77,Oct|Nov|Mar|Apr,mid
+Penuganchiprolu,Andhra Pradesh,South India,Pilgrimage,17.6741,79.0394,0.17,Oct|Nov|Mar|Apr,obscure
+Yaganti,Andhra Pradesh,South India,Pilgrimage,16.3047,80.6043,0.18,Oct|Nov|Mar|Apr,obscure
+Kasapuram,Andhra Pradesh,South India,Pilgrimage,14.858,78.6997,0.17,Oct|Nov|Mar|Apr,obscure
+Bhattiprolu,Andhra Pradesh,South India,Pilgrimage,14.6754,78.5657,0.14,Oct|Nov|Mar|Apr,obscure
+Vontimitta,Andhra Pradesh,South India,Pilgrimage,14.1196,79.5618,0.16,Oct|Nov|Mar|Apr,obscure
+Kotappakonda,Andhra Pradesh,South India,Pilgrimage,15.1585,78.7733,0.17,Oct|Nov|Mar|Apr,obscure
+Bhimavaram,Andhra Pradesh,South India,Pilgrimage,16.6408,79.5745,0.53,Oct|Nov|Mar|Apr,small
+Kuchipudi,Andhra Pradesh,South India,Pilgrimage,17.4361,80.7762,0.17,Oct|Nov|Mar|Apr,obscure
+Bhadrachalam,Telangana,South India,Pilgrimage,18.6903,80.5812,1.56,Oct|Nov|Mar|Apr,mid
+Vemulawada,Telangana,South India,Pilgrimage,18.2704,79.5515,0.56,Oct|Nov|Mar|Apr,small
+Basara,Telangana,South India,Pilgrimage,19.2859,77.4771,0.45,Oct|Nov|Mar|Apr,small
+Komuravelli,Telangana,South India,Pilgrimage,17.4174,79.9162,0.51,Oct|Nov|Mar|Apr,small
+Yadagirigutta,Telangana,South India,Pilgrimage,17.349,77.6677,1.69,Oct|Nov|Mar|Apr,mid
+Medak,Telangana,South India,Pilgrimage,18.829,80.6136,0.5,Oct|Nov|Mar|Apr,small
+Shirdi,Maharashtra,West India,Pilgrimage,19.7277,74.1996,13.79,Oct|Nov|Mar|Apr,mega
+Pandharpur,Maharashtra,West India,Pilgrimage,19.5053,75.0704,4.63,Oct|Nov|Mar|Apr,major
+Trimbakeshwar,Maharashtra,West India,Pilgrimage,18.2788,77.3729,1.76,Oct|Nov|Mar|Apr,mid
+Bhimashankar,Maharashtra,West India,Pilgrimage,20.0207,77.3328,1.84,Oct|Nov|Mar|Apr,mid
+Jejuri,Maharashtra,West India,Pilgrimage,20.3702,74.8802,0.43,Oct|Nov|Mar|Apr,small
+Tuljapur,Maharashtra,West India,Pilgrimage,20.6726,75.6038,1.67,Oct|Nov|Mar|Apr,mid
+Aundha Nagnath,Maharashtra,West India,Pilgrimage,21.2479,74.5634,0.51,Oct|Nov|Mar|Apr,small
+Parli Vaijnath,Maharashtra,West India,Pilgrimage,20.2352,75.6802,0.44,Oct|Nov|Mar|Apr,small
+Akkalkot,Maharashtra,West India,Pilgrimage,19.2027,75.1099,0.53,Oct|Nov|Mar|Apr,small
+Alandi,Maharashtra,West India,Pilgrimage,21.0378,75.0973,0.53,Oct|Nov|Mar|Apr,small
+Dehu,Maharashtra,West India,Pilgrimage,18.9876,77.3127,0.55,Oct|Nov|Mar|Apr,small
+Audumbar,Maharashtra,West India,Pilgrimage,19.9303,75.5474,0.15,Oct|Nov|Mar|Apr,obscure
+Saswad,Maharashtra,West India,Pilgrimage,19.1138,77.4027,0.16,Oct|Nov|Mar|Apr,obscure
+Lenyadri,Maharashtra,West India,Pilgrimage,19.8025,77.4672,0.17,Oct|Nov|Mar|Apr,obscure
+Theur,Maharashtra,West India,Pilgrimage,19.9033,75.3977,0.15,Oct|Nov|Mar|Apr,obscure
+Tarapith,West Bengal,East India,Pilgrimage,22.4924,88.7832,1.66,Oct|Nov|Mar|Apr,mid
+Mayapur,West Bengal,East India,Pilgrimage,23.926,86.7928,1.62,Oct|Nov|Mar|Apr,mid
+Nabadwip,West Bengal,East India,Pilgrimage,24.5296,87.6372,0.53,Oct|Nov|Mar|Apr,small
+Tarakeshwar,West Bengal,East India,Pilgrimage,21.6271,89.5633,0.52,Oct|Nov|Mar|Apr,small
+Belur,West Bengal,East India,Pilgrimage,22.0515,86.6302,0.51,Oct|Nov|Mar|Apr,small
+Gangasagar,West Bengal,East India,Pilgrimage,23.1781,86.3956,1.84,Oct|Nov|Mar|Apr,mid
+Bakreshwar,West Bengal,East India,Pilgrimage,24.4765,87.7212,0.44,Oct|Nov|Mar|Apr,small
+Furfura Sharif,West Bengal,East India,Pilgrimage,24.1857,87.8542,0.53,Oct|Nov|Mar|Apr,small
+Puri,Odisha,East India,Pilgrimage,20.9819,84.2843,5.5,Oct|Nov|Mar|Apr,major
+Joranda,Odisha,East India,Pilgrimage,22.6789,84.1774,0.51,Oct|Nov|Mar|Apr,small
+Ghatgaon,Odisha,East India,Pilgrimage,20.5309,86.6187,0.16,Oct|Nov|Mar|Apr,obscure
+Bodhgaya,Bihar,East India,Pilgrimage,25.7069,85.8924,4.66,Oct|Nov|Mar|Apr,major
+Patna Sahib,Bihar,East India,Pilgrimage,25.564,85.1739,1.81,Oct|Nov|Mar|Apr,mid
+Sitamarhi,Bihar,East India,Pilgrimage,25.1124,85.8229,0.47,Oct|Nov|Mar|Apr,small
+Singhwahini,Bihar,East India,Pilgrimage,24.7777,85.4491,0.18,Oct|Nov|Mar|Apr,obscure
+Maner Sharif,Bihar,East India,Pilgrimage,25.0834,84.7478,0.51,Oct|Nov|Mar|Apr,small
+Sabour,Bihar,East India,Pilgrimage,24.8522,85.3931,0.16,Oct|Nov|Mar|Apr,obscure
+Mokama,Bihar,East India,Pilgrimage,25.0286,85.0248,0.15,Oct|Nov|Mar|Apr,obscure
+Amritsar,Punjab,North India,Pilgrimage,31.466,75.4549,14.72,Oct|Nov|Mar|Apr,mega
+Anandpur Sahib,Punjab,North India,Pilgrimage,31.5909,74.6098,1.72,Oct|Nov|Mar|Apr,mid
+Talwandi Sabo,Punjab,North India,Pilgrimage,31.4784,75.8383,0.48,Oct|Nov|Mar|Apr,small
+Goindwal,Punjab,North India,Pilgrimage,31.4119,75.8532,0.57,Oct|Nov|Mar|Apr,small
+Khadur Sahib,Punjab,North India,Pilgrimage,31.1425,74.5992,0.5,Oct|Nov|Mar|Apr,small
+Sultanpur Lodhi,Punjab,North India,Pilgrimage,31.2943,75.9315,0.56,Oct|Nov|Mar|Apr,small
+Damdama Sahib,Punjab,North India,Pilgrimage,31.0545,75.3815,0.49,Oct|Nov|Mar|Apr,small
+Kurukshetra,Haryana,North India,Pilgrimage,29.4159,75.946,1.67,Oct|Nov|Mar|Apr,mid
+Pehowa,Haryana,North India,Pilgrimage,28.507,76.0412,0.57,Oct|Nov|Mar|Apr,small
+Pundri,Haryana,North India,Pilgrimage,28.8017,76.3983,0.17,Oct|Nov|Mar|Apr,obscure
+Kedarnath,Uttarakhand,North India,Pilgrimage,30.6328,79.5837,5.54,Oct|Nov|Mar|Apr,major
+Badrinath,Uttarakhand,North India,Pilgrimage,29.878,78.7267,5.33,Oct|Nov|Mar|Apr,major
+Gangotri,Uttarakhand,North India,Pilgrimage,30.485,79.6158,1.38,Oct|Nov|Mar|Apr,mid
+Yamunotri,Uttarakhand,North India,Pilgrimage,29.3795,79.2299,1.8,Oct|Nov|Mar|Apr,mid
+Devprayag,Uttarakhand,North India,Pilgrimage,30.8659,79.4148,0.49,Oct|Nov|Mar|Apr,small
+Joshimath,Uttarakhand,North India,Pilgrimage,29.4275,79.234,0.56,Oct|Nov|Mar|Apr,small
+Rudraprayag,Uttarakhand,North India,Pilgrimage,29.9799,79.3304,0.56,Oct|Nov|Mar|Apr,small
+Karnaprayag,Uttarakhand,North India,Pilgrimage,29.3436,79.4938,0.47,Oct|Nov|Mar|Apr,small
+Hemkund Sahib,Uttarakhand,North India,Pilgrimage,29.8697,78.4529,0.5,Oct|Nov|Mar|Apr,small
+Triyuginarayan,Uttarakhand,North India,Pilgrimage,30.1755,79.488,0.14,Oct|Nov|Mar|Apr,obscure
+Ukhimath,Uttarakhand,North India,Pilgrimage,29.3963,79.6133,0.52,Oct|Nov|Mar|Apr,small
+Guptkashi,Uttarakhand,North India,Pilgrimage,29.6553,79.6805,0.45,Oct|Nov|Mar|Apr,small
+Manimahesh,Himachal Pradesh,North India,Pilgrimage,31.0378,76.7764,0.46,Oct|Nov|Mar|Apr,small
+Chintpurni,Himachal Pradesh,North India,Pilgrimage,30.315,77.6574,0.56,Oct|Nov|Mar|Apr,small
+Jwalamukhi,Himachal Pradesh,North India,Pilgrimage,31.3842,76.6228,0.49,Oct|Nov|Mar|Apr,small
+Naina Devi,Himachal Pradesh,North India,Pilgrimage,30.8529,77.3101,0.52,Oct|Nov|Mar|Apr,small
+Baijnath,Himachal Pradesh,North India,Pilgrimage,30.9789,76.7702,0.55,Oct|Nov|Mar|Apr,small
+Bajreshwari,Himachal Pradesh,North India,Pilgrimage,30.6187,76.9855,0.16,Oct|Nov|Mar|Apr,obscure
+Katra,Jammu & Kashmir,North India,Pilgrimage,33.3595,76.6851,5.11,Oct|Nov|Mar|Apr,major
+Amarnath,Jammu & Kashmir,North India,Pilgrimage,34.5683,76.2424,5.72,Oct|Nov|Mar|Apr,major
+Tulmulla,Jammu & Kashmir,North India,Pilgrimage,34.0332,76.2092,0.51,Oct|Nov|Mar|Apr,small
+Shankaracharya,Jammu & Kashmir,North India,Pilgrimage,34.0773,76.9615,0.43,Oct|Nov|Mar|Apr,small
+Charar-i-Sharief,Jammu & Kashmir,North India,Pilgrimage,33.9503,76.5648,0.56,Oct|Nov|Mar|Apr,small
+Dwarka,Gujarat,West India,Pilgrimage,21.4903,72.2659,5.16,Oct|Nov|Mar|Apr,major
+Somnath,Gujarat,West India,Pilgrimage,21.7284,71.6818,5.18,Oct|Nov|Mar|Apr,major
+Palitana,Gujarat,West India,Pilgrimage,22.9,71.9853,1.68,Oct|Nov|Mar|Apr,mid
+Ambaji,Gujarat,West India,Pilgrimage,23.478,71.6517,1.79,Oct|Nov|Mar|Apr,mid
+Becharaji,Gujarat,West India,Pilgrimage,22.7868,70.5022,0.49,Oct|Nov|Mar|Apr,small
+Shamlaji,Gujarat,West India,Pilgrimage,22.5465,72.0265,0.44,Oct|Nov|Mar|Apr,small
+Dakor,Gujarat,West India,Pilgrimage,21.5224,72.0809,0.45,Oct|Nov|Mar|Apr,small
+Bhadreshwar,Gujarat,West India,Pilgrimage,20.9358,71.3319,0.18,Oct|Nov|Mar|Apr,obscure
+Nageshwar,Gujarat,West India,Pilgrimage,22.3711,72.6786,0.55,Oct|Nov|Mar|Apr,small
+Sabarimala,Kerala,South India,Pilgrimage,10.4612,76.7895,15.91,Oct|Nov|Mar|Apr,mega
+Guruvayur,Kerala,South India,Pilgrimage,11.3404,76.6645,4.76,Oct|Nov|Mar|Apr,major
+Chottanikkara,Kerala,South India,Pilgrimage,10.2343,77.0106,0.45,Oct|Nov|Mar|Apr,small
+Vaikom,Kerala,South India,Pilgrimage,11.5964,76.8462,0.53,Oct|Nov|Mar|Apr,small
+Ettumanoor,Kerala,South India,Pilgrimage,11.6179,77.0176,0.55,Oct|Nov|Mar|Apr,small
+Bharananganam,Kerala,South India,Pilgrimage,10.6352,76.7351,0.14,Oct|Nov|Mar|Apr,obscure
+Kalady,Kerala,South India,Pilgrimage,10.9085,76.1977,0.53,Oct|Nov|Mar|Apr,small
+Ujjain,Madhya Pradesh,North India,Pilgrimage,23.5904,78.9644,5.48,Oct|Nov|Mar|Apr,major
+Omkareshwar,Madhya Pradesh,North India,Pilgrimage,24.5551,77.25,1.47,Oct|Nov|Mar|Apr,mid
+Amarkantak,Madhya Pradesh,North India,Pilgrimage,21.2601,80.0432,0.51,Oct|Nov|Mar|Apr,small
+Salkanpur,Madhya Pradesh,North India,Pilgrimage,24.4649,77.6569,0.14,Oct|Nov|Mar|Apr,obscure
+Rumtek,Sikkim,East India,Pilgrimage,27.7243,88.7556,0.47,Oct|Nov|Mar|Apr,small
+Hajo,Assam,East India,Pilgrimage,26.0533,92.3636,0.57,Oct|Nov|Mar|Apr,small
+Mahabhairab,Assam,East India,Pilgrimage,25.887,92.9282,0.14,Oct|Nov|Mar|Apr,obscure
+Mcleodganj,Himachal Pradesh,North India,Hill Station,31.7196,76.5871,2.96,Apr|May|Jun|Sep|Oct,major
+Bir,Himachal Pradesh,North India,Hill Station,31.3728,77.559,1.09,Apr|May|Jun|Sep|Oct,mid
+Palampur,Himachal Pradesh,North India,Hill Station,30.9706,77.5576,0.86,Apr|May|Jun|Sep|Oct,mid
+Kullu,Himachal Pradesh,North India,Hill Station,30.9638,76.5284,0.96,Apr|May|Jun|Sep|Oct,mid
+Kalpa,Himachal Pradesh,North India,Hill Station,30.953,77.8924,0.26,Apr|May|Jun|Sep|Oct,small
+Sangla,Himachal Pradesh,North India,Hill Station,30.8928,77.0794,0.34,Apr|May|Jun|Sep|Oct,small
+Chitkul,Himachal Pradesh,North India,Hill Station,31.6687,76.529,0.32,Apr|May|Jun|Sep|Oct,small
+Nako,Himachal Pradesh,North India,Hill Station,31.1711,77.9345,0.09,Apr|May|Jun|Sep|Oct,obscure
+Rampur Bushahr,Himachal Pradesh,North India,Hill Station,30.937,76.6737,0.27,Apr|May|Jun|Sep|Oct,small
+Kufri,Himachal Pradesh,North India,Hill Station,31.6569,77.0975,0.31,Apr|May|Jun|Sep|Oct,small
+Naldehra,Himachal Pradesh,North India,Hill Station,31.3267,77.3254,0.26,Apr|May|Jun|Sep|Oct,small
+Narkanda,Himachal Pradesh,North India,Hill Station,31.5589,76.7597,0.27,Apr|May|Jun|Sep|Oct,small
+Sarahan,Himachal Pradesh,North India,Hill Station,31.2033,76.4798,0.32,Apr|May|Jun|Sep|Oct,small
+Mashobra,Himachal Pradesh,North India,Hill Station,30.6315,76.7155,0.33,Apr|May|Jun|Sep|Oct,small
+Chail,Himachal Pradesh,North India,Hill Station,30.8257,76.6061,0.34,Apr|May|Jun|Sep|Oct,small
+Khajjiar,Himachal Pradesh,North India,Hill Station,30.3045,77.7434,0.86,Apr|May|Jun|Sep|Oct,mid
+Chamba,Himachal Pradesh,North India,Hill Station,30.508,76.771,0.87,Apr|May|Jun|Sep|Oct,mid
+Bharmour,Himachal Pradesh,North India,Hill Station,31.3577,76.4112,0.26,Apr|May|Jun|Sep|Oct,small
+Tirthan Valley,Himachal Pradesh,North India,Hill Station,31.564,76.7507,0.28,Apr|May|Jun|Sep|Oct,small
+Kasol,Himachal Pradesh,North India,Hill Station,30.5788,76.4538,1.03,Apr|May|Jun|Sep|Oct,mid
+Tosh,Himachal Pradesh,North India,Hill Station,31.1417,77.5631,0.3,Apr|May|Jun|Sep|Oct,small
+Malana,Himachal Pradesh,North India,Hill Station,31.5448,77.1912,0.26,Apr|May|Jun|Sep|Oct,small
+Kaza,Himachal Pradesh,North India,Hill Station,31.1061,77.8827,0.26,Apr|May|Jun|Sep|Oct,small
+Kibber,Himachal Pradesh,North India,Hill Station,31.5532,77.7572,0.1,Apr|May|Jun|Sep|Oct,obscure
+Tabo,Himachal Pradesh,North India,Hill Station,31.0329,77.9124,0.26,Apr|May|Jun|Sep|Oct,small
+Sissu,Himachal Pradesh,North India,Hill Station,31.0664,77.0126,0.1,Apr|May|Jun|Sep|Oct,obscure
+Dhauladhar,Himachal Pradesh,North India,Hill Station,31.0844,77.8255,0.08,Apr|May|Jun|Sep|Oct,obscure
+Auli,Uttarakhand,North India,Hill Station,29.3993,79.1933,0.83,Apr|May|Jun|Sep|Oct,mid
+Mukteshwar,Uttarakhand,North India,Hill Station,29.71,79.2329,0.3,Apr|May|Jun|Sep|Oct,small
+Chopta,Uttarakhand,North India,Hill Station,29.7903,79.8114,0.3,Apr|May|Jun|Sep|Oct,small
+Munsiyari,Uttarakhand,North India,Hill Station,29.9959,79.1887,0.26,Apr|May|Jun|Sep|Oct,small
+Ranikhet,Uttarakhand,North India,Hill Station,30.3928,79.5845,1.0,Apr|May|Jun|Sep|Oct,mid
+Almora,Uttarakhand,North India,Hill Station,30.5003,79.3733,0.88,Apr|May|Jun|Sep|Oct,mid
+Bageshwar,Uttarakhand,North India,Hill Station,29.9925,78.5856,0.29,Apr|May|Jun|Sep|Oct,small
+Kausani,Uttarakhand,North India,Hill Station,29.9956,78.8856,0.26,Apr|May|Jun|Sep|Oct,small
+Pithoragarh,Uttarakhand,North India,Hill Station,29.9528,79.2842,0.29,Apr|May|Jun|Sep|Oct,small
+Lansdowne,Uttarakhand,North India,Hill Station,29.5142,79.6968,0.26,Apr|May|Jun|Sep|Oct,small
+Khirsu,Uttarakhand,North India,Hill Station,30.6008,78.3692,0.08,Apr|May|Jun|Sep|Oct,obscure
+Pauri,Uttarakhand,North India,Hill Station,30.4521,79.5188,0.31,Apr|May|Jun|Sep|Oct,small
+Chakrata,Uttarakhand,North India,Hill Station,30.2083,79.1185,0.28,Apr|May|Jun|Sep|Oct,small
+Pangot,Uttarakhand,North India,Hill Station,29.4656,78.7858,0.31,Apr|May|Jun|Sep|Oct,small
+Bhimtal,Uttarakhand,North India,Hill Station,30.4705,79.6089,0.32,Apr|May|Jun|Sep|Oct,small
+Sattal,Uttarakhand,North India,Hill Station,30.8194,79.1807,0.29,Apr|May|Jun|Sep|Oct,small
+Naukuchiatal,Uttarakhand,North India,Hill Station,30.1947,78.5604,0.31,Apr|May|Jun|Sep|Oct,small
+Binsar,Uttarakhand,North India,Hill Station,29.6288,78.3931,0.33,Apr|May|Jun|Sep|Oct,small
+Dhanaulti,Uttarakhand,North India,Hill Station,29.8581,79.4402,0.31,Apr|May|Jun|Sep|Oct,small
+Tehri,Uttarakhand,North India,Hill Station,30.5616,79.5722,0.34,Apr|May|Jun|Sep|Oct,small
+New Tehri,Uttarakhand,North India,Hill Station,30.5795,79.2017,0.1,Apr|May|Jun|Sep|Oct,obscure
+Dakpathar,Uttarakhand,North India,Hill Station,29.312,79.7065,0.11,Apr|May|Jun|Sep|Oct,obscure
+Pahalgam,Jammu & Kashmir,North India,Hill Station,33.4079,76.0587,3.18,Apr|May|Jun|Sep|Oct,major
+Gulmarg,Jammu & Kashmir,North India,Hill Station,33.4744,76.3137,2.56,Apr|May|Jun|Sep|Oct,major
+Sonamarg,Jammu & Kashmir,North India,Hill Station,34.3718,76.6761,0.93,Apr|May|Jun|Sep|Oct,mid
+Yusmarg,Jammu & Kashmir,North India,Hill Station,33.207,76.7831,0.26,Apr|May|Jun|Sep|Oct,small
+Doodhpathri,Jammu & Kashmir,North India,Hill Station,34.1738,76.1142,0.29,Apr|May|Jun|Sep|Oct,small
+Aharbal,Jammu & Kashmir,North India,Hill Station,33.5254,76.3621,0.1,Apr|May|Jun|Sep|Oct,obscure
+Tangmarg,Jammu & Kashmir,North India,Hill Station,34.2229,76.6781,0.26,Apr|May|Jun|Sep|Oct,small
+Bhaderwah,Jammu & Kashmir,North India,Hill Station,33.0642,76.0219,0.31,Apr|May|Jun|Sep|Oct,small
+Patnitop,Jammu & Kashmir,North India,Hill Station,34.0583,76.2054,0.31,Apr|May|Jun|Sep|Oct,small
+Sanasar,Jammu & Kashmir,North India,Hill Station,33.7571,76.4773,0.09,Apr|May|Jun|Sep|Oct,obscure
+Leh,Ladakh,North India,Hill Station,34.6179,77.0321,0.94,Apr|May|Jun|Sep|Oct,mid
+Nubra,Ladakh,North India,Hill Station,33.8632,77.9356,0.96,Apr|May|Jun|Sep|Oct,mid
+Tso Moriri,Ladakh,North India,Hill Station,34.4774,76.9227,0.29,Apr|May|Jun|Sep|Oct,small
+Diskit,Ladakh,North India,Hill Station,34.3689,76.8623,0.28,Apr|May|Jun|Sep|Oct,small
+Hunder,Ladakh,North India,Hill Station,33.748,77.0696,0.28,Apr|May|Jun|Sep|Oct,small
+Hemis,Ladakh,North India,Hill Station,33.935,76.8624,0.32,Apr|May|Jun|Sep|Oct,small
+Alchi,Ladakh,North India,Hill Station,33.6911,77.4583,0.32,Apr|May|Jun|Sep|Oct,small
+Likir,Ladakh,North India,Hill Station,34.2104,78.1834,0.1,Apr|May|Jun|Sep|Oct,obscure
+Lamayuru,Ladakh,North India,Hill Station,33.5253,78.2288,0.26,Apr|May|Jun|Sep|Oct,small
+Kargil,Ladakh,North India,Hill Station,33.44,78.3239,0.33,Apr|May|Jun|Sep|Oct,small
+Drass,Ladakh,North India,Hill Station,34.3312,77.7674,0.1,Apr|May|Jun|Sep|Oct,obscure
+Padum,Ladakh,North India,Hill Station,34.0783,77.0343,0.08,Apr|May|Jun|Sep|Oct,obscure
+Gangtok,Sikkim,East India,Hill Station,27.4249,88.6908,3.11,Apr|May|Jun|Sep|Oct,major
+Pelling,Sikkim,East India,Hill Station,27.7292,88.7619,0.84,Apr|May|Jun|Sep|Oct,mid
+Lachung,Sikkim,East India,Hill Station,27.7367,88.356,0.99,Apr|May|Jun|Sep|Oct,mid
+Lachen,Sikkim,East India,Hill Station,27.5444,88.4475,0.28,Apr|May|Jun|Sep|Oct,small
+Yumthang,Sikkim,East India,Hill Station,27.4337,88.4098,0.27,Apr|May|Jun|Sep|Oct,small
+Ravangla,Sikkim,East India,Hill Station,27.5363,88.2784,0.3,Apr|May|Jun|Sep|Oct,small
+Namchi,Sikkim,East India,Hill Station,27.7736,88.4196,0.32,Apr|May|Jun|Sep|Oct,small
+Yuksom,Sikkim,East India,Hill Station,27.7214,88.699,0.28,Apr|May|Jun|Sep|Oct,small
+Aritar,Sikkim,East India,Hill Station,27.3179,88.3284,0.31,Apr|May|Jun|Sep|Oct,small
+Zuluk,Sikkim,East India,Hill Station,27.6861,88.6033,0.09,Apr|May|Jun|Sep|Oct,obscure
+Mangan,Sikkim,East India,Hill Station,27.6937,88.5065,0.32,Apr|May|Jun|Sep|Oct,small
+Darjeeling,West Bengal,East India,Hill Station,23.9256,87.6761,3.38,Apr|May|Jun|Sep|Oct,major
+Kalimpong,West Bengal,East India,Hill Station,23.2222,88.3471,1.0,Apr|May|Jun|Sep|Oct,mid
+Mirik,West Bengal,East India,Hill Station,24.3013,88.318,0.27,Apr|May|Jun|Sep|Oct,small
+Kurseong,West Bengal,East India,Hill Station,21.4358,87.6519,0.28,Apr|May|Jun|Sep|Oct,small
+Lava,West Bengal,East India,Hill Station,22.1788,86.2622,0.3,Apr|May|Jun|Sep|Oct,small
+Lolegaon,West Bengal,East India,Hill Station,22.3075,87.6869,0.26,Apr|May|Jun|Sep|Oct,small
+Tinchuley,West Bengal,East India,Hill Station,24.1841,86.3362,0.11,Apr|May|Jun|Sep|Oct,obscure
+Sandakphu,West Bengal,East India,Hill Station,24.2691,88.274,0.3,Apr|May|Jun|Sep|Oct,small
+Sittong,West Bengal,East India,Hill Station,22.8558,88.0555,0.1,Apr|May|Jun|Sep|Oct,obscure
+Bijanbari,West Bengal,East India,Hill Station,24.4152,87.679,0.1,Apr|May|Jun|Sep|Oct,obscure
+Tawang,Arunachal Pradesh,East India,Hill Station,28.4629,94.4444,0.95,Apr|May|Jun|Sep|Oct,mid
+Bomdila,Arunachal Pradesh,East India,Hill Station,27.6614,94.029,0.26,Apr|May|Jun|Sep|Oct,small
+Ziro,Arunachal Pradesh,East India,Hill Station,28.8586,94.4795,0.32,Apr|May|Jun|Sep|Oct,small
+Dirang,Arunachal Pradesh,East India,Hill Station,28.2273,94.2061,0.28,Apr|May|Jun|Sep|Oct,small
+Mechuka,Arunachal Pradesh,East India,Hill Station,28.1204,94.6331,0.3,Apr|May|Jun|Sep|Oct,small
+Bhalukpong,Arunachal Pradesh,East India,Hill Station,27.674,94.5266,0.28,Apr|May|Jun|Sep|Oct,small
+Anini,Arunachal Pradesh,East India,Hill Station,28.074,94.4714,0.1,Apr|May|Jun|Sep|Oct,obscure
+Shillong,Meghalaya,East India,Hill Station,25.9328,91.6057,2.61,Apr|May|Jun|Sep|Oct,major
+Sohra,Meghalaya,East India,Hill Station,24.8212,91.6554,2.81,Apr|May|Jun|Sep|Oct,major
+Mawlynnong,Meghalaya,East India,Hill Station,25.828,91.6205,1.08,Apr|May|Jun|Sep|Oct,mid
+Mawsynram,Meghalaya,East India,Hill Station,26.0672,91.1034,0.98,Apr|May|Jun|Sep|Oct,mid
+Dawki,Meghalaya,East India,Hill Station,24.8963,91.1297,1.09,Apr|May|Jun|Sep|Oct,mid
+Mawkdok,Meghalaya,East India,Hill Station,25.7876,91.1971,0.1,Apr|May|Jun|Sep|Oct,obscure
+Laitlum,Meghalaya,East India,Hill Station,26.1708,91.0653,0.29,Apr|May|Jun|Sep|Oct,small
+Champhai,Mizoram,East India,Hill Station,23.6267,93.4411,0.32,Apr|May|Jun|Sep|Oct,small
+Reiek,Mizoram,East India,Hill Station,23.6863,93.322,0.32,Apr|May|Jun|Sep|Oct,small
+Phawngpui,Mizoram,East India,Hill Station,23.2022,93.1736,0.09,Apr|May|Jun|Sep|Oct,obscure
+Kohima,Nagaland,East India,Hill Station,25.9389,94.3402,0.87,Apr|May|Jun|Sep|Oct,mid
+Mokokchung,Nagaland,East India,Hill Station,25.7027,95.2763,0.3,Apr|May|Jun|Sep|Oct,small
+Wokha,Nagaland,East India,Hill Station,25.7225,93.9801,0.26,Apr|May|Jun|Sep|Oct,small
+Mon,Nagaland,East India,Hill Station,26.7111,93.9218,0.32,Apr|May|Jun|Sep|Oct,small
+Tuensang,Nagaland,East India,Hill Station,26.6962,95.1739,0.26,Apr|May|Jun|Sep|Oct,small
+Ukhrul,Manipur,East India,Hill Station,24.3988,94.3361,0.27,Apr|May|Jun|Sep|Oct,small
+Senapati,Manipur,East India,Hill Station,24.4628,93.3696,0.33,Apr|May|Jun|Sep|Oct,small
+Moirang,Manipur,East India,Hill Station,25.0938,94.4045,0.27,Apr|May|Jun|Sep|Oct,small
+Tamenglong,Manipur,East India,Hill Station,24.5603,93.7674,0.32,Apr|May|Jun|Sep|Oct,small
+Jampui Hills,Tripura,East India,Hill Station,23.7825,91.9565,0.28,Apr|May|Jun|Sep|Oct,small
+Atharamura,Tripura,East India,Hill Station,24.0891,91.9594,0.1,Apr|May|Jun|Sep|Oct,obscure
+Unakoti,Tripura,East India,Hill Station,23.8257,92.1752,0.3,Apr|May|Jun|Sep|Oct,small
+Haflong,Assam,East India,Hill Station,26.7362,92.7285,0.34,Apr|May|Jun|Sep|Oct,small
+Diphu,Assam,East India,Hill Station,26.9751,92.8787,0.28,Apr|May|Jun|Sep|Oct,small
+Chikmagalur,Karnataka,South India,Hill Station,14.8947,75.8089,1.09,Apr|May|Jun|Sep|Oct,mid
+Sakleshpur,Karnataka,South India,Hill Station,16.4608,76.7945,0.27,Apr|May|Jun|Sep|Oct,small
+Kemmangundi,Karnataka,South India,Hill Station,14.42,76.2182,0.33,Apr|May|Jun|Sep|Oct,small
+Kudremukh,Karnataka,South India,Hill Station,15.5163,74.2793,0.33,Apr|May|Jun|Sep|Oct,small
+Agumbe,Karnataka,South India,Hill Station,16.5842,74.9362,0.32,Apr|May|Jun|Sep|Oct,small
+Talakaveri,Karnataka,South India,Hill Station,14.502,77.1691,0.27,Apr|May|Jun|Sep|Oct,small
+Bababudangiri,Karnataka,South India,Hill Station,15.0949,77.3171,0.27,Apr|May|Jun|Sep|Oct,small
+Nandi Hills,Karnataka,South India,Hill Station,15.1441,75.1685,0.82,Apr|May|Jun|Sep|Oct,mid
+Kodaikanal,Tamil Nadu,South India,Hill Station,9.5217,78.6672,2.76,Apr|May|Jun|Sep|Oct,major
+Yercaud,Tamil Nadu,South India,Hill Station,12.9103,78.2097,0.82,Apr|May|Jun|Sep|Oct,mid
+Kotagiri,Tamil Nadu,South India,Hill Station,12.681,79.881,0.31,Apr|May|Jun|Sep|Oct,small
+Coonoor,Tamil Nadu,South India,Hill Station,12.179,77.3554,0.9,Apr|May|Jun|Sep|Oct,mid
+Yelagiri,Tamil Nadu,South India,Hill Station,12.3171,79.3659,0.27,Apr|May|Jun|Sep|Oct,small
+Valparai,Tamil Nadu,South India,Hill Station,11.8699,78.475,0.26,Apr|May|Jun|Sep|Oct,small
+Topslip,Tamil Nadu,South India,Hill Station,9.6152,77.7813,0.33,Apr|May|Jun|Sep|Oct,small
+Vagamon,Kerala,South India,Hill Station,10.9281,76.6336,0.3,Apr|May|Jun|Sep|Oct,small
+Ponmudi,Kerala,South India,Hill Station,10.2279,75.931,0.28,Apr|May|Jun|Sep|Oct,small
+Idukki,Kerala,South India,Hill Station,10.1264,76.1417,0.33,Apr|May|Jun|Sep|Oct,small
+Devikulam,Kerala,South India,Hill Station,10.7814,75.6474,0.34,Apr|May|Jun|Sep|Oct,small
+Marayoor,Kerala,South India,Hill Station,11.0048,75.4963,0.3,Apr|May|Jun|Sep|Oct,small
+Peermade,Kerala,South India,Hill Station,10.4371,75.6997,0.29,Apr|May|Jun|Sep|Oct,small
+Panchgani,Maharashtra,West India,Hill Station,20.1633,74.776,0.94,Apr|May|Jun|Sep|Oct,mid
+Matheran,Maharashtra,West India,Hill Station,20.3417,74.2182,1.1,Apr|May|Jun|Sep|Oct,mid
+Bhandardara,Maharashtra,West India,Hill Station,18.1936,75.8038,0.3,Apr|May|Jun|Sep|Oct,small
+Igatpuri,Maharashtra,West India,Hill Station,21.508,75.9049,0.29,Apr|May|Jun|Sep|Oct,small
+Khandala,Maharashtra,West India,Hill Station,19.6425,76.1984,1.1,Apr|May|Jun|Sep|Oct,mid
+Toranmal,Maharashtra,West India,Hill Station,18.8631,73.9685,0.1,Apr|May|Jun|Sep|Oct,obscure
+Chikhaldara,Maharashtra,West India,Hill Station,19.1913,76.5486,0.31,Apr|May|Jun|Sep|Oct,small
+Amboli,Maharashtra,West India,Hill Station,20.7274,76.5567,0.28,Apr|May|Jun|Sep|Oct,small
+Karjat,Maharashtra,West India,Hill Station,18.1096,75.8756,0.33,Apr|May|Jun|Sep|Oct,small
+Tamhini,Maharashtra,West India,Hill Station,18.5803,76.7149,0.09,Apr|May|Jun|Sep|Oct,obscure
+Karnala,Maharashtra,West India,Hill Station,20.4534,76.1842,0.1,Apr|May|Jun|Sep|Oct,obscure
+Saputara,Gujarat,West India,Hill Station,20.6872,72.1843,0.3,Apr|May|Jun|Sep|Oct,small
+Wilson Hills,Gujarat,West India,Hill Station,21.5164,69.5477,0.09,Apr|May|Jun|Sep|Oct,obscure
+Don,Gujarat,West India,Hill Station,20.6109,72.7501,0.1,Apr|May|Jun|Sep|Oct,obscure
+Sawai Madhopur,Rajasthan,North India,Wildlife,28.7808,74.3749,0.52,Nov|Dec|Jan|Feb|Mar,mid
+Sariska,Rajasthan,North India,Wildlife,27.9318,73.108,0.17,Nov|Dec|Jan|Feb|Mar,small
+Tal Chhapar,Rajasthan,North India,Wildlife,28.031,75.5369,0.17,Nov|Dec|Jan|Feb|Mar,small
+Mount Abu WLS,Rajasthan,North India,Wildlife,25.6681,73.7449,0.06,Nov|Dec|Jan|Feb|Mar,obscure
+Mukundra,Rajasthan,North India,Wildlife,27.8959,75.6407,0.05,Nov|Dec|Jan|Feb|Mar,obscure
+Bandh Baretha,Rajasthan,North India,Wildlife,28.7254,74.2063,0.06,Nov|Dec|Jan|Feb|Mar,obscure
+Sajjangarh,Rajasthan,North India,Wildlife,28.5475,74.2894,0.06,Nov|Dec|Jan|Feb|Mar,obscure
+Ramgarh Vishdhari,Rajasthan,North India,Wildlife,27.8375,72.7041,0.06,Nov|Dec|Jan|Feb|Mar,obscure
+National Chambal,Rajasthan,North India,Wildlife,28.1804,74.3837,0.05,Nov|Dec|Jan|Feb|Mar,obscure
+Tala,Madhya Pradesh,North India,Wildlife,21.4582,79.2393,0.53,Nov|Dec|Jan|Feb|Mar,mid
+Mukki,Madhya Pradesh,North India,Wildlife,23.3394,78.394,0.18,Nov|Dec|Jan|Feb|Mar,small
+Khawasa,Madhya Pradesh,North India,Wildlife,22.4356,77.0125,0.19,Nov|Dec|Jan|Feb|Mar,small
+Madla,Madhya Pradesh,North India,Wildlife,22.4392,80.4533,0.05,Nov|Dec|Jan|Feb|Mar,obscure
+Pachmarhi,Madhya Pradesh,North India,Wildlife,24.6981,80.2725,0.49,Nov|Dec|Jan|Feb|Mar,mid
+Pench Turia,Madhya Pradesh,North India,Wildlife,23.465,78.1679,0.19,Nov|Dec|Jan|Feb|Mar,small
+Madhai,Madhya Pradesh,North India,Wildlife,23.6159,80.29,0.16,Nov|Dec|Jan|Feb|Mar,small
+Kuno-Palpur,Madhya Pradesh,North India,Wildlife,23.3573,79.6727,0.48,Nov|Dec|Jan|Feb|Mar,mid
+Singhori,Madhya Pradesh,North India,Wildlife,21.412,79.6627,0.05,Nov|Dec|Jan|Feb|Mar,obscure
+Karera,Madhya Pradesh,North India,Wildlife,22.5483,78.9021,0.06,Nov|Dec|Jan|Feb|Mar,obscure
+Sanjay-Dubri,Madhya Pradesh,North India,Wildlife,23.6146,80.2758,0.05,Nov|Dec|Jan|Feb|Mar,obscure
+Veerangana Durgavati,Madhya Pradesh,North India,Wildlife,23.9171,78.9261,0.06,Nov|Dec|Jan|Feb|Mar,obscure
+Ghatigaon,Madhya Pradesh,North India,Wildlife,22.6029,79.1984,0.05,Nov|Dec|Jan|Feb|Mar,obscure
+Ratapani,Madhya Pradesh,North India,Wildlife,21.5784,79.5084,0.17,Nov|Dec|Jan|Feb|Mar,small
+Tadoba,Maharashtra,West India,Wildlife,19.3432,75.932,0.52,Nov|Dec|Jan|Feb|Mar,mid
+Pench-Maharashtra,Maharashtra,West India,Wildlife,18.887,75.5166,0.2,Nov|Dec|Jan|Feb|Mar,small
+Nagzira,Maharashtra,West India,Wildlife,18.9781,77.2093,0.17,Nov|Dec|Jan|Feb|Mar,small
+Navegaon,Maharashtra,West India,Wildlife,18.3915,76.9802,0.17,Nov|Dec|Jan|Feb|Mar,small
+Tipeshwar,Maharashtra,West India,Wildlife,21.1852,75.5124,0.15,Nov|Dec|Jan|Feb|Mar,small
+Sahyadri WLS,Maharashtra,West India,Wildlife,20.4049,76.9539,0.05,Nov|Dec|Jan|Feb|Mar,obscure
+Melghat,Maharashtra,West India,Wildlife,19.2007,74.1438,0.18,Nov|Dec|Jan|Feb|Mar,small
+Karnala WLS,Maharashtra,West India,Wildlife,21.1588,76.9749,0.06,Nov|Dec|Jan|Feb|Mar,obscure
+Phansad,Maharashtra,West India,Wildlife,21.2884,76.2057,0.06,Nov|Dec|Jan|Feb|Mar,obscure
+Mayureshwar,Maharashtra,West India,Wildlife,19.7815,74.3469,0.05,Nov|Dec|Jan|Feb|Mar,obscure
+Yedshi-Ramling,Maharashtra,West India,Wildlife,18.45,76.7553,0.05,Nov|Dec|Jan|Feb|Mar,obscure
+Lonar Lake,Maharashtra,West India,Wildlife,19.9445,75.2381,0.19,Nov|Dec|Jan|Feb|Mar,small
+Radhanagari,Maharashtra,West India,Wildlife,19.9359,76.113,0.15,Nov|Dec|Jan|Feb|Mar,small
+Bandipur,Karnataka,South India,Wildlife,14.6334,77.5085,0.6,Nov|Dec|Jan|Feb|Mar,mid
+Nagarhole,Karnataka,South India,Wildlife,15.4125,76.679,0.61,Nov|Dec|Jan|Feb|Mar,mid
+BRT,Karnataka,South India,Wildlife,13.7855,77.4106,0.18,Nov|Dec|Jan|Feb|Mar,small
+Dandeli,Karnataka,South India,Wildlife,15.1399,76.3584,0.53,Nov|Dec|Jan|Feb|Mar,mid
+Bhadra,Karnataka,South India,Wildlife,16.6807,76.7189,0.18,Nov|Dec|Jan|Feb|Mar,small
+Anshi,Karnataka,South India,Wildlife,14.1751,77.3886,0.17,Nov|Dec|Jan|Feb|Mar,small
+Cauvery WLS,Karnataka,South India,Wildlife,16.7986,74.1095,0.16,Nov|Dec|Jan|Feb|Mar,small
+Kabini,Karnataka,South India,Wildlife,14.0709,74.5028,0.53,Nov|Dec|Jan|Feb|Mar,mid
+Anekere,Karnataka,South India,Wildlife,16.0736,75.1557,0.06,Nov|Dec|Jan|Feb|Mar,obscure
+Mookambika WLS,Karnataka,South India,Wildlife,16.7417,76.9554,0.05,Nov|Dec|Jan|Feb|Mar,obscure
+Sharavathi,Karnataka,South India,Wildlife,15.8062,75.893,0.16,Nov|Dec|Jan|Feb|Mar,small
+Pushpagiri,Karnataka,South India,Wildlife,14.6102,75.8305,0.18,Nov|Dec|Jan|Feb|Mar,small
+Brahmagiri,Karnataka,South India,Wildlife,14.1271,77.2998,0.16,Nov|Dec|Jan|Feb|Mar,small
+Thekkady,Kerala,South India,Wildlife,11.104,76.623,0.58,Nov|Dec|Jan|Feb|Mar,mid
+Silent Valley,Kerala,South India,Wildlife,11.398,76.3718,0.61,Nov|Dec|Jan|Feb|Mar,mid
+Eravikulam,Kerala,South India,Wildlife,10.0954,75.5427,0.18,Nov|Dec|Jan|Feb|Mar,small
+Parambikulam,Kerala,South India,Wildlife,10.9728,76.5118,0.19,Nov|Dec|Jan|Feb|Mar,small
+Chinnar,Kerala,South India,Wildlife,10.7165,76.4924,0.17,Nov|Dec|Jan|Feb|Mar,small
+Aralam,Kerala,South India,Wildlife,11.0535,75.9335,0.2,Nov|Dec|Jan|Feb|Mar,small
+Neyyar,Kerala,South India,Wildlife,10.8227,76.7575,0.18,Nov|Dec|Jan|Feb|Mar,small
+Peppara,Kerala,South India,Wildlife,10.5259,75.5868,0.05,Nov|Dec|Jan|Feb|Mar,obscure
+Kurinjimala,Kerala,South India,Wildlife,10.7534,76.2448,0.05,Nov|Dec|Jan|Feb|Mar,obscure
+Mudumalai,Tamil Nadu,South India,Wildlife,11.514,77.9853,0.6,Nov|Dec|Jan|Feb|Mar,mid
+Mukurthi,Tamil Nadu,South India,Wildlife,11.9731,79.9588,0.2,Nov|Dec|Jan|Feb|Mar,small
+Anaimalai,Tamil Nadu,South India,Wildlife,9.8008,78.1939,0.18,Nov|Dec|Jan|Feb|Mar,small
+Sathyamangalam,Tamil Nadu,South India,Wildlife,10.4788,78.5393,0.16,Nov|Dec|Jan|Feb|Mar,small
+Kalakkad-Mundanthurai,Tamil Nadu,South India,Wildlife,10.2225,77.2085,0.16,Nov|Dec|Jan|Feb|Mar,small
+Point Calimere,Tamil Nadu,South India,Wildlife,10.7129,79.0754,0.16,Nov|Dec|Jan|Feb|Mar,small
+Vedanthangal,Tamil Nadu,South India,Wildlife,12.4451,77.4349,0.17,Nov|Dec|Jan|Feb|Mar,small
+Srivilliputhur,Tamil Nadu,South India,Wildlife,11.4097,77.9858,0.06,Nov|Dec|Jan|Feb|Mar,obscure
+Vallanadu,Tamil Nadu,South India,Wildlife,11.1238,78.713,0.06,Nov|Dec|Jan|Feb|Mar,obscure
+Megamalai,Tamil Nadu,South India,Wildlife,10.4407,76.9434,0.2,Nov|Dec|Jan|Feb|Mar,small
+Nagarjunsagar Reserve,Andhra Pradesh,South India,Wildlife,15.9296,81.4201,0.16,Nov|Dec|Jan|Feb|Mar,small
+Sri Venkateswara,Andhra Pradesh,South India,Wildlife,15.3804,78.1219,0.17,Nov|Dec|Jan|Feb|Mar,small
+Coringa,Andhra Pradesh,South India,Wildlife,17.2864,80.2953,0.17,Nov|Dec|Jan|Feb|Mar,small
+Pulicat,Andhra Pradesh,South India,Wildlife,16.0421,80.9898,0.17,Nov|Dec|Jan|Feb|Mar,small
+Papikondalu,Andhra Pradesh,South India,Wildlife,17.2868,80.559,0.19,Nov|Dec|Jan|Feb|Mar,small
+Kawal,Telangana,South India,Wildlife,17.6274,78.6621,0.18,Nov|Dec|Jan|Feb|Mar,small
+Pranahita,Telangana,South India,Wildlife,17.0108,79.2116,0.15,Nov|Dec|Jan|Feb|Mar,small
+Amrabad,Telangana,South India,Wildlife,18.1253,79.9719,0.16,Nov|Dec|Jan|Feb|Mar,small
+Eturnagaram,Telangana,South India,Wildlife,19.8707,79.6694,0.15,Nov|Dec|Jan|Feb|Mar,small
+Pakhal,Telangana,South India,Wildlife,19.8203,78.6381,0.19,Nov|Dec|Jan|Feb|Mar,small
+Kinnerasani,Telangana,South India,Wildlife,17.5307,80.6002,0.06,Nov|Dec|Jan|Feb|Mar,obscure
+Simlipal,Odisha,East India,Wildlife,19.8666,85.1328,0.56,Nov|Dec|Jan|Feb|Mar,mid
+Bhitarkanika,Odisha,East India,Wildlife,19.3131,83.7933,0.53,Nov|Dec|Jan|Feb|Mar,mid
+Satkosia,Odisha,East India,Wildlife,20.8555,84.9452,0.18,Nov|Dec|Jan|Feb|Mar,small
+Debrigarh,Odisha,East India,Wildlife,21.0058,84.4807,0.18,Nov|Dec|Jan|Feb|Mar,small
+Kuldiha,Odisha,East India,Wildlife,19.735,86.8662,0.06,Nov|Dec|Jan|Feb|Mar,obscure
+Karlapat,Odisha,East India,Wildlife,20.2272,84.5109,0.06,Nov|Dec|Jan|Feb|Mar,obscure
+Chandaka,Odisha,East India,Wildlife,21.0664,85.8515,0.05,Nov|Dec|Jan|Feb|Mar,obscure
+Hadgarh,Odisha,East India,Wildlife,22.0867,84.6261,0.06,Nov|Dec|Jan|Feb|Mar,obscure
+Buxa,West Bengal,East India,Wildlife,24.7176,88.1613,0.61,Nov|Dec|Jan|Feb|Mar,mid
+Gorumara,West Bengal,East India,Wildlife,23.8012,88.537,0.48,Nov|Dec|Jan|Feb|Mar,mid
+Jaldapara,West Bengal,East India,Wildlife,22.8985,89.5415,0.61,Nov|Dec|Jan|Feb|Mar,mid
+Mahananda,West Bengal,East India,Wildlife,23.9842,88.1395,0.19,Nov|Dec|Jan|Feb|Mar,small
+Singalila,West Bengal,East India,Wildlife,23.2907,86.6738,0.18,Nov|Dec|Jan|Feb|Mar,small
+Senchal,West Bengal,East India,Wildlife,23.421,89.0882,0.16,Nov|Dec|Jan|Feb|Mar,small
+Neora Valley,West Bengal,East India,Wildlife,23.6406,86.1737,0.2,Nov|Dec|Jan|Feb|Mar,small
+Bibhutibhushan,West Bengal,East India,Wildlife,21.5856,86.1282,0.05,Nov|Dec|Jan|Feb|Mar,obscure
+Sajnekhali,West Bengal,East India,Wildlife,21.7352,88.5458,0.17,Nov|Dec|Jan|Feb|Mar,small
+Manas,Assam,East India,Wildlife,26.64,93.6128,0.62,Nov|Dec|Jan|Feb|Mar,mid
+Nameri,Assam,East India,Wildlife,26.5773,92.2397,0.16,Nov|Dec|Jan|Feb|Mar,small
+Dibru-Saikhowa,Assam,East India,Wildlife,25.7317,92.6601,0.18,Nov|Dec|Jan|Feb|Mar,small
+Orang,Assam,East India,Wildlife,26.2408,92.642,0.16,Nov|Dec|Jan|Feb|Mar,small
+Pobitora,Assam,East India,Wildlife,26.8594,92.6877,0.17,Nov|Dec|Jan|Feb|Mar,small
+Burachapori,Assam,East India,Wildlife,26.6352,93.2935,0.06,Nov|Dec|Jan|Feb|Mar,obscure
+Laokhowa,Assam,East India,Wildlife,26.5093,93.1161,0.05,Nov|Dec|Jan|Feb|Mar,obscure
+Namdapha,Arunachal Pradesh,East India,Wildlife,27.8144,94.8229,0.51,Nov|Dec|Jan|Feb|Mar,mid
+Mouling,Arunachal Pradesh,East India,Wildlife,28.9767,94.4062,0.16,Nov|Dec|Jan|Feb|Mar,small
+Pakke,Arunachal Pradesh,East India,Wildlife,27.7516,95.058,0.17,Nov|Dec|Jan|Feb|Mar,small
+D'Ering,Arunachal Pradesh,East India,Wildlife,27.9781,95.4239,0.19,Nov|Dec|Jan|Feb|Mar,small
+Eaglenest,Arunachal Pradesh,East India,Wildlife,27.8575,94.125,0.18,Nov|Dec|Jan|Feb|Mar,small
+Dibang,Arunachal Pradesh,East India,Wildlife,28.0275,95.4983,0.19,Nov|Dec|Jan|Feb|Mar,small
+Tale Valley,Arunachal Pradesh,East India,Wildlife,28.9474,95.2174,0.05,Nov|Dec|Jan|Feb|Mar,obscure
+Nokrek,Meghalaya,East India,Wildlife,25.1302,91.7126,0.17,Nov|Dec|Jan|Feb|Mar,small
+Balphakram,Meghalaya,East India,Wildlife,25.3778,90.9803,0.17,Nov|Dec|Jan|Feb|Mar,small
+Siju,Meghalaya,East India,Wildlife,24.9933,91.4317,0.06,Nov|Dec|Jan|Feb|Mar,obscure
+Dampa,Mizoram,East India,Wildlife,23.4739,92.3596,0.18,Nov|Dec|Jan|Feb|Mar,small
+Murlen,Mizoram,East India,Wildlife,23.2989,92.5279,0.06,Nov|Dec|Jan|Feb|Mar,obscure
+Intanki,Nagaland,East India,Wildlife,26.2097,94.7807,0.15,Nov|Dec|Jan|Feb|Mar,small
+Pulie Badze,Nagaland,East India,Wildlife,26.0213,94.9078,0.05,Nov|Dec|Jan|Feb|Mar,obscure
+Keibul Lamjao,Manipur,East India,Wildlife,25.0932,93.1183,0.18,Nov|Dec|Jan|Feb|Mar,small
+Yangoupokpi,Manipur,East India,Wildlife,25.3466,93.7611,0.06,Nov|Dec|Jan|Feb|Mar,obscure
+Sepahijala,Tripura,East India,Wildlife,24.167,91.9765,0.16,Nov|Dec|Jan|Feb|Mar,small
+Trishna,Tripura,East India,Wildlife,24.2183,91.8827,0.18,Nov|Dec|Jan|Feb|Mar,small
+Gomati,Tripura,East India,Wildlife,24.1848,91.7437,0.18,Nov|Dec|Jan|Feb|Mar,small
+Kanchenjunga NP,Sikkim,East India,Wildlife,27.5511,88.6439,0.2,Nov|Dec|Jan|Feb|Mar,small
+Maenam,Sikkim,East India,Wildlife,27.7779,88.315,0.2,Nov|Dec|Jan|Feb|Mar,small
+Pangolakha,Sikkim,East India,Wildlife,27.3355,88.7618,0.06,Nov|Dec|Jan|Feb|Mar,obscure
+Fambong Lho,Sikkim,East India,Wildlife,27.4682,88.5072,0.06,Nov|Dec|Jan|Feb|Mar,obscure
+Great Himalayan NP,Himachal Pradesh,North India,Wildlife,31.8394,77.8517,0.62,Nov|Dec|Jan|Feb|Mar,mid
+Inderkilla,Himachal Pradesh,North India,Wildlife,30.3148,77.2787,0.05,Nov|Dec|Jan|Feb|Mar,obscure
+Sechu Tuan,Himachal Pradesh,North India,Wildlife,31.8728,76.8253,0.06,Nov|Dec|Jan|Feb|Mar,obscure
+Rupi Bhaba,Himachal Pradesh,North India,Wildlife,31.1693,77.1603,0.06,Nov|Dec|Jan|Feb|Mar,obscure
+Tundah,Himachal Pradesh,North India,Wildlife,31.6617,77.1188,0.05,Nov|Dec|Jan|Feb|Mar,obscure
+Pong Dam,Himachal Pradesh,North India,Wildlife,30.4802,76.63,0.17,Nov|Dec|Jan|Feb|Mar,small
+Dachigam,Jammu & Kashmir,North India,Wildlife,33.3916,76.0679,0.19,Nov|Dec|Jan|Feb|Mar,small
+Hokersar,Jammu & Kashmir,North India,Wildlife,34.2452,76.6784,0.19,Nov|Dec|Jan|Feb|Mar,small
+Hirpora,Jammu & Kashmir,North India,Wildlife,33.2608,77.1398,0.06,Nov|Dec|Jan|Feb|Mar,obscure
+Surinsar,Jammu & Kashmir,North India,Wildlife,34.3032,76.5944,0.05,Nov|Dec|Jan|Feb|Mar,obscure
+Ramnagar,Uttarakhand,North India,Wildlife,30.3408,78.5156,1.56,Nov|Dec|Jan|Feb|Mar,major
+Rajaji,Uttarakhand,North India,Wildlife,29.7878,78.6169,0.52,Nov|Dec|Jan|Feb|Mar,mid
+Govind,Uttarakhand,North India,Wildlife,29.6468,79.426,0.2,Nov|Dec|Jan|Feb|Mar,small
+Askot,Uttarakhand,North India,Wildlife,29.7531,79.3766,0.05,Nov|Dec|Jan|Feb|Mar,obscure
+Sonanadi,Uttarakhand,North India,Wildlife,30.3159,79.3284,0.15,Nov|Dec|Jan|Feb|Mar,small
+Dudhwa,Uttar Pradesh,North India,Wildlife,25.4756,80.2545,0.54,Nov|Dec|Jan|Feb|Mar,mid
+Katarniaghat,Uttar Pradesh,North India,Wildlife,26.8591,82.3724,0.19,Nov|Dec|Jan|Feb|Mar,small
+Kishanpur,Uttar Pradesh,North India,Wildlife,26.1695,79.5727,0.2,Nov|Dec|Jan|Feb|Mar,small
+Pilibhit,Uttar Pradesh,North India,Wildlife,26.1121,81.3627,0.51,Nov|Dec|Jan|Feb|Mar,mid
+Sohelwa,Uttar Pradesh,North India,Wildlife,25.5308,79.7015,0.19,Nov|Dec|Jan|Feb|Mar,small
+Suhelwa,Uttar Pradesh,North India,Wildlife,27.2307,80.647,0.06,Nov|Dec|Jan|Feb|Mar,obscure
+Ranipur,Uttar Pradesh,North India,Wildlife,26.745,81.0851,0.06,Nov|Dec|Jan|Feb|Mar,obscure
+Valmiki,Bihar,East India,Wildlife,24.6495,84.9059,0.6,Nov|Dec|Jan|Feb|Mar,mid
+Kaimur Hills,Bihar,East India,Wildlife,25.697,84.641,0.17,Nov|Dec|Jan|Feb|Mar,small
+Bhimbandh,Bihar,East India,Wildlife,25.426,84.635,0.06,Nov|Dec|Jan|Feb|Mar,obscure
+Betla,Jharkhand,East India,Wildlife,22.9088,85.3562,0.56,Nov|Dec|Jan|Feb|Mar,mid
+Hazaribagh WLS,Jharkhand,East India,Wildlife,23.7263,84.7198,0.17,Nov|Dec|Jan|Feb|Mar,small
+Dalma,Jharkhand,East India,Wildlife,23.6425,84.666,0.16,Nov|Dec|Jan|Feb|Mar,small
+Saranda,Jharkhand,East India,Wildlife,23.743,84.6255,0.18,Nov|Dec|Jan|Feb|Mar,small
+Indravati,Chhattisgarh,East India,Wildlife,21.7739,81.7955,0.56,Nov|Dec|Jan|Feb|Mar,mid
+Achanakmar,Chhattisgarh,East India,Wildlife,21.2109,81.1624,0.17,Nov|Dec|Jan|Feb|Mar,small
+Kanger Valley,Chhattisgarh,East India,Wildlife,21.7711,82.2272,0.17,Nov|Dec|Jan|Feb|Mar,small
+Udanti,Chhattisgarh,East India,Wildlife,21.7863,82.2633,0.18,Nov|Dec|Jan|Feb|Mar,small
+Guru Ghasidas,Chhattisgarh,East India,Wildlife,20.5525,81.6212,0.15,Nov|Dec|Jan|Feb|Mar,small
+Sasan-Gir,Gujarat,West India,Wildlife,24.0388,72.7545,0.49,Nov|Dec|Jan|Feb|Mar,mid
+Velavadar,Gujarat,West India,Wildlife,23.8216,69.5042,0.17,Nov|Dec|Jan|Feb|Mar,small
+Jamnagar Marine,Gujarat,West India,Wildlife,23.2283,72.147,0.2,Nov|Dec|Jan|Feb|Mar,small
+Dhrangadhra,Gujarat,West India,Wildlife,22.7852,70.9033,0.2,Nov|Dec|Jan|Feb|Mar,small
+Khijadiya,Gujarat,West India,Wildlife,21.8369,72.5206,0.06,Nov|Dec|Jan|Feb|Mar,obscure
+Vansda,Gujarat,West India,Wildlife,21.8123,71.8478,0.18,Nov|Dec|Jan|Feb|Mar,small
+Hingolgadh,Gujarat,West India,Wildlife,22.4015,71.7427,0.05,Nov|Dec|Jan|Feb|Mar,obscure
+Vagator,Goa,West India,Beach,15.1071,74.1424,1.21,Nov|Dec|Jan|Feb,mid
+Baga,Goa,West India,Beach,15.4367,73.9536,3.19,Nov|Dec|Jan|Feb,major
+Candolim,Goa,West India,Beach,15.0136,73.999,1.26,Nov|Dec|Jan|Feb,mid
+Sinquerim,Goa,West India,Beach,15.3267,74.1392,1.32,Nov|Dec|Jan|Feb,mid
+Dona Paula,Goa,West India,Beach,15.1485,74.0277,1.12,Nov|Dec|Jan|Feb,mid
+Colva,Goa,West India,Beach,15.5624,74.255,1.06,Nov|Dec|Jan|Feb,mid
+Benaulim,Goa,West India,Beach,15.4857,74.0715,1.3,Nov|Dec|Jan|Feb,mid
+Varca,Goa,West India,Beach,15.5303,73.8294,1.09,Nov|Dec|Jan|Feb,mid
+Cavelossim,Goa,West India,Beach,15.0605,73.8401,0.39,Nov|Dec|Jan|Feb,small
+Palolem,Goa,West India,Beach,15.422,73.8492,1.29,Nov|Dec|Jan|Feb,mid
+Morjim,Goa,West India,Beach,15.2414,73.9606,0.34,Nov|Dec|Jan|Feb,small
+Arambol,Goa,West India,Beach,15.5182,73.8539,1.2,Nov|Dec|Jan|Feb,mid
+Alibag,Maharashtra,West India,Beach,18.9913,76.8468,1.28,Nov|Dec|Jan|Feb,mid
+Murud Janjira,Maharashtra,West India,Beach,19.0981,76.0625,0.39,Nov|Dec|Jan|Feb,small
+Ratnagiri,Maharashtra,West India,Beach,19.1044,74.9964,1.07,Nov|Dec|Jan|Feb,mid
+Ganpatipule,Maharashtra,West India,Beach,20.3268,74.7058,0.35,Nov|Dec|Jan|Feb,small
+Tarkarli,Maharashtra,West India,Beach,18.1694,77.3247,0.42,Nov|Dec|Jan|Feb,small
+Malvan,Maharashtra,West India,Beach,21.2317,76.1636,0.37,Nov|Dec|Jan|Feb,small
+Vengurla,Maharashtra,West India,Beach,19.7342,77.4102,0.42,Nov|Dec|Jan|Feb,small
+Diveagar,Maharashtra,West India,Beach,20.3668,76.7389,0.35,Nov|Dec|Jan|Feb,small
+Karwar,Karnataka,South India,Beach,15.0188,74.4472,0.36,Nov|Dec|Jan|Feb,small
+Maravanthe,Karnataka,South India,Beach,16.2359,75.6147,0.41,Nov|Dec|Jan|Feb,small
+Malpe,Karnataka,South India,Beach,14.6027,76.4573,0.41,Nov|Dec|Jan|Feb,small
+Kapu,Karnataka,South India,Beach,16.8131,75.9346,0.43,Nov|Dec|Jan|Feb,small
+Kundapur,Karnataka,South India,Beach,15.5262,74.3927,0.35,Nov|Dec|Jan|Feb,small
+Surathkal,Karnataka,South India,Beach,14.252,76.2381,0.42,Nov|Dec|Jan|Feb,small
+Tannirbavi,Karnataka,South India,Beach,16.5697,74.2429,0.13,Nov|Dec|Jan|Feb,obscure
+Varkala,Kerala,South India,Beach,10.3548,75.8995,1.26,Nov|Dec|Jan|Feb,mid
+Cherai,Kerala,South India,Beach,11.0147,76.8678,0.34,Nov|Dec|Jan|Feb,small
+Marari,Kerala,South India,Beach,11.2687,76.6289,0.38,Nov|Dec|Jan|Feb,small
+Muzhappilangad,Kerala,South India,Beach,10.817,76.8612,0.36,Nov|Dec|Jan|Feb,small
+Kappad,Kerala,South India,Beach,11.5812,75.4945,0.42,Nov|Dec|Jan|Feb,small
+Payyambalam,Kerala,South India,Beach,11.5893,75.6577,0.43,Nov|Dec|Jan|Feb,small
+Thirumullavaram,Kerala,South India,Beach,10.8163,75.8581,0.12,Nov|Dec|Jan|Feb,obscure
+Poovar,Kerala,South India,Beach,10.3772,76.9342,0.38,Nov|Dec|Jan|Feb,small
+Kanyakumari,Tamil Nadu,South India,Beach,12.1218,78.2304,3.79,Nov|Dec|Jan|Feb,major
+Tranquebar,Tamil Nadu,South India,Beach,10.6233,77.8016,0.38,Nov|Dec|Jan|Feb,small
+Marakkanam,Tamil Nadu,South India,Beach,11.1202,77.215,0.14,Nov|Dec|Jan|Feb,obscure
+Poompuhar,Tamil Nadu,South India,Beach,11.0202,79.883,0.42,Nov|Dec|Jan|Feb,small
+Silver Beach Cuddalore,Tamil Nadu,South India,Beach,10.6645,78.3501,0.38,Nov|Dec|Jan|Feb,small
+Gokarna,Karnataka,South India,Beach,14.3166,74.4353,1.11,Nov|Dec|Jan|Feb,mid
+Yarada,Andhra Pradesh,South India,Beach,17.4751,80.0249,0.37,Nov|Dec|Jan|Feb,small
+Suryalanka,Andhra Pradesh,South India,Beach,14.6587,79.1275,0.36,Nov|Dec|Jan|Feb,small
+Bheemili,Andhra Pradesh,South India,Beach,17.1101,79.7375,0.39,Nov|Dec|Jan|Feb,small
+Manginapudi,Andhra Pradesh,South India,Beach,16.5754,78.8664,0.13,Nov|Dec|Jan|Feb,obscure
+Mypadu,Andhra Pradesh,South India,Beach,17.5894,80.2501,0.12,Nov|Dec|Jan|Feb,obscure
+Gopalpur,Odisha,East India,Beach,19.7556,86.1619,0.34,Nov|Dec|Jan|Feb,small
+Chandipur,Odisha,East India,Beach,21.7431,85.0579,0.42,Nov|Dec|Jan|Feb,small
+Talsari,Odisha,East India,Beach,21.1017,85.6105,0.1,Nov|Dec|Jan|Feb,obscure
+Astaranga,Odisha,East India,Beach,19.2718,86.3481,0.14,Nov|Dec|Jan|Feb,obscure
+Satapada,Odisha,East India,Beach,21.5556,86.0516,0.12,Nov|Dec|Jan|Feb,obscure
+Digha,West Bengal,East India,Beach,24.2232,86.8932,1.27,Nov|Dec|Jan|Feb,mid
+Mandarmani,West Bengal,East India,Beach,21.2229,87.8806,1.15,Nov|Dec|Jan|Feb,mid
+Tajpur,West Bengal,East India,Beach,23.4142,88.4603,0.39,Nov|Dec|Jan|Feb,small
+Bakkhali,West Bengal,East India,Beach,22.9295,87.8163,0.32,Nov|Dec|Jan|Feb,small
+Shankarpur,West Bengal,East India,Beach,23.1759,86.1027,0.38,Nov|Dec|Jan|Feb,small
+Frasergunj,West Bengal,East India,Beach,22.1791,89.5789,0.1,Nov|Dec|Jan|Feb,obscure
+Tithal,Gujarat,West India,Beach,23.3874,71.8165,0.41,Nov|Dec|Jan|Feb,small
+Dumas,Gujarat,West India,Beach,23.7352,69.7753,0.33,Nov|Dec|Jan|Feb,small
+Mandvi,Gujarat,West India,Beach,20.996,70.081,0.38,Nov|Dec|Jan|Feb,small
+Madhavpur,Gujarat,West India,Beach,23.3948,70.3524,0.36,Nov|Dec|Jan|Feb,small
+Chorwad,Gujarat,West India,Beach,21.803,70.8517,0.38,Nov|Dec|Jan|Feb,small
+Swaraj Dweep,Andaman & Nicobar,East India,Beach,12.5244,92.2114,3.96,Nov|Dec|Jan|Feb,major
+Shaheed Dweep,Andaman & Nicobar,East India,Beach,12.2966,92.896,1.33,Nov|Dec|Jan|Feb,mid
+Diglipur,Andaman & Nicobar,East India,Beach,12.1553,91.9996,0.36,Nov|Dec|Jan|Feb,small
+Long Island,Andaman & Nicobar,East India,Beach,11.8243,91.9398,0.32,Nov|Dec|Jan|Feb,small
+Baratang,Andaman & Nicobar,East India,Beach,11.2142,92.6498,0.37,Nov|Dec|Jan|Feb,small
+Ross Island,Andaman & Nicobar,East India,Beach,12.195,92.7554,0.42,Nov|Dec|Jan|Feb,small
+Agatti,Lakshadweep,South India,Beach,10.3272,72.6569,1.04,Nov|Dec|Jan|Feb,mid
+Bangaram,Lakshadweep,South India,Beach,10.3969,72.8609,0.42,Nov|Dec|Jan|Feb,small
+Kadmat,Lakshadweep,South India,Beach,10.5553,72.3679,0.33,Nov|Dec|Jan|Feb,small
+Minicoy,Lakshadweep,South India,Beach,10.8254,72.8796,0.38,Nov|Dec|Jan|Feb,small
+Diu,Daman & Diu,West India,Beach,20.1197,73.0873,1.13,Nov|Dec|Jan|Feb,mid
+Nagoa,Daman & Diu,West India,Beach,20.6769,72.8822,0.4,Nov|Dec|Jan|Feb,small
+Devka,Daman & Diu,West India,Beach,20.5276,72.769,0.33,Nov|Dec|Jan|Feb,small
+Jampore,Daman & Diu,West India,Beach,20.1975,72.6743,0.41,Nov|Dec|Jan|Feb,small
+Pondicherry,Puducherry,South India,Beach,11.8435,80.0479,3.56,Nov|Dec|Jan|Feb,major
+Mahe,Puducherry,South India,Beach,12.0634,79.594,0.43,Nov|Dec|Jan|Feb,small
+Auroville,Puducherry,South India,Beach,12.0445,79.8105,1.37,Nov|Dec|Jan|Feb,mid
+Yanam,Puducherry,South India,Beach,11.6422,79.7723,0.41,Nov|Dec|Jan|Feb,small
+Kumarakom,Kerala,South India,Backwater,10.5949,76.7004,2.84,Sep|Oct|Nov|Dec|Jan,major
+Kollam,Kerala,South India,Backwater,10.6847,76.7077,0.69,Sep|Oct|Nov|Dec|Jan,mid
+Vembanad,Kerala,South India,Backwater,10.4873,77.0581,0.25,Sep|Oct|Nov|Dec|Jan,small
+Pathiramanal,Kerala,South India,Backwater,10.6193,76.9758,0.24,Sep|Oct|Nov|Dec|Jan,small
+Punnamada,Kerala,South India,Backwater,11.1375,76.5271,0.22,Sep|Oct|Nov|Dec|Jan,small
+Champakulam,Kerala,South India,Backwater,11.0398,76.7469,0.27,Sep|Oct|Nov|Dec|Jan,small
+Kuttanad,Kerala,South India,Backwater,10.1813,75.7168,0.85,Sep|Oct|Nov|Dec|Jan,mid
+Nedumudi,Kerala,South India,Backwater,11.0642,76.6534,0.24,Sep|Oct|Nov|Dec|Jan,small
+Edathua,Kerala,South India,Backwater,10.2205,75.4783,0.08,Sep|Oct|Nov|Dec|Jan,obscure
+Thottappally,Kerala,South India,Backwater,10.6259,75.9016,0.22,Sep|Oct|Nov|Dec|Jan,small
+Kayamkulam,Kerala,South India,Backwater,10.3498,76.1881,0.25,Sep|Oct|Nov|Dec|Jan,small
+Karunagappally,Kerala,South India,Backwater,10.7029,75.512,0.24,Sep|Oct|Nov|Dec|Jan,small
+Kainakary,Kerala,South India,Backwater,10.1989,76.4269,0.24,Sep|Oct|Nov|Dec|Jan,small
+Karuvatta,Kerala,South India,Backwater,10.6664,75.937,0.08,Sep|Oct|Nov|Dec|Jan,obscure
+Aroor,Kerala,South India,Backwater,10.1855,76.9118,0.28,Sep|Oct|Nov|Dec|Jan,small
+Mannar,Kerala,South India,Backwater,11.6151,76.3851,0.23,Sep|Oct|Nov|Dec|Jan,small
+Chavara,Kerala,South India,Backwater,10.6592,75.6921,0.08,Sep|Oct|Nov|Dec|Jan,obscure
+Munroe Island,Kerala,South India,Backwater,10.839,75.5712,0.25,Sep|Oct|Nov|Dec|Jan,small
+Ashtamudi,Kerala,South India,Backwater,10.7238,76.2448,0.7,Sep|Oct|Nov|Dec|Jan,mid
+Nileshwar,Kerala,South India,Backwater,10.4527,75.8645,0.26,Sep|Oct|Nov|Dec|Jan,small
+Valiyaparamba,Kerala,South India,Backwater,11.0001,75.7829,0.07,Sep|Oct|Nov|Dec|Jan,obscure
+Kanjirappally,Kerala,South India,Backwater,10.5375,76.9881,0.08,Sep|Oct|Nov|Dec|Jan,obscure
+Akkulam,Kerala,South India,Backwater,11.0423,76.7565,0.24,Sep|Oct|Nov|Dec|Jan,small
+Pamba,Kerala,South India,Backwater,10.5856,76.7748,0.09,Sep|Oct|Nov|Dec|Jan,obscure
+Mavelikkara,Kerala,South India,Backwater,11.6088,75.6878,0.24,Sep|Oct|Nov|Dec|Jan,small
+Ramankary,Kerala,South India,Backwater,11.5656,75.7914,0.08,Sep|Oct|Nov|Dec|Jan,obscure
+Pulinkunnu,Kerala,South India,Backwater,11.5933,77.02,0.07,Sep|Oct|Nov|Dec|Jan,obscure
+Mannancherry,Kerala,South India,Backwater,11.1619,76.2556,0.08,Sep|Oct|Nov|Dec|Jan,obscure
+Pallippuram,Kerala,South India,Backwater,10.4379,76.0717,0.09,Sep|Oct|Nov|Dec|Jan,obscure
+Kavalam,Kerala,South India,Backwater,10.6787,75.6522,0.08,Sep|Oct|Nov|Dec|Jan,obscure
+Veeyapuram,Kerala,South India,Backwater,10.9976,76.343,0.08,Sep|Oct|Nov|Dec|Jan,obscure
+Gosaba,West Bengal,East India,Backwater,23.1704,89.4908,0.25,Sep|Oct|Nov|Dec|Jan,small
+Pakhirala,West Bengal,East India,Backwater,23.7401,87.6384,0.07,Sep|Oct|Nov|Dec|Jan,obscure
+Bali,West Bengal,East India,Backwater,23.6842,89.0083,0.09,Sep|Oct|Nov|Dec|Jan,obscure
+Dayapur,West Bengal,East India,Backwater,22.6629,87.8575,0.08,Sep|Oct|Nov|Dec|Jan,obscure
+Jharkhali,West Bengal,East India,Backwater,22.0613,88.4312,0.09,Sep|Oct|Nov|Dec|Jan,obscure
+Barkul,Odisha,East India,Backwater,21.9907,83.5663,0.29,Sep|Oct|Nov|Dec|Jan,small
+Rambha,Odisha,East India,Backwater,20.8752,84.7429,0.25,Sep|Oct|Nov|Dec|Jan,small
+Mangalajodi,Odisha,East India,Backwater,22.4634,85.7902,0.25,Sep|Oct|Nov|Dec|Jan,small
+Tampara,Odisha,East India,Backwater,21.9966,84.5943,0.09,Sep|Oct|Nov|Dec|Jan,obscure
+Chorao,Goa,West India,Backwater,15.3221,74.2029,0.22,Sep|Oct|Nov|Dec|Jan,small
+Divar,Goa,West India,Backwater,15.4614,74.2146,0.24,Sep|Oct|Nov|Dec|Jan,small
+Honavar,Karnataka,South India,Backwater,15.8492,74.0695,0.29,Sep|Oct|Nov|Dec|Jan,small
+Linganamakki,Karnataka,South India,Backwater,15.9589,75.3486,0.09,Sep|Oct|Nov|Dec|Jan,obscure
+Kolleru,Andhra Pradesh,South India,Backwater,17.5866,79.4896,0.21,Sep|Oct|Nov|Dec|Jan,small
+Majuli,Assam,East India,Backwater,25.814,92.9571,0.8,Sep|Oct|Nov|Dec|Jan,mid
+Mayabunder,Andaman & Nicobar,East India,Backwater,11.8688,92.7704,0.25,Sep|Oct|Nov|Dec|Jan,small
+Nagpur,Maharashtra,West India,Metro,19.3581,76.6904,2.57,Jan|Feb|Mar|Oct|Nov|Dec,major
+Aurangabad,Maharashtra,West India,Metro,19.7517,75.1519,2.14,Jan|Feb|Mar|Oct|Nov|Dec,major
+Solapur,Maharashtra,West India,Metro,18.3264,75.4075,0.91,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Kolhapur,Maharashtra,West India,Metro,18.3678,77.2964,0.71,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Sangli,Maharashtra,West India,Metro,19.0728,75.5492,0.73,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Akola,Maharashtra,West India,Metro,19.6885,75.6242,0.79,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Latur,Maharashtra,West India,Metro,20.4583,75.0581,0.75,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Nanded,Maharashtra,West India,Metro,20.8667,74.3243,0.88,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Jalgaon,Maharashtra,West India,Metro,20.2827,76.3477,0.72,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Dhule,Maharashtra,West India,Metro,21.492,74.7881,0.23,Jan|Feb|Mar|Oct|Nov|Dec,small
+Ahmednagar,Maharashtra,West India,Metro,18.5265,75.9255,0.91,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Amravati,Maharashtra,West India,Metro,18.7847,75.3682,0.72,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Kanpur,Uttar Pradesh,North India,Metro,27.3557,80.7057,2.15,Jan|Feb|Mar|Oct|Nov|Dec,major
+Ghaziabad,Uttar Pradesh,North India,Metro,27.2608,79.8604,2.57,Jan|Feb|Mar|Oct|Nov|Dec,major
+Noida,Uttar Pradesh,North India,Metro,26.4498,81.687,2.28,Jan|Feb|Mar|Oct|Nov|Dec,major
+Meerut,Uttar Pradesh,North India,Metro,27.7584,82.0614,2.17,Jan|Feb|Mar|Oct|Nov|Dec,major
+Aligarh,Uttar Pradesh,North India,Metro,25.4163,82.2891,0.72,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Bareilly,Uttar Pradesh,North India,Metro,26.2235,80.7972,0.74,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Moradabad,Uttar Pradesh,North India,Metro,28.1555,81.0498,0.83,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Saharanpur,Uttar Pradesh,North India,Metro,27.1991,81.3507,0.82,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Gorakhpur,Uttar Pradesh,North India,Metro,26.3025,82.1939,0.83,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Lucknow,Uttar Pradesh,North India,Metro,27.9795,81.6916,2.35,Jan|Feb|Mar|Oct|Nov|Dec,major
+Howrah,West Bengal,East India,Metro,23.4021,86.3651,2.23,Jan|Feb|Mar|Oct|Nov|Dec,major
+Asansol,West Bengal,East India,Metro,21.6143,87.1594,0.72,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Durgapur,West Bengal,East India,Metro,23.6864,87.899,0.78,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Siliguri,West Bengal,East India,Metro,21.6863,87.4414,0.72,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Bardhaman,West Bengal,East India,Metro,23.4778,88.5564,0.83,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Jalpaiguri,West Bengal,East India,Metro,24.7896,88.0577,0.25,Jan|Feb|Mar|Oct|Nov|Dec,small
+Berhampore,West Bengal,East India,Metro,21.6951,87.1925,0.25,Jan|Feb|Mar|Oct|Nov|Dec,small
+Kharagpur,West Bengal,East India,Metro,21.383,87.3525,0.68,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Patna,Bihar,East India,Metro,24.5185,85.8143,2.85,Jan|Feb|Mar|Oct|Nov|Dec,major
+Gaya,Bihar,East India,Metro,25.1087,85.302,2.64,Jan|Feb|Mar|Oct|Nov|Dec,major
+Muzaffarpur,Bihar,East India,Metro,24.965,85.8538,0.8,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Bhagalpur,Bihar,East India,Metro,24.4323,84.5594,0.86,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Darbhanga,Bihar,East India,Metro,24.7673,84.9498,0.81,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Begusarai,Bihar,East India,Metro,24.5691,85.2417,0.86,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Purnia,Bihar,East India,Metro,25.5255,85.3896,0.71,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Arrah,Bihar,East India,Metro,24.4827,85.7502,0.27,Jan|Feb|Mar|Oct|Nov|Dec,small
+Saharsa,Bihar,East India,Metro,24.887,85.8262,0.22,Jan|Feb|Mar|Oct|Nov|Dec,small
+Ranchi,Jharkhand,East India,Metro,23.9604,85.3542,2.87,Jan|Feb|Mar|Oct|Nov|Dec,major
+Jamshedpur,Jharkhand,East India,Metro,22.9739,85.8081,2.69,Jan|Feb|Mar|Oct|Nov|Dec,major
+Bokaro,Jharkhand,East India,Metro,23.2863,86.0789,0.79,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Dhanbad,Jharkhand,East India,Metro,23.3677,85.7868,0.79,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Hazaribagh,Jharkhand,East India,Metro,24.4003,85.721,0.23,Jan|Feb|Mar|Oct|Nov|Dec,small
+Phusro,Jharkhand,East India,Metro,24.1071,85.4207,0.24,Jan|Feb|Mar|Oct|Nov|Dec,small
+Giridih,Jharkhand,East India,Metro,23.9472,85.4924,0.22,Jan|Feb|Mar|Oct|Nov|Dec,small
+Bhubaneswar,Odisha,East India,Metro,19.6512,84.0438,2.28,Jan|Feb|Mar|Oct|Nov|Dec,major
+Cuttack,Odisha,East India,Metro,19.3637,84.5629,2.34,Jan|Feb|Mar|Oct|Nov|Dec,major
+Rourkela,Odisha,East India,Metro,21.0896,84.4652,0.85,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Sambalpur,Odisha,East India,Metro,20.1916,84.2624,0.89,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Berhampur,Odisha,East India,Metro,22.6978,85.7455,0.7,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Balasore,Odisha,East India,Metro,22.616,86.1285,0.28,Jan|Feb|Mar|Oct|Nov|Dec,small
+Paradip,Odisha,East India,Metro,22.723,86.4214,0.22,Jan|Feb|Mar|Oct|Nov|Dec,small
+Jharsuguda,Odisha,East India,Metro,22.2679,84.1988,0.27,Jan|Feb|Mar|Oct|Nov|Dec,small
+Raipur,Chhattisgarh,East India,Metro,21.8056,82.2884,2.63,Jan|Feb|Mar|Oct|Nov|Dec,major
+Bilaspur,Chhattisgarh,East India,Metro,21.2631,81.9939,0.74,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Bhilai,Chhattisgarh,East India,Metro,21.1428,81.7932,0.83,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Durg,Chhattisgarh,East India,Metro,21.8882,81.219,0.8,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Korba,Chhattisgarh,East India,Metro,20.9252,82.5681,0.77,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Rajnandgaon,Chhattisgarh,East India,Metro,22.0004,81.5937,0.21,Jan|Feb|Mar|Oct|Nov|Dec,small
+Jagdalpur,Chhattisgarh,East India,Metro,21.7186,82.2424,0.27,Jan|Feb|Mar|Oct|Nov|Dec,small
+Visakhapatnam,Andhra Pradesh,South India,Metro,15.7604,80.3309,2.39,Jan|Feb|Mar|Oct|Nov|Dec,major
+Vijayawada,Andhra Pradesh,South India,Metro,14.338,79.8639,2.29,Jan|Feb|Mar|Oct|Nov|Dec,major
+Guntur,Andhra Pradesh,South India,Metro,15.6567,78.7027,0.74,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Nellore,Andhra Pradesh,South India,Metro,17.092,79.1559,0.82,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Kurnool,Andhra Pradesh,South India,Metro,16.1481,79.6872,0.76,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Kakinada,Andhra Pradesh,South India,Metro,16.5672,78.1143,0.7,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Rajamahendravaram,Andhra Pradesh,South India,Metro,16.932,79.5945,0.71,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Ananthapur,Andhra Pradesh,South India,Metro,17.1975,79.5286,0.21,Jan|Feb|Mar|Oct|Nov|Dec,small
+Khammam,Telangana,South India,Metro,19.7589,77.9483,0.26,Jan|Feb|Mar|Oct|Nov|Dec,small
+Nalgonda,Telangana,South India,Metro,16.7849,79.56,0.22,Jan|Feb|Mar|Oct|Nov|Dec,small
+Ramagundam,Telangana,South India,Metro,19.6678,78.2065,0.26,Jan|Feb|Mar|Oct|Nov|Dec,small
+Wanaparthy,Telangana,South India,Metro,17.2114,78.5586,0.28,Jan|Feb|Mar|Oct|Nov|Dec,small
+Coimbatore,Tamil Nadu,South India,Metro,9.9259,78.2868,2.35,Jan|Feb|Mar|Oct|Nov|Dec,major
+Salem,Tamil Nadu,South India,Metro,11.848,77.7029,0.84,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Tiruchirappalli,Tamil Nadu,South India,Metro,11.8633,76.8639,2.48,Jan|Feb|Mar|Oct|Nov|Dec,major
+Vellore,Tamil Nadu,South India,Metro,9.8077,77.6743,0.84,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Tirunelveli,Tamil Nadu,South India,Metro,9.3634,79.3641,0.88,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Erode,Tamil Nadu,South India,Metro,12.8874,78.3803,0.71,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Tiruppur,Tamil Nadu,South India,Metro,9.585,78.2391,0.86,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Hosur,Tamil Nadu,South India,Metro,9.6987,77.9881,0.89,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Karur,Tamil Nadu,South India,Metro,9.8237,79.6445,0.27,Jan|Feb|Mar|Oct|Nov|Dec,small
+Thoothukudi,Tamil Nadu,South India,Metro,9.8093,80.4346,0.71,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Mangalore,Karnataka,South India,Metro,15.4298,73.9405,2.61,Jan|Feb|Mar|Oct|Nov|Dec,major
+Hubli,Karnataka,South India,Metro,15.1044,76.5108,0.83,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Belgaum,Karnataka,South India,Metro,14.0649,75.3922,0.84,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Dharwad,Karnataka,South India,Metro,16.6159,74.2221,0.7,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Davangere,Karnataka,South India,Metro,16.2288,76.0325,0.77,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Tumkur,Karnataka,South India,Metro,16.9877,75.0422,0.71,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Shimoga,Karnataka,South India,Metro,14.5171,74.2133,0.25,Jan|Feb|Mar|Oct|Nov|Dec,small
+Gulbarga,Karnataka,South India,Metro,15.68,76.0973,0.87,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Raichur,Karnataka,South India,Metro,16.0057,76.9624,0.26,Jan|Feb|Mar|Oct|Nov|Dec,small
+Bellary,Karnataka,South India,Metro,14.6059,75.7739,0.25,Jan|Feb|Mar|Oct|Nov|Dec,small
+Thiruvananthapuram,Kerala,South India,Metro,11.2465,75.9429,2.17,Jan|Feb|Mar|Oct|Nov|Dec,major
+Thrissur,Kerala,South India,Metro,11.4867,76.9975,0.8,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Kozhikode,Kerala,South India,Metro,10.2304,76.2693,0.82,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Kannur,Kerala,South India,Metro,10.8953,77.0343,0.92,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Palakkad,Kerala,South India,Metro,11.5443,75.6812,0.89,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Malappuram,Kerala,South India,Metro,10.9594,76.0547,0.84,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Kasaragod,Kerala,South India,Metro,11.2704,76.9971,0.27,Jan|Feb|Mar|Oct|Nov|Dec,small
+Kottayam,Kerala,South India,Metro,10.0767,75.5781,0.74,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Pathanamthitta,Kerala,South India,Metro,10.1137,75.5668,0.27,Jan|Feb|Mar|Oct|Nov|Dec,small
+Vasco da Gama,Goa,West India,Metro,15.304,74.1971,0.8,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Margao,Goa,West India,Metro,15.2493,74.2411,0.7,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Mapusa,Goa,West India,Metro,15.3219,74.1896,0.23,Jan|Feb|Mar|Oct|Nov|Dec,small
+Surat,Gujarat,West India,Metro,21.5757,71.2307,2.28,Jan|Feb|Mar|Oct|Nov|Dec,major
+Vadodara,Gujarat,West India,Metro,23.369,71.321,2.42,Jan|Feb|Mar|Oct|Nov|Dec,major
+Rajkot,Gujarat,West India,Metro,22.7435,72.3943,2.64,Jan|Feb|Mar|Oct|Nov|Dec,major
+Bhavnagar,Gujarat,West India,Metro,20.698,71.9052,0.86,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Jamnagar,Gujarat,West India,Metro,23.5073,69.5985,0.7,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Anand,Gujarat,West India,Metro,22.0241,71.0221,0.83,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Gandhinagar,Gujarat,West India,Metro,21.5734,72.0601,0.86,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Bharuch,Gujarat,West India,Metro,20.89,71.9384,0.27,Jan|Feb|Mar|Oct|Nov|Dec,small
+Bhopal,Madhya Pradesh,North India,Metro,21.7598,80.2909,2.52,Jan|Feb|Mar|Oct|Nov|Dec,major
+Indore,Madhya Pradesh,North India,Metro,23.9888,79.4548,2.25,Jan|Feb|Mar|Oct|Nov|Dec,major
+Jabalpur,Madhya Pradesh,North India,Metro,21.627,79.672,0.74,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Sagar,Madhya Pradesh,North India,Metro,24.3611,79.6371,0.21,Jan|Feb|Mar|Oct|Nov|Dec,small
+Rewa,Madhya Pradesh,North India,Metro,24.0756,77.8391,0.22,Jan|Feb|Mar|Oct|Nov|Dec,small
+Satna,Madhya Pradesh,North India,Metro,23.7344,78.9359,0.22,Jan|Feb|Mar|Oct|Nov|Dec,small
+Dewas,Madhya Pradesh,North India,Metro,22.8087,78.1564,0.25,Jan|Feb|Mar|Oct|Nov|Dec,small
+Kota,Rajasthan,North India,Metro,27.2608,73.7437,0.74,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Beawar,Rajasthan,North India,Metro,25.5905,74.4861,0.27,Jan|Feb|Mar|Oct|Nov|Dec,small
+Hanumangarh,Rajasthan,North India,Metro,26.0423,74.2518,0.22,Jan|Feb|Mar|Oct|Nov|Dec,small
+Sri Ganganagar,Rajasthan,North India,Metro,28.3265,73.3004,0.25,Jan|Feb|Mar|Oct|Nov|Dec,small
+Bhilwara,Rajasthan,North India,Metro,26.5987,72.9603,0.9,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Jhalawar,Rajasthan,North India,Metro,28.3069,74.4103,0.28,Jan|Feb|Mar|Oct|Nov|Dec,small
+Roorkee,Uttarakhand,North India,Metro,30.4551,78.891,0.76,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Haldwani,Uttarakhand,North India,Metro,29.936,79.3725,0.75,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Rudrapur,Uttarakhand,North India,Metro,29.3946,78.8165,0.8,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Kashipur,Uttarakhand,North India,Metro,30.7131,78.507,0.27,Jan|Feb|Mar|Oct|Nov|Dec,small
+Solan,Himachal Pradesh,North India,Metro,31.8703,77.8965,0.22,Jan|Feb|Mar|Oct|Nov|Dec,small
+Mandi,Himachal Pradesh,North India,Metro,31.0442,76.8217,0.28,Jan|Feb|Mar|Oct|Nov|Dec,small
+Una,Himachal Pradesh,North India,Metro,30.8237,77.2549,0.21,Jan|Feb|Mar|Oct|Nov|Dec,small
+Hamirpur,Himachal Pradesh,North India,Metro,30.6211,77.2721,0.24,Jan|Feb|Mar|Oct|Nov|Dec,small
+Nahan,Himachal Pradesh,North India,Metro,31.2963,77.1123,0.26,Jan|Feb|Mar|Oct|Nov|Dec,small
+Ludhiana,Punjab,North India,Metro,31.1394,75.7762,2.27,Jan|Feb|Mar|Oct|Nov|Dec,major
+Jalandhar,Punjab,North India,Metro,31.7907,75.7568,2.31,Jan|Feb|Mar|Oct|Nov|Dec,major
+Pathankot,Punjab,North India,Metro,30.3602,75.1961,0.74,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Bathinda,Punjab,North India,Metro,30.9043,75.8833,0.89,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Mohali,Punjab,North India,Metro,31.8716,74.5423,0.84,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Faridabad,Haryana,North India,Metro,29.6184,76.4535,2.2,Jan|Feb|Mar|Oct|Nov|Dec,major
+Gurugram,Haryana,North India,Metro,29.1077,75.6711,2.49,Jan|Feb|Mar|Oct|Nov|Dec,major
+Panipat,Haryana,North India,Metro,28.3558,76.8851,0.85,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Rohtak,Haryana,North India,Metro,28.4088,76.764,0.9,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Hisar,Haryana,North India,Metro,29.0916,76.4114,0.77,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Karnal,Haryana,North India,Metro,29.8193,75.4258,0.7,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Sonipat,Haryana,North India,Metro,28.4736,76.6019,0.7,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Srinagar,Jammu & Kashmir,North India,Metro,33.8885,76.466,2.85,Jan|Feb|Mar|Oct|Nov|Dec,major
+Jammu,Jammu & Kashmir,North India,Metro,33.3588,76.1876,2.36,Jan|Feb|Mar|Oct|Nov|Dec,major
+Anantnag,Jammu & Kashmir,North India,Metro,34.2613,76.8912,0.86,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Baramulla,Jammu & Kashmir,North India,Metro,33.4889,76.2051,0.7,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Sopore,Jammu & Kashmir,North India,Metro,33.3043,77.0179,0.26,Jan|Feb|Mar|Oct|Nov|Dec,small
+Silchar,Assam,East India,Metro,25.6487,92.403,0.79,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Dibrugarh,Assam,East India,Metro,26.0504,92.9975,0.91,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Tezpur,Assam,East India,Metro,25.7322,92.6333,0.74,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Jorhat,Assam,East India,Metro,25.5919,92.3922,0.84,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Tinsukia,Assam,East India,Metro,26.7222,93.255,0.69,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Agartala,Tripura,East India,Metro,24.1416,91.8867,0.7,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Udaipur Tripura,Tripura,East India,Metro,23.7889,91.9034,0.25,Jan|Feb|Mar|Oct|Nov|Dec,small
+Dharmanagar,Tripura,East India,Metro,24.0463,91.8461,0.29,Jan|Feb|Mar|Oct|Nov|Dec,small
+Imphal,Manipur,East India,Metro,23.9097,93.757,0.79,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Aizawl,Mizoram,East India,Metro,23.5569,92.5398,0.79,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Dimapur,Nagaland,East India,Metro,26.6462,93.9837,0.68,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Tura,Meghalaya,East India,Metro,25.9986,92.1421,0.71,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Itanagar,Arunachal Pradesh,East India,Metro,28.7379,94.5256,0.83,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Naharlagun,Arunachal Pradesh,East India,Metro,28.4515,94.8617,0.23,Jan|Feb|Mar|Oct|Nov|Dec,small
+Pasighat,Arunachal Pradesh,East India,Metro,28.7204,93.9649,0.22,Jan|Feb|Mar|Oct|Nov|Dec,small
+Karaikal,Puducherry,South India,Metro,12.1515,79.7761,0.22,Jan|Feb|Mar|Oct|Nov|Dec,small
+Port Blair,Andaman & Nicobar,East India,Metro,12.3881,93.177,0.76,Jan|Feb|Mar|Oct|Nov|Dec,mid
+Kavaratti,Lakshadweep,South India,Metro,10.2956,72.6166,0.23,Jan|Feb|Mar|Oct|Nov|Dec,small

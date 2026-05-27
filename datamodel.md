@@ -1,9 +1,9 @@
 # TravelLens India — Data Model
 
-**Version:** 1.0
-**Generated:** 2026-05-16
+**Version:** 1.1
+**Generated:** 2026-05-16 (base); 2026-05-27 (Stage 1 expansion — B-046)
 **Coverage:** Jan 2024 → May 2026 (28 months)
-**Total rows:** ~1.16M across 13 files (~248 MB on disk)
+**Total rows:** ~1.34M across 13 files + the additive Stage 1 expansion. Live Postgres totals: 993 cities · 20,076 hotels · 55,446 room types · 100,000 customers · 1,000,000 fact_bookings (unchanged).
 
 ---
 
@@ -381,7 +381,7 @@ silently dropped" docstring.
                                      │
 ┌──────────────────┐       ┌─────────▼──────────┐      ┌──────────────────┐
 │  dim_location    │◄──────┤   hotel_master     ├─────►│  dim_room_type   │
-│  (44 cities)     │ FK    │   (2,000 hotels)   │      │  (5,542 rooms)   │
+│  (993 cities)    │ FK    │   (20,076 hotels)  │      │  (55,446 rooms)  │
 └────────┬─────────┘       └────────┬───────────┘      └────────┬─────────┘
          │                          │                            │
          │                          │                            │
@@ -395,7 +395,7 @@ silently dropped" docstring.
          │                               │
 ┌────────┴─────────┐           ┌─────────▼──────────┐     ┌──────────────────┐
 │  dim_customer    │           │    dim_date        │     │ fact_price_events│
-│  (20,000 cust.)  │           │  (2,557 days)      │     │   (86,650)       │
+│ (100,000 cust.)  │           │  (2,557 days)      │     │   (86,650)       │
 └──────────────────┘           └─────────┬──────────┘     └──────────────────┘
                                          │
                                 ┌────────▼──────────┐
@@ -622,7 +622,7 @@ The LLM generates the second pattern reliably. The first pattern requires the mo
 ### `dim_location.csv`
 
 **Purpose:** Geographic dimension — one row per city.
-**Rows:** 44 cities across 17 states
+**Rows:** 993 cities across 35 states/UTs (44 base + 949 added in B-046 Stage 1 expansion). Existing 44 rows are untouched; the expansion is additive only.
 **Used by:** `hotel_master.location_id`, `fact_bookings.location_id`
 
 #### Schema
@@ -653,12 +653,22 @@ fcc0cf29-...  Jaipur    Rajasthan    North India   Heritage       26.9124    75.
 
 **`tourism_zone`** is the most queried column. *"Compare beach destinations to hill stations"* becomes `GROUP BY tourism_zone`. Without this, you'd hardcode city lists everywhere.
 
+#### `tourist_arrivals_annual_m` — interpretation
+
+**It is a hotel-demand proxy, NOT literal Ministry-of-Tourism footfall.** Real pilgrimage footfall in India (Tirupati ~50-80m/year, Sabarimala ~40m/year) is orders of magnitude larger than the hotel-bookable demand those destinations generate. The expansion script caps the value at **24.0** for the largest sites so the implied booking volume stays in a reasonable proportion to the rest of the catalog when the figure later feeds city-popularity weights in the booking generator.
+
+Derived in the B-046 expansion as: `arrivals_m = POP_TIER_BASE[popularity_tier] × ZONE_FACTOR[tourism_zone] × jitter(0.85, 1.15)`, capped at 24.0. See `scripts/build_cities_expansion_csv.py` for the constants.
+
+#### Source of truth: `seeds/cities_expansion.csv`
+
+The 949 net-new cities are sourced from a curated CSV committed at `seeds/cities_expansion.csv` (an additional `popularity_tier` column there drives hotel-count bucketing — `mega`/`major`/`mid`/`small`/`obscure`). The CSV is regenerable from `scripts/build_cities_expansion_csv.py` (deterministic, SEED=42). Insertion into Postgres is handled by `scripts/expand_dimensions.py` (idempotent, single-transaction, FK-safe).
+
 ---
 
 ### `dim_customer.csv`
 
 **Purpose:** Customer master with segmentation and demographics.
-**Rows:** 20,000
+**Rows:** 100,000 (20,000 base + 80,000 added in B-046 Stage 1 expansion, IDs `CUST-020001`–`CUST-100000`). Travel-purpose vocabulary unchanged — the 9 canonical values are kept; no `Backwater` value was added (Backwater-zone customers map to `Wellness`).
 **Used by:** `fact_bookings.customer_id`
 
 #### Schema
@@ -715,7 +725,7 @@ All other columns unchanged in shape, only types enforced.
 ### `hotel_master.csv` (dim_hotel)
 
 **Purpose:** Hotel master table — the most-queried dimension.
-**Rows:** 2,000 hotels
+**Rows:** 20,076 hotels (2,000 base + 18,076 added in B-046 Stage 1 expansion, IDs `HTL-002001`–`HTL-020076`). Existing 2,000 rows untouched. New hotels have `review_count=0` until reviews accumulate; ALL fact tables (`fact_bookings`, `fact_booking_events`, `fact_booking_lifecycle`, `reviews_raw`) are unchanged by this expansion.
 **Used by:** `dim_room_type.hotel_id`, `fact_bookings.hotel_id`, `fact_price_events.hotel_id`, `reviews_raw.hotel_id`
 
 #### Schema
@@ -735,7 +745,7 @@ All other columns unchanged in shape, only types enforced.
 | `price_tier_id` | VARCHAR(10) | **FK** → `ref_price_tiers` |
 | `base_price_inr` | INT | Nightly rate. Must fit within tier band. |
 | `is_active` | BOOLEAN | ~95% TRUE. Inactive hotels generate no new bookings. |
-| `opened_year` | SMALLINT | Year the hotel opened to guests (1975–2023). **Added via migration 006, not in base schema.** Synthetic but constrained — see *opened_year (migration 006)* below. |
+| `opened_year` | SMALLINT | Year the hotel opened to guests (1975–2026). **Added via migration 006, not in base schema.** Synthetic but constrained — see *opened_year (migration 006)* below. Range was 1975–2023 until B-046 extended the upper bound to 2026 (no schema change — migration 006 carries no CHECK constraint; only data shape changed). |
 
 #### Sample Data
 
@@ -767,10 +777,12 @@ WHERE 'Swimming Pool' = ANY(amenities)
 
 #### `opened_year` (migration 006)
 
-Year the hotel opened to guests, range 1975–2023. **Added via migration
-`db/migrations/006_hotel_opened_year.sql`, not in the base schema** — the
-base `schema.sql` is frozen and every later structural change ships as a
-numbered migration. Synthetic but constrained:
+Year the hotel opened to guests, range 1975–2026 (was 1975–2023 in the
+original 2,000 hotels; B-046 expansion uses 1975–2026 freely — migration
+006 carries no CHECK constraint, so no schema change was needed). **Added
+via migration `db/migrations/006_hotel_opened_year.sql`, not in the base
+schema** — the base `schema.sql` is frozen and every later structural
+change ships as a numbered migration. Synthetic but constrained:
 
 - Correlated with `star_category`: 5-star skews older (1975–2010), tighter
   ranges step forward through 4/3/2/1, uncategorised/budget skews newest
@@ -820,7 +832,7 @@ WHERE amenities @> '["Swimming Pool"]'::jsonb;
 ### `dim_room_type.csv`
 
 **Purpose:** Room types per hotel (each hotel has 2–4).
-**Rows:** 5,542
+**Rows:** 55,446 (5,542 base + 49,904 added in B-046 Stage 1 expansion). Three new `type_name` values were introduced by the expansion (free text — no migration needed): `Houseboat Suite` (Backwater hotels), `Tent` (Wildlife + Hill Station), `Treehouse` (Wildlife). Total distinct names: 16 (was 13).
 **Used by:** `fact_bookings.room_type_id`, `fact_price_events.room_type_id`
 
 #### Schema
@@ -853,11 +865,13 @@ c7cc4a48-...    HTL-000001   Standard Non AC     4          FALSE    TRUE       
 
 The generator created context-appropriate room types:
 - **Beach hotels** → Sea View, Pool View
-- **Hill stations** → Valley View, Cottage Room
+- **Hill stations** → Valley View, Cottage Room, Tent (B-046)
 - **Heritage cities** → Heritage Room
 - **Pilgrimage cities** → standard mix (no special types)
+- **Backwater hotels** → Houseboat Suite (B-046)
+- **Wildlife hotels** → Tent, Treehouse (B-046)
 
-You won't find Sea View at a Jaipur hotel or Valley View at Mumbai.
+You won't find Sea View at a Jaipur hotel, Valley View at Mumbai, Houseboat Suite outside Backwater, or Treehouse outside Wildlife.
 
 ---
 
@@ -1807,6 +1821,72 @@ the source of truth.
 | 011 | `idx_reviews_raw_event_date` index on `reviews_raw.event_date` — supports the date-range scoping in `_monitor_reviews` and `_monitor_embeddings` | Phase 7 — Monitor date scoping   | B-030b     |
 | 012 | `quarantine_daily_summary` table (`summary_date DATE PK`, `malformed_count INT`, `late_count INT`, `computed_at TIMESTAMPTZ`) — **RETIRED: dropped by migration 013** | Phase 6 / Phase 7 — Quarantine   | B-033 *(superseded by B-044)* |
 | 013 | Drops `quarantine_daily_summary`; creates `quarantine_hourly_summary` (`summary_date DATE`, `summary_hour SMALLINT`, `malformed_count INT`, `late_count INT`, `is_final BOOL`, `computed_at TIMESTAMPTZ`, PK `(summary_date, summary_hour)`) | Phase 6 / Phase 7 — Quarantine   | B-044      |
+
+**Note — B-046 added no migration.** Stage 1 dimension expansion (949 cities · 18,076 hotels · 49,904 room types · 80,000 customers) uses existing columns only. The `type_name` field on `dim_room_type` and the `property_type` field on `hotel_master` are both free-text VARCHAR with no CHECK constraint, so the three new room-type values (`Houseboat Suite`, `Tent`, `Treehouse`) and the previously-unused property-types (`Houseboat`, `Treehouse`) inserted cleanly. `opened_year` (migration 006) carries no CHECK constraint either, so extending the data range to 2026 needed no schema change.
+
+---
+
+## Stage 1 Dimension Expansion (B-046)
+
+Run date: **2026-05-27**. ADDITIVE only — no existing row was modified.
+
+| Table | Before | After | Delta |
+|---|---:|---:|---:|
+| `dim_location` | 44 | 993 | +949 |
+| `hotel_master` | 2,000 | 20,076 | +18,076 |
+| `dim_room_type` | 5,542 | 55,446 | +49,904 |
+| `dim_customer` | 20,000 | 100,000 | +80,000 |
+| `fact_bookings` | 1,000,000 | 1,000,000 | 0 |
+| `fact_booking_events` | 2,107,759 | 2,107,759 | 0 |
+| `fact_booking_lifecycle` | 762,230 | 762,230 | 0 |
+| `reviews_raw` | 133,463 | 133,463 | 0 |
+
+**State coverage:** the 44 base cities spanned 16 states; the expansion adds presence across the full 34 inhabited states + UTs that have any catalog entry. Total distinct states in `dim_location` after expansion: 35. No new state values introduced — every catalog row's `state` matches an existing `india_states_zones.state_name`.
+
+**Zone targets vs actuals (incl. existing 44):**
+
+| Zone | Final | Target |
+|---|---:|---:|
+| Metro | 181 | ~180 |
+| Pilgrimage | 181 | ~180 |
+| Hill Station | 170 | ~180 |
+| Wildlife | 169 | ~170 |
+| Heritage | 159 | ~160 |
+| Beach | 85 | ~80 |
+| Backwater | 48 | ~50 |
+
+**Hotels-per-city rule** — bucket-uniform sampling by `popularity_tier`:
+
+| popularity_tier | Hotels-per-city range |
+|---|---:|
+| mega | 120–150 |
+| major | 40–80 |
+| mid | 20–40 |
+| small | 8–15 |
+| obscure | 3–8 |
+
+**Property-type distribution after expansion (top 10):** Hotel 7,701 · Guest House 2,252 · Resort 2,038 · Lodge 1,924 · Homestay 1,679 · Apartment 824 · BnB 725 · Tent 688 · Hostel 537 · Service Apartment 418. New non-zero property-types relative to the 2,000-hotel baseline: `Tent` (688), `Treehouse` (186), `Houseboat` (205) — present in pre-expansion `PROPERTY_TYPES` list but rare or absent in actual rows; now meaningfully populated.
+
+**Zone-property gating verified:**
+
+| Check | Hotels |
+|---|---:|
+| Houseboat in Backwater | 175 |
+| Treehouse in Wildlife | 186 |
+| Tent in Wildlife | 409 |
+| Tent in Hill Station | 266 |
+
+No cross-zone leakage — the expansion script gates `Houseboat`/`Treehouse` strictly by zone.
+
+**Idempotency.** `scripts/expand_dimensions.py` aborts if (a) any catalog city already exists in `dim_location` by `(city, state)`, (b) `MAX(hotel_id)` is past `HTL-002000`, or (c) `MAX(customer_id)` is past `CUST-020000`. A second run is a hard no-op (exits non-zero with a clear message).
+
+**Files committed:**
+
+| Path | Purpose |
+|---|---|
+| `seeds/cities_expansion.csv` | 949 curated city rows (city, state, region, tourism_zone, lat, lng, tourist_arrivals_annual_m, peak_months, popularity_tier) |
+| `scripts/build_cities_expansion_csv.py` | Deterministic CSV builder (SEED=42; catalog inline). Regenerates `seeds/cities_expansion.csv` byte-identical on every run. |
+| `scripts/expand_dimensions.py` | Reads the CSV, generates hotels/room-types/customers, INSERTs all four tables in a single transaction with pre/post integrity checks. |
 
 ---
 

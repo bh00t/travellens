@@ -51,7 +51,7 @@ Learning project — building data engineering skills by shipping real code, not
 | Phase | Description | Status |
 |---|---|---|
 | 0 | Environment setup | ✓ Complete |
-| 1 | Postgres schema + data load | ✓ Complete |
+| 1 | Postgres schema + data load | ✓ Complete — **B-046 expansion shipped 2026-05-27**: additive 949 cities → 993, 18,076 hotels → 20,076, 49,904 room types → 55,446, 80,000 customers → 100,000. Fact tables UNCHANGED. No migration (every column already existed). Source of truth: `seeds/cities_expansion.csv` + `scripts/expand_dimensions.py`. |
 | 2 | Kafka streaming + dual sink | ✓ Complete |
 | 3 | Embeddings + pgvector | ✓ Complete |
 | 4 | AI layer (Text-to-SQL + semantic) | ✓ Complete |
@@ -291,6 +291,14 @@ travellens/
 │   │                                  Supersedes B-033 Airflow DAG + quarantine_daily_summary (migration 012).
 │   │                                  Single-instance: pg_try_advisory_lock(7400060); second instance exits 1.
 │   │                                  Run: `python -m scripts.quarantine_hourly_rollup`.
+│   ├── build_cities_expansion_csv.py ← B-046: deterministic builder (SEED=42) — emits seeds/cities_expansion.csv from inline curated catalog (949 cities, 34 states, 7 zones).
+│   ├── expand_dimensions.py         ← B-046: STAGE 1 DIMENSION EXPANSION — additive insert (no migration).
+│   │                                  Reads seeds/cities_expansion.csv; INSERTs ~949 dim_location + ~18K
+│   │                                  hotel_master + ~50K dim_room_type + 80K dim_customer rows in a single
+│   │                                  transaction. Pre-flight aborts if any catalog (city, state) is already in
+│   │                                  dim_location, or if hotel_master/dim_customer max-id is past expansion start.
+│   │                                  NEVER run load_to_postgres.py against this DB — it TRUNCATEs everything.
+│   │                                  Run ONCE: `python -m scripts.expand_dimensions`.
 │   └── init_s3_buckets.py           ← Phase 2: MinIO bucket bootstrap
 ├── ai/                              (see above)
 ├── db/
@@ -314,6 +322,11 @@ travellens/
 ├── airflow/
 │   ├── dags/                        ← Phase 6 remaining DAGs (B-024, B-013, B-014, B-015, B-016); quarantine_daily_rollup.py RETIRED (B-044)
 │   └── plugins/
+├── seeds/                           ← committed reference data (B-046).
+│   └── cities_expansion.csv         ← 949 curated cities (city, state, region, tourism_zone, lat, lng,
+│                                      tourist_arrivals_annual_m, peak_months, popularity_tier).
+│                                      Source of truth for the additive Stage 1 expansion. Regenerable from
+│                                      scripts/build_cities_expansion_csv.py.
 ├── data/                            ← gitignored — 12 CSVs + 1 JSON seed
 └── tests/
 ```
@@ -405,7 +418,12 @@ Full column schemas for all tables below are in `datamodel.md`.
 | `agg_daily_hotel_kpi` column names | Real columns: `total_bookings`, `total_revenue_inr`, `avg_nightly_rate_inr`, `cancellation_rate`, `avg_rating` — no `occupancy_rate`, no `revpar_inr` |
 | `chain_name` treated as always present | `chain_name` is NULL for ~60% (independents) — exclude NULL when ranking chains |
 | Counting entities via `fact_bookings` rows | "How many hotels", "hotels per city", "hotels opened per year" → query `hotel_master` directly. `fact_bookings` is for booking ROWS, not entity counts. |
-| `hotel_master.opened_year` | `opened_year SMALLINT` added in migration 006 (range 1975–2023, correlated with `star_category`). Use directly for "hotels opened per year" — never derive opening year from `fact_bookings` dates. |
+| `hotel_master.opened_year` | `opened_year SMALLINT` added in migration 006. Range **1975–2026** (original 2,000 hotels were 1975–2023, correlated with `star_category`; B-046 expansion uses 1975–2026 freely — migration 006 carries no CHECK constraint). Use directly for "hotels opened per year" — never derive opening year from `fact_bookings` dates. |
+| Post-B-046 row counts | `dim_location` 993 · `hotel_master` 20,076 · `dim_room_type` 55,446 · `dim_customer` 100,000 · `fact_bookings` 1,000,000 (unchanged). New ID ranges: hotels HTL-002001…HTL-020076, customers CUST-020001…CUST-100000. ALL fact tables UNCHANGED by the expansion. |
+| New `dim_room_type.type_name` values (B-046) | `Houseboat Suite` (Backwater hotels), `Tent` (Wildlife + Hill Station), `Treehouse` (Wildlife) — free text, no migration. Total 16 distinct names (was 13). |
+| New `hotel_master.property_type` values populated (B-046) | `Houseboat` (205), `Treehouse` (186), `Tent` (688) — gated by `tourism_zone` in `scripts/expand_dimensions.py`. Free text, no CHECK constraint. |
+| `dim_location.tourist_arrivals_annual_m` interpretation | **Hotel-demand proxy, NOT literal Ministry-of-Tourism footfall.** Capped at 24.0 by the expansion script — pilgrimage mega-sites (Tirupati, Sabarimala) get 50-80m real visitors/year but that doesn't translate to bookable hotel demand. Used as a city-popularity weight for the booking generator. See `datamodel.md` for the formula. |
+| Running `load_to_postgres.py` after B-046 | **Don't.** It TRUNCATEs every table (it's frozen and was designed for the initial bulk load). Doing so wipes the 993 cities / 20,076 hotels / 55,446 room types / 100,000 customers / 1M bookings / 2M+ lifecycle events / 762K gold rows / 133K reviews. Use `scripts/expand_dimensions.py` for additive growth; never load_to_postgres for any operation on the live DB. |
 | `is_cancelled` scope | `is_cancelled` lives ONLY on `fact_bookings` — not on dimensions or `reviews_raw`. Exclude cancelled bookings by default (`WHERE NOT b.is_cancelled`) unless the question is specifically about cancellations. |
 | `agg_hourly_city_stats` column drift | Post-migration 007 columns: `city`, `window_start`, `window_end`, `total_bookings`, `total_revenue_inr`, `avg_occupancy_rate`, `cancellation_rate`, `ingestion_ts`, `total_checkins`, `total_checkouts`, `total_cancellations`, `total_reviews`. `total_reviews` stays NULL — REVIEW events are routed to reviews_raw directly and do NOT feed the city-level agg accumulator. |
 | `pipeline_metrics` table | Append-only heartbeat every ~10s (migration 007). Counters are **cumulative-since-start** — derive events/sec as a delta between adjacent rows. Drop deltas where newer < older (consumer restart reset). `consumer_lag` is reserved/NULL. |

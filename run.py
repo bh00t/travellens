@@ -55,10 +55,15 @@ WHAT THIS SCRIPT MANAGES
     - Docker stack via `docker compose up -d`. Airflow's scheduler runs its DAGs
       on its own inside its container — this script does NOT schedule or trigger
       Airflow jobs. It only brings the containers up.
-    - Three host Python processes that are NOT containerised:
-        consumer  — drains the Kafka topic
-        simulator — produces booking events
-        dashboard — the Flask render server
+    - Six host Python processes that are NOT containerised:
+        consumer    — drains the Kafka topic
+        simulator   — produces booking events
+        dashboard   — the Flask render server
+        gold        — gold_lifecycle_updater micro-batch (pg_try_advisory_lock 7400040)
+        embedder    — review_embedder micro-batch (pg_try_advisory_lock 7400050)
+        quarantine  — quarantine_hourly_rollup 5-min loop (pg_try_advisory_lock 7400060)
+      Advisory locks mean a stray manual copy exits immediately rather than racing
+      — safe to have run.py always start all three maintenance procs.
 
 DESIGN DECISIONS (so future-you knows why)
     - Idempotent: `docker compose up -d` is safe to run whether containers are up
@@ -69,8 +74,11 @@ DESIGN DECISIONS (so future-you knows why)
       left running.
     - The teardown always fires (signal handler + finally), even on crash or
       double Ctrl-C, so you never end up with orphaned host processes.
-    - Port/duplicate check: if the dashboard port is already bound, the script
-      won't start a second dashboard — it warns and continues with the rest.
+    - Takeover startup: run.py always wins — on startup it kills any live prior
+      run.py supervisor + all travellens children, waits for Postgres advisory
+      locks to release, then starts a fresh stack. If :5000 is held by a
+      non-travellens process, it stops cleanly instead of blind-killing an
+      unrelated program.
 
 ------------------------------------------------------------------------------------
 CONFIG — EDIT THESE THREE COMMANDS TO MATCH YOUR REPO IF THEY ARE WRONG.
@@ -79,14 +87,80 @@ They are best-guesses from the project layout. Each is a list (argv style).
 """
 
 import argparse
+import atexit
 import os
 import shutil
 import signal
 import socket
 import subprocess
 import sys
+
+# Subprocess output may contain non-ASCII or Unicode replacement characters
+# (�) that cp1252 (Windows default stdout encoding) cannot encode.
+# Reconfigure stdout to UTF-8 with replacement so stream_output never crashes.
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 import threading
 import time
+
+# Port bound as a process mutex — a second run.py trying to bind this address
+# will get OSError and exit, so two instances can never race.  Nothing actually
+# connects to this socket; it's only held open as long as the process lives.
+_RUN_LOCK_PORT = 47_219
+
+
+def _acquire_run_lock():
+    """
+    Bind to a local-only port as a process mutex.
+
+    Returns the bound socket (caller must keep a reference for the lifetime
+    of the process — the OS releases it on process exit or explicit close).
+    Returns None if another run.py already holds the lock.
+
+    Why a socket instead of a PID file: no cleanup step needed, no stale-file
+    edge cases, and it works identically on Windows and Linux.
+    """
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 0)
+    try:
+        s.bind(("127.0.0.1", _RUN_LOCK_PORT))
+        s.listen(1)  # puts port in LISTENING state so netstat can see it
+        return s
+    except OSError:
+        s.close()
+        return None
+
+
+
+def _kill_proc_tree(name, proc):
+    """Kill a process and ALL its descendants so no orphan ever holds a port or lock.
+
+    Windows: taskkill /F /T kills the entire process tree rooted at proc.pid.
+    POSIX:   falls back to proc.kill() (sufficient — our children don't spawn
+             further sub-processes, so there is no tree to recurse into).
+    """
+    if proc.poll() is not None:
+        return  # already dead
+    log("system", f"killing {name} (pid {proc.pid})")
+    if sys.platform == "win32":
+        try:
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10,
+            )
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+    else:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+    try:
+        proc.wait(timeout=5)
+    except Exception:
+        pass
 
 # --- Repo root (this file should live at the repo root) --------------------------
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -122,6 +196,28 @@ DASHBOARD = {
     "port": DASHBOARD_PORT,
 }
 
+# Gold lifecycle updater — continuous micro-batch, pg_try_advisory_lock(7400040).
+# Advisory lock means a stray manual copy exits immediately rather than racing.
+GOLD_UPDATER = {
+    "name": "gold",
+    "cmd":  [PY, "-m", "scripts.gold_lifecycle_updater"],
+}
+
+# Review embedder — continuous micro-batch, pg_try_advisory_lock(7400050).
+# Same idempotency guarantee: a second instance exits on the lock, never races.
+EMBEDDER = {
+    "name": "embedder",
+    "cmd":  [PY, "-m", "scripts.review_embedder"],
+}
+
+# Quarantine hourly rollup — 5-min loop, pg_try_advisory_lock(7400060).
+# Rolls MinIO quarantine hour-prefixes into quarantine_hourly_summary so
+# /monitor reads Postgres (fast) instead of listing S3 on every request.
+QUARANTINE_ROLLUP = {
+    "name": "quarantine",
+    "cmd":  [PY, "-m", "scripts.quarantine_hourly_rollup"],
+}
+
 # Services whose health we wait on before starting the Python processes.
 # These are the docker compose SERVICE names — adjust to match your compose file.
 HEALTH_WAIT_SERVICES = ["postgres", "kafka"]
@@ -140,7 +236,10 @@ COLORS = {
     "consumer":  "\033[36m",   # cyan
     "simulator": "\033[33m",   # yellow
     "dashboard": "\033[35m",   # magenta
-    "system":    "\033[32m",   # green
+    "gold":       "\033[34m",   # blue
+    "embedder":   "\033[94m",   # bright blue
+    "quarantine": "\033[93m",   # bright yellow
+    "system":     "\033[32m",   # green
     "error":     "\033[31m",   # red
 }
 RESET = "\033[0m"
@@ -259,13 +358,219 @@ def stream_output(proc, tag):
             print(f"{color}[{tag}]{RESET} {line}", flush=True)
 
 
+# --- Startup self-heal -----------------------------------------------------------
+
+_TRAVELLENS_CMD_PATTERNS = [
+    "scripts.stream_consumer",
+    "scripts.kafka_event_producer",
+    "scripts.gold_lifecycle_updater",
+    "scripts.review_embedder",
+    "scripts.quarantine_hourly_rollup",
+    "render.server",
+]
+
+_TRAVELLENS_PROC_LABELS = {
+    "scripts.stream_consumer":          "consumer",
+    "scripts.kafka_event_producer":     "simulator",
+    "scripts.gold_lifecycle_updater":   "gold updater",
+    "scripts.review_embedder":          "embedder",
+    "scripts.quarantine_hourly_rollup": "quarantine rollup",
+    "render.server":                    f"dashboard on :{DASHBOARD_PORT}",
+}
+
+
+def _pid_cmdline_map():
+    """Return {pid: cmdline} for all running processes on Windows. Best-effort."""
+    result = {}
+    if sys.platform != "win32":
+        return result
+    try:
+        ps_script = (
+            "Get-WmiObject Win32_Process | "
+            "Where-Object { $_.CommandLine -ne $null } | "
+            "Select-Object ProcessId,CommandLine | "
+            "ConvertTo-Json -Compress"
+        )
+        r = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_script],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=20,
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            import json as _json
+            data = _json.loads(r.stdout.strip())
+            if isinstance(data, dict):
+                data = [data]
+            for entry in data:
+                try:
+                    pid = int(entry.get("ProcessId", 0))
+                    cmd = entry.get("CommandLine") or ""
+                    if pid:
+                        result[pid] = cmd
+                except (TypeError, ValueError):
+                    pass
+    except Exception:
+        pass
+    return result
+
+
+def _find_pid_on_port(port):
+    """Return PID (int) of the process holding TCP port, or None."""
+    needle = f":{port} "
+    try:
+        r = subprocess.run(
+            ["netstat", "-ano"],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=5,
+        )
+        for line in r.stdout.splitlines():
+            if needle in line:
+                parts = line.split()
+                if parts and parts[-1].isdigit():
+                    pid = int(parts[-1])
+                    if pid != 0:
+                        return pid
+    except Exception:
+        pass
+    return None
+
+
+def _kill_pid_windows(pid, label):
+    """Force-kill a process tree on Windows via taskkill /F /T."""
+    log("system", f"stopping {label} (PID {pid})")
+    try:
+        subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", str(pid)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10,
+        )
+    except Exception:
+        pass
+
+
+def _wait_advisory_locks_released(timeout=30):
+    """
+    Poll pg_locks until advisory locks 7400030/40/50/60 are all freed, then return.
+    Falls back to a 3-second sleep if Postgres is not reachable.
+
+    Session-level advisory locks release when Postgres detects the broken TCP
+    connection of a killed process — normally within 1–2 seconds.
+    """
+    query = (
+        "SELECT COUNT(*) FROM pg_locks "
+        "WHERE locktype='advisory' AND granted=true AND classid=0 "
+        "AND objid IN (7400030, 7400040, 7400050, 7400060);"
+    )
+    deadline = time.time() + timeout
+    ever_reachable = False
+    while time.time() < deadline:
+        try:
+            r = subprocess.run(
+                ["docker", "exec", "travellens-postgres", "psql",
+                 "-U", "travellens", "-d", "travellens", "-t", "-A", "-c", query],
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                text=True, timeout=5,
+            )
+            if r.returncode == 0:
+                count_str = r.stdout.strip()
+                if count_str.isdigit():
+                    ever_reachable = True
+                    if int(count_str) == 0:
+                        break  # all locks freed
+        except Exception:
+            pass
+
+        if not ever_reachable:
+            # Postgres not reachable — fixed grace period instead of polling.
+            time.sleep(3)
+            break
+        time.sleep(0.5)
+
+    log("system",
+        "advisory locks 7400030/40/50/60 released "
+        "(Postgres sessions closed on process kill).")
+
+
+def _startup_cleanup():
+    """
+    TAKEOVER — runs BEFORE port 47219 is acquired.  Kills the live run.py
+    supervisor (identified by who holds port 47219) and all travellens child
+    processes, then waits until Postgres advisory locks 7400030/40/50/60 are
+    released.  After this returns, port 47219 is free and all four locks are
+    available for the fresh procs.
+
+    Safety: if :5000 is held by a non-travellens PID, print a clear error and exit
+    — never blind-kill an unrelated process.
+    """
+    if sys.platform != "win32":
+        return
+
+    own_pid = os.getpid()
+    cmdmap = _pid_cmdline_map()
+
+    # ── :5000 ownership check — error before killing anything ────────────────
+    port5000_pid = _find_pid_on_port(DASHBOARD_PORT)
+    if port5000_pid and port5000_pid != own_pid:
+        cmd5000 = cmdmap.get(port5000_pid, "")
+        is_travellens = any(pat in cmd5000 for pat in _TRAVELLENS_CMD_PATTERNS)
+        if not is_travellens and cmdmap:
+            # cmdmap is populated; we positively know this is a foreign process.
+            log("system",
+                f":5000 is held by PID {port5000_pid} "
+                f"({'...' + cmd5000[-60:] if cmd5000 else 'unknown'}) "
+                f"which is NOT a travellens process — "
+                f"stop that process manually before starting run.py.",
+                "error")
+            sys.exit(1)
+
+    found = {}  # pid -> human label
+
+    # ── Find the live run.py supervisor (holds port 47219) ───────────────────
+    supervisor_pid = _find_pid_on_port(_RUN_LOCK_PORT)
+    if supervisor_pid and supervisor_pid != own_pid:
+        found[supervisor_pid] = "run.py supervisor"
+
+    # ── Sweep: find leftover travellens child PIDs by cmdline pattern ────────
+    for pid, cmd in cmdmap.items():
+        if pid == own_pid or pid in found:
+            continue
+        for pat in _TRAVELLENS_CMD_PATTERNS:
+            if pat in cmd:
+                found[pid] = _TRAVELLENS_PROC_LABELS.get(pat, pat)
+                break
+
+    if not found:
+        return  # clean slate — silent pass
+
+    for pid, label in found.items():
+        _kill_pid_windows(pid, label)
+
+    # If we killed the supervisor, poll until port 47219 is actually free —
+    # the OS releases it a moment after the process dies.
+    if supervisor_pid and supervisor_pid != own_pid:
+        deadline47 = time.time() + 10
+        while time.time() < deadline47:
+            if _find_pid_on_port(_RUN_LOCK_PORT) is None:
+                break
+            time.sleep(0.2)
+
+    # Wait for Postgres to detect broken connections and release advisory locks
+    # before the new procs try to acquire them.
+    _wait_advisory_locks_released()
+
+    # ── Verify :5000 is free ──────────────────────────────────────────────────
+    still5000 = _find_pid_on_port(DASHBOARD_PORT)
+    if still5000 and still5000 != own_pid:
+        log("system",
+            f"WARNING: :5000 still held by PID {still5000} after cleanup — "
+            f"dashboard may fail to bind.", "error")
+
+
 class Launcher:
     def __init__(self, args):
         self.args = args
         self.procs = []          # list of (name, Popen)
         self.threads = []
         self.started_docker = False
-        self._shutting_down = False
+        self._shutting_down = False   # suppress double "shutting down …" log
+        self._cleanup_done   = False  # idempotence guard for _do_cleanup
 
     # -- Docker -------------------------------------------------------------------
     def bring_up_docker(self):
@@ -334,17 +639,9 @@ class Launcher:
         self.threads.append(t)
 
     def start_python(self):
-        # --------------------------------------------------------------------
-        # Dashboard — always started (it is the user-facing thing every mode
-        # wants). Skip only if its port is already bound by something else,
-        # in which case we warn and continue with the rest.
-        # --------------------------------------------------------------------
-        if port_in_use(DASHBOARD["port"]):
-            log("system",
-                f"port {DASHBOARD['port']} already in use — NOT starting a second dashboard.",
-                "error")
-        else:
-            self.start_process(DASHBOARD)
+        # Dashboard — always started. _startup_cleanup() already killed any
+        # stale travellens process that was holding :5000, so no port check needed.
+        self.start_process(DASHBOARD)
 
         # --------------------------------------------------------------------
         # --server-only: we are done. No consumer, no simulator. This is the
@@ -419,38 +716,50 @@ class Launcher:
                     f"— populates the monitor's quarantine cards")
             self.start_process(SIMULATOR, extra, env_extra=chaos)
 
+        # --------------------------------------------------------------------
+        # Background maintenance procs — started in every mode that includes
+        # the consumer (i.e. everything except --server-only).  Advisory
+        # locks prevent duplicates: if either is already running manually,
+        # the new instance acquires no lock and exits with code 1 immediately
+        # — the existing instance keeps running unaffected.
+        # --------------------------------------------------------------------
+        self.start_process(GOLD_UPDATER)
+        self.start_process(EMBEDDER)
+        self.start_process(QUARANTINE_ROLLUP)
+
     # -- Shutdown -----------------------------------------------------------------
-    def shutdown(self, *_):
-        if self._shutting_down:
+    def _do_cleanup(self):
+        """Kill all children and optionally tear down Docker. Idempotent.
+
+        Called from three places so no child can ever be orphaned:
+          1. shutdown() — the signal handler / explicit call path
+          2. run()'s finally block — catches any exception that bypasses the handler
+          3. atexit.register — last resort if the finally block is itself interrupted
+             (e.g. a second Ctrl-C mid-cleanup on some platforms)
+        """
+        if self._cleanup_done:
             return
-        self._shutting_down = True
-        print()
-        log("system", "shutting down — stopping host processes ...")
+        self._cleanup_done = True
         for name, proc in self.procs:
-            if proc.poll() is None:
-                log("system", f"terminating {name} (pid {proc.pid})")
-                try:
-                    proc.terminate()
-                except Exception:
-                    pass
-        # give them a moment, then hard-kill stragglers
-        deadline = time.time() + 8
-        for name, proc in self.procs:
-            remaining = max(0, deadline - time.time())
-            try:
-                proc.wait(timeout=remaining)
-            except Exception:
-                log("system", f"force-killing {name}", "error")
-                try:
-                    proc.kill()
-                except Exception:
-                    pass
+            _kill_proc_tree(name, proc)
         self.tear_down_docker()
         log("system", "done.")
 
+    def shutdown(self, *_):
+        """Signal handler entry point (SIGINT / SIGTERM)."""
+        if not self._shutting_down:
+            self._shutting_down = True
+            print()
+            log("system", "shutting down — stopping host processes ...")
+        self._do_cleanup()
+
     # -- Main loop ----------------------------------------------------------------
     def run(self):
-        signal.signal(signal.SIGINT, self.shutdown)
+        # Register _do_cleanup with atexit BEFORE the signal handlers so it fires
+        # even if the signal handler is interrupted mid-execution (e.g. a second
+        # Ctrl-C while proc.wait() is blocking) — Python always runs atexit on exit.
+        atexit.register(self._do_cleanup)
+        signal.signal(signal.SIGINT,  self.shutdown)
         signal.signal(signal.SIGTERM, self.shutdown)
         try:
             self.bring_up_docker()
@@ -474,7 +783,10 @@ class Launcher:
                     break
                 time.sleep(2)
         finally:
-            self.shutdown()
+            # Belt-and-suspenders: also call _do_cleanup here so that any exception
+            # that bypasses the signal handler (e.g. an unhandled error in bring_up_docker)
+            # still tears everything down.  _do_cleanup is idempotent — harmless if already done.
+            self._do_cleanup()
 
 
 def main():
@@ -532,6 +844,25 @@ def main():
         else:
             log("system", "docker daemon not reachable.", "error")
         return
+
+    # ── Takeover: kill any prior run.py + children, wait for locks ───────
+    # _startup_cleanup() runs FIRST — before we hold port 47219.  It kills
+    # the live supervisor (port 47219 holder) + all travellens children, then
+    # polls pg_locks until advisory locks 7400030/40/50/60 are free.
+    _startup_cleanup()
+
+    # ── Acquire singleton after takeover ──────────────────────────────────
+    # After cleanup port 47219 should be free.  socket.bind() is atomic —
+    # two simultaneous `python run.py` invocations race here; exactly one wins.
+    _lock = _acquire_run_lock()
+    if _lock is None:
+        # Rare: another run.py started at nearly the same moment.
+        log("system",
+            f"port {_RUN_LOCK_PORT} still held after cleanup — "
+            f"another run.py may have started simultaneously; try again.",
+            "error")
+        sys.exit(1)
+    # Keep _lock referenced so the socket stays bound for our lifetime.
 
     Launcher(args).run()
 

@@ -470,6 +470,22 @@ old and new model vectors are geometrically incompatible.
 - `<=>` cosine operator requires psql — pgvector operators are not supported in DuckDB
 
 
+## BUILD HISTORY / EVOLUTION
+
+Changes to Phase 3 embeddings after the original acceptance sign-off. Earliest first.
+
+---
+
+### B-030b — Continuous review embedder + IVFFlat re-tune plan
+
+New `scripts/review_embedder.py`: continuous micro-batch process that embeds booking-tied reviews written by B-030/B-030a. Uses the same `all-MiniLM-L6-v2` model and `MAX_CHARS=1000` truncation limit as the frozen `generate_embeddings.py` and `ai/semantic_search.py` — all three share one 384-d vector space. Advisory lock `pg_try_advisory_lock(7400050)` prevents duplicate instances (gold uses `7400040`). Fetches up to 500 NULL rows per pass, encodes in chunks of 128, writes back via `executemany UPDATE`, commits per batch. Sleeps `EMBED_INTERVAL_SECONDS=120` when backlog is clear.
+
+On first "caught up" poll, logs step-by-step Part B index-rebuild instructions: run a representative query before, `DROP + CREATE INDEX ... WITH (lists = 120)` (correct for ~121K rows vs original `lists=30` built for 30K), run same query after. Rebuild is intentionally NOT automated — the operator confirms recall is unaffected before switching. `run.py` now starts the embedder as a 5th managed proc (alongside consumer, simulator, dashboard, gold_lifecycle_updater). Advisory locks prevent duplicate instances if the script is also started manually.
+
+**Why:** The original `generate_embeddings.py` (frozen) only embedded the 30K Kaggle seed rows. B-030/B-030a added ~91K booking-tied reviews (`record_source='history'` + `'stream'`) with `embedding IS NULL`. Semantic search (`ai/semantic_search.py`) over those rows returns no results until the vectors are written. The continuous embedder clears the backlog then keeps up with the stream in near-real-time.
+
+---
+
 ## NEXT
 
 **Phase 4 — Text-to-SQL + Semantic Query Router**

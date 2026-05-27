@@ -141,6 +141,12 @@ DATA_DIR   = Path(os.getenv("DATA_DIR", "./data"))
 SEED_FILE  = DATA_DIR / "booking_events_seed.json"
 CLOCK_FILE = Path("scripts/.sim_clock.json")
 
+# Advisory lock key — unique to this process, distinct from gold (7400040)
+# and embedder (7400050).  Two concurrent producers race on sim_clock.json
+# (plain file write, no OS lock) and sim_open_bookings UPDATE operations
+# (no SELECT FOR UPDATE), so a second instance MUST exit rather than race.
+PRODUCER_ADVISORY_LOCK_KEY = 7_400_030
+
 # ── DB params ─────────────────────────────────────────────────────────────────
 
 DB_PARAMS = {
@@ -274,7 +280,7 @@ def load_clock(default_start):
         saved_seed = data.get("chaos_seed")
         return last + timedelta(days=1), saved_seed
     except Exception as e:
-        print(f"⚠ Could not parse {CLOCK_FILE}: {e}. "
+        print(f"WARNING: Could not parse {CLOCK_FILE}: {e}. "
               f"Starting at {default_start}.", file=sys.stderr)
         return default_start, None
 
@@ -538,7 +544,7 @@ def hydrate_plans(conn, sim_start, plan_seed, resume_day):
         pending[cancel_date].append(str(booking_id))
         scheduled += 1
     if stale_dates:
-        print(f"⚠ {stale_dates} hydrated cancellations had plan dates before "
+        print(f"WARNING: {stale_dates} hydrated cancellations had plan dates before "
               f"{resume_day}; clamped forward (likely chaos-seed change between runs).")
     return booked, checked_in, scheduled, pending, plans
 
@@ -887,11 +893,11 @@ def main():
     args = parser.parse_args()
 
     if args.rate is not None:
-        print(f"⚠ --rate is deprecated and ignored; use --sim-speed "
+        print(f"WARNING: --rate is deprecated and ignored; use --sim-speed "
               f"(sim-days per real-second). Current --sim-speed={args.sim_speed}.",
               file=sys.stderr)
     if args.duration is not None:
-        print(f"⚠ --duration is deprecated and ignored; use --until <sim-date>. "
+        print(f"WARNING: --duration is deprecated and ignored; use --until <sim-date>. "
               f"Current --until={args.until}.", file=sys.stderr)
 
     sim_start = args.sim_start
@@ -905,7 +911,7 @@ def main():
         random.seed(chaos_seed)
 
     if args.malformed_pct + args.late_pct > 100:
-        print(f"⚠ CHAOS config error: malformed ({args.malformed_pct}%) + "
+        print(f"WARNING: CHAOS config error: malformed ({args.malformed_pct}%) + "
               f"late ({args.late_pct}%) > 100%.", file=sys.stderr)
 
     if args.reset_clock:
@@ -924,7 +930,7 @@ def main():
         print(f"Reusing chaos_seed={chaos_seed} from {CLOCK_FILE.name} (plans stay deterministic across restart).")
         random.seed(chaos_seed)
     elif chaos_seed is not None and saved_seed is not None and chaos_seed != saved_seed:
-        print(f"⚠ chaos_seed changed: was {saved_seed}, now {chaos_seed}. "
+        print(f"WARNING: chaos_seed changed: was {saved_seed}, now {chaos_seed}. "
               f"Previously-scheduled cancellation plans will shift; some hydrated "
               f"plans may be clamped forward.", file=sys.stderr)
 
@@ -944,6 +950,27 @@ def main():
     # ── DB. autocommit=False; we commit at end of every sim-day.
     conn = psycopg2.connect(**DB_PARAMS)
     conn.autocommit = False
+
+    # ── Single-instance guard — same pattern as gold_lifecycle_updater and
+    # review_embedder.  Two producers racing on sim_clock.json and
+    # sim_open_bookings corrupt the simulator state and can crash both
+    # instances.  The advisory lock is the authoritative "one producer alive"
+    # signal; it is held until the process exits (or conn closes).
+    with conn.cursor() as _cur:
+        _cur.execute("SELECT pg_try_advisory_lock(%s)", (PRODUCER_ADVISORY_LOCK_KEY,))
+        _lock_acquired = _cur.fetchone()[0]
+    if not _lock_acquired:
+        print(
+            f"ERROR: Another producer instance already holds advisory lock "
+            f"(key={PRODUCER_ADVISORY_LOCK_KEY}).  "
+            f"Kill the existing instance before starting a new one.",
+            file=sys.stderr,
+        )
+        producer.close()
+        conn.close()
+        sys.exit(1)
+    print(f"Advisory lock acquired (key={PRODUCER_ADVISORY_LOCK_KEY}).")
+
     # B-030: hotel rating map loaded once at startup for review generation.
     hotel_rating_map = _load_hotel_rating_map(conn)
 
@@ -981,14 +1008,23 @@ def main():
     t_start = time.time()
     days_run = 0
     last_day_completed = None
+    _runway_exhausted_logged = False  # log once, then keep running
 
     while running:
         if args.until is not None and day > args.until:
             print(f"\nReached --until {args.until}. Stopping.")
             break
         if not has_runway_after(conn, day) and not has_open_bookings(conn):
-            print(f"\nRunway exhausted at {day} AND sim_open_bookings empty. Stopping.")
-            break
+            if not _runway_exhausted_logged:
+                print(
+                    f"\nRunway exhausted at {day} AND sim_open_bookings empty — "
+                    f"continuing to emit PRICE_CHANGE so open windows can flush. "
+                    f"Stop with Ctrl-C or --until.",
+                    flush=True,
+                )
+                _runway_exhausted_logged = True
+            # Keep looping: run_one_day emits PRICE_CHANGE per day so
+            # max_event_ts advances and the consumer can flush open windows.
 
         day_rng = random.Random(f"day|{day.isoformat()}|{plan_seed}")
         n, wall = run_one_day(

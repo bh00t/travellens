@@ -657,6 +657,50 @@ To restart: re-run Steps 1–6 from the top.
 - Do not commit `.env`, generated keys, or `airflow/logs/`
 
 
+## BUILD HISTORY / EVOLUTION
+
+Changes shipped under Phase 6 ahead of the full five-DAG acceptance run.
+
+---
+
+### B-033 — `quarantine_daily_rollup` DAG (self-healing daily summary) [SUPERSEDED — see B-044 below]
+
+First Phase 6 DAG to ship. Addresses the unbounded S3 scan that `_monitor_quarantine()` performed on every page load.
+
+**What it does:** runs daily at 3 AM UTC (`schedule_interval='0 3 * * *'`, `catchup=False`). On each run it computes `missing_days = (all calendar days from the earliest S3 quarantine day up to yesterday UTC) MINUS (summary_date rows already in quarantine_daily_summary)` and UPSERT-backfills all of them. First run is a full historical backfill; subsequent runs are near-instant (typically one row for yesterday). Explicit 0/0 rows are written for days with no quarantine objects so "not rolled up yet" is distinguishable from "genuinely zero quarantine." Idempotent on retry.
+
+**Why self-healing instead of catchup:** `catchup=False` + internal sweep means a missed schedule, pipeline downtime, or late manual run all converge to the same correct table — no Airflow backfill plumbing required. The correctness guarantee is the S3-reconciliation, not the cron.
+
+**Files:**
+- `db/migrations/012_quarantine_daily_summary.sql` — new table (`summary_date DATE PK`, `malformed_count INT NOT NULL DEFAULT 0`, `late_count INT NOT NULL DEFAULT 0`, `computed_at TIMESTAMPTZ`).
+- `airflow/dags/quarantine_daily_rollup.py` — `PythonOperator` DAG; uses `S3Hook(aws_conn_id="travellens_s3")` + `PostgresHook(postgres_conn_id="travellens_warehouse")`; `execution_timeout=timedelta(minutes=20)`.
+- `render/server.py` — monitor read-path updated (see phase-7-monitor.md BUILD HISTORY for detail).
+
+---
+
+### B-044 — Hourly quarantine rollup (supersedes B-033 DAG)
+
+B-033's daily Airflow DAG is retired. The quarantine rollup is now a run.py background process operating at hourly granularity.
+
+**Why the change:** the daily DAG required Airflow infra and produced only day-level counts — fine for historical ranges but coarse for same-day monitoring. The hourly proc runs continuously as the 6th managed process in `run.py`, updates every 5 minutes, and writes hour-level rows that the monitor aggregates via a single SQL `SUM`. No S3 listing on the monitor request path at all.
+
+**Design:**
+- `quarantine_hourly_summary (summary_date, summary_hour PK, malformed_count, late_count, is_final, computed_at)` — migration 013 creates this table and drops `quarantine_daily_summary`.
+- Watermark from `MAX(is_final=TRUE)` row — no separate cursor table. `GRACE_MINUTES=10`: an hour is finalised only once `now >= hour_end + 10min`; open/grace hours re-counted every cycle so a consumer burst straddling an hour boundary is never missed.
+- Empty completed hours get explicit 0/0/FINAL rows so the watermark advances contiguously and empty hours are never re-probed.
+- First run on empty table: `_discover_earliest_hour` walks year=/month=/day=/hour= virtual dirs with O(8) API calls (takes sorted-first entry at each level across both prefixes) then backfills forward.
+- Eager first cycle runs immediately on startup so `/monitor` tiles are populated before the first 5-min sleep.
+- Singleton: `pg_try_advisory_lock(7400060)`; second instance exits code 1.
+
+**Files:**
+- `db/migrations/013_quarantine_hourly_summary.sql` — drops `quarantine_daily_summary`; creates `quarantine_hourly_summary`.
+- `scripts/quarantine_hourly_rollup.py` — new run.py background proc (6th process); `CYCLE_SECONDS=300`, `GRACE_MINUTES=10`.
+- `airflow/dags/quarantine_daily_rollup.py` — **deleted** (retired with B-044).
+- `render/server.py` — `boto3`, `botocore.Config`, S3 constants, and both prior quarantine functions removed; replaced with single pure-Postgres `_monitor_quarantine(conn, date_from, date_to)` that queries `quarantine_hourly_summary`. See phase-7-monitor.md BUILD HISTORY for detail.
+- `run.py` — `QUARANTINE_ROLLUP` proc definition added; started as 6th process; bright-yellow colour tag.
+
+---
+
 ## NEXT
 
 Phase 6 is the last build phase. After it ships:

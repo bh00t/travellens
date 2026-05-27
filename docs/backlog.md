@@ -33,12 +33,15 @@ carry context only.
 - B-028 — `run.py` dev launcher (built; not yet committed / verified)
 - ~~B-030 — REVIEW as a stream event~~ ✓ Done
 - B-031 — consumer resilience fix (L-016; fix shipped, pending live verification)
-- B-033 — `quarantine_daily_rollup` DAG (Phase 6; self-healing daily summary)
+- ~~B-033 — `quarantine_daily_rollup` DAG (Phase 6; self-healing daily summary)~~ ✓ Done (superseded by B-044)
+- ~~B-044 — hourly quarantine rollup (run.py proc; supersedes B-033 daily DAG + migration 012)~~ ✓ Done
 - B-034 — stateful lifecycle simulator — step 1 shipped, superseded by B-035 + B-036/B-037 (kept for context)
 - B-036 — calendar simulator Phase B (net-new synthetic + 10–25% long-stay tail)
 - ~~B-037 — calendar simulator Phase C (REVIEW emission)~~ ✓ Absorbed into B-030
 - ~~B-040 — gold layer (per-booking lifecycle reconstruction + transition flags)~~ ✓ Done
 - B-041 — producer rate-flag migration (run.py / README:101 `--rate` → `--sim-speed`; phase-7-monitor.md CHECKOUT "design weight 0.12" copy → calendar-replay language)
+- B-043 — gold `illegal_transition_flag` false positives: batch-local state machine + unconditional UPSERT overwrite (~5,151 rows affected)
+- B-045 — `run.py` startup takeover (newest wins): kills live supervisor + all children, polls advisory locks free, then starts fresh; foreign-`:5000` guard (built, pending owner verification + commit)
 
 ### OPEN — limitations (L-)
 
@@ -58,10 +61,13 @@ carry context only.
 ### DONE
 
 See the [Completed](#completed) table at the bottom of this file. Currently
-holds B-001..B-004, B-007..B-012, B-018, B-019, B-027, B-029, B-030, B-032,
-B-035, B-034A (calendar simulator Phase A), B-038 (bronze sink), B-039
-(silver sink), B-040 (gold lifecycle layer), B-042 (monitor quarantine date
-scoping), plus the unnumbered Phase 1–5 foundation items.
+holds B-001..B-004, B-007..B-012, B-018, B-019, B-027, B-029, B-030,
+B-030b (continuous embedder + monitor tiles + review/embed date-scoping +
+freshness signal fix), B-032, B-033 (superseded by B-044), B-035,
+B-034A (calendar simulator Phase A), B-038 (bronze sink), B-039 (silver sink),
+B-040 (gold lifecycle layer), B-042 (monitor quarantine date scoping),
+B-044 (hourly quarantine rollup — supersedes B-033),
+plus the unnumbered Phase 1–5 foundation items.
 
 ### ABANDONED
 
@@ -307,7 +313,7 @@ This is the "compute path" half of B-022 — it moves widget refresh off the req
 so the dashboard read path only ever reads cache. Depends on B-022's frozen-SQL storage being
 in place first.
 
-### B-033 — quarantine_daily_rollup DAG (self-healing daily summary) ⬜ PENDING [Phase 6]
+### B-033 — quarantine_daily_rollup DAG (self-healing daily summary) ✓ Done — superseded by B-044
 
 **Problem:** `_monitor_quarantine()` lists ALL S3 objects under `malformed_events/` and
 `late_events/` on every page load — slow (the ~8s MinIO-timeout render) and unbounded as
@@ -500,6 +506,33 @@ and it skips a duplicate dashboard if the port is already bound.
 stack; full `python run.py` brings everything up and Ctrl-C tears it down cleanly with no
 orphaned processes.  
 **Update (Phase 7 session):** —chaos passthrough + stream_output UTF-8 fix added this session; CONFIG block still unverified.
+
+---
+
+### B-045 — `run.py` startup takeover (newest wins — kills prior run.py + children)
+**Priority:** Medium — built; pending owner verification + commit  
+**Problem:** When `run.py` was hard-killed (power cycle, force-kill), stale orphan processes from the prior session kept holding `:5000` or the Postgres advisory locks. The next `run.py` backed off, leaving the operator with a stale dashboard. Separately, when a developer wants to restart the stack from a new terminal, `python run.py` should simply take over without requiring a manual Ctrl-C first.
+
+**What was built (`run.py`):**
+- **`_startup_cleanup()` — first action in `main()`:** runs BEFORE port 47219 is acquired. Finds the live run.py supervisor by who holds port 47219 via `_find_pid_on_port(47219)`, kills it with `taskkill /F /T` (entire process tree), then kills any remaining travellens children (consumer / simulator / dashboard / gold updater / embedder / quarantine rollup) by cmdline pattern sweep. Logs `"[system] stopping <label> (PID N)"` per process.
+- **`_wait_advisory_locks_released()`** — called by `_startup_cleanup()` after killing. Polls `pg_locks WHERE locktype='advisory' AND classid=0 AND objid IN (7400030,7400040,7400050,7400060)` every 0.5s (up to 30s) until all 4 locks are free. Falls back to a 3s fixed sleep if Postgres is not reachable (e.g. `--server-only` or docker not up). Logs `"advisory locks 7400030/40/50/60 released"` when done.
+- **`_acquire_run_lock()` — comes AFTER cleanup:** `socket.bind("127.0.0.1", 47219)`. With the prior supervisor dead, this binds cleanly. If two `python run.py` start at nearly the same moment, `socket.bind()` is atomic — exactly one wins; the other prints `"port 47219 still held after cleanup — another run.py may have started simultaneously; try again."` and exits 1.
+- **`_pid_cmdline_map()`** — one PowerShell WMI call returns `{pid: cmdline}` for all running processes.
+- **`_find_pid_on_port(port)`** — parses `netstat -ano` with needle `f":{port} "` (trailing space prevents `:50000` false-matching `:5000`).
+- **`_kill_pid_windows(pid, label)`** — `taskkill /F /T` kills the full process tree; logs `"[system] stopping <label> (PID N)"`.
+- **Sweep** matches command lines against `_TRAVELLENS_CMD_PATTERNS` (`scripts.stream_consumer`, `scripts.kafka_event_producer`, `scripts.gold_lifecycle_updater`, `scripts.review_embedder`, `scripts.quarantine_hourly_rollup`, `render.server`) to catch any children that survived the supervisor tree kill.
+- **Foreign-process guard:** if `:5000` is held by a PID whose command line does NOT match any travellens pattern (and WMI data is available so we can be certain), `_startup_cleanup` prints `":5000 is held by PID N ... which is NOT a travellens process — stop that process manually"` and calls `sys.exit(1)`. Never blind-kills an unrelated process.
+- Verifies `:5000` is free after cleanup; warns (does not stop) if still held.
+- **Silent on clean start** — nothing to kill → returns immediately with no log output.
+- **Removed:** the old passive `port_in_use(DASHBOARD["port"])` guard in `Launcher.start_python()` that printed "NOT starting a second dashboard". Dashboard is now always started; `_startup_cleanup()` guarantees `:5000` is free before launch.
+
+**File:** `run.py` (repo root).  
+**Acceptance — owner runs 5 steps:**
+1. **Takeover (critical):** Terminal 1: `python run.py` (let all 6 procs come up). Terminal 2: `python run.py` → reports killing T1's supervisor + children, waits for locks, then starts its OWN 6 procs — all alive, none logged a lock-acquire failure or early exit. T1's procs are gone.
+2. Leave a stale dashboard on `:5000` → start `run.py` → it reports killing the leftover, frees `:5000`, serves a FRESH dashboard.
+3. Ctrl+C → restart `run.py` → clean, zero manual killing required.
+4. Bind a non-travellens process to `:5000` (e.g. `python -c "import socket; s=socket.socket(); s.bind(('',5000)); input()"`) → start `run.py` → clear error message, exits 1, foreign process untouched.
+5. Cold start (no orphans) → run.py starts silently (no cleanup noise), all 6 procs launch normally.
 
 ---
 
@@ -1063,11 +1096,68 @@ both sit a few centimetres apart.
 `render/templates/monitor.html` (caption swap + small chip +
 `.badge-scope` CSS). No DB / migration / wire-shape changes.
 
-**Forward link:** B-033 (`quarantine_daily_rollup` DAG) is the
-production-grade backfill that turns this O(days × 2) list path
-into an O(1) Postgres lookup. B-042 is the right-sized stand-in
-until then; the day-prefix listing is cheap enough that even a
-30-day range is well under the page-render budget.
+**Superseded by:** B-033 (hybrid Postgres+S3 daily rollup) → then B-044 (pure-Postgres hourly rollup,
+`quarantine_hourly_summary`). B-042's S3 day-prefix listing is no longer on the request path.
+
+---
+
+### B-043 — Gold `illegal_transition_flag` false positives (batch-local state machine)
+**Priority:** Medium — `illegal_transition_flag` is currently unreliable; do NOT use it for data
+quality assertions until this lands.  
+**Observed count:** 5,151 rows with `illegal_transition_flag = TRUE` as of the discovery run
+(all `last_updated` timestamps between 15:05–18:47 UTC on the discovery day; zero new flags added
+after 19:00 UTC, confirming these are a standing pre-existing cohort, not a regression from any
+recent change).
+
+**Root cause (two cooperating bugs in `scripts/gold_lifecycle_updater.py`):**
+
+1. **Batch-local state machine** — `gold_lifecycle_updater` reads `fact_booking_events WHERE
+   ingest_seq > watermark` for the current batch only. It initialises a fresh in-memory state
+   for each `booking_id` in that batch — it never reads the existing row in
+   `fact_booking_lifecycle` to discover what `checkin_ts` was already committed in a prior
+   batch. Consequence: if a BOOKING + CHECKOUT arrive in the current batch but the history
+   CHECKIN (with a lower `ingest_seq`, committed in a prior gold pass) is already in the gold
+   table, the machine sees CHECKOUT with no CHECKIN in its local window and sets
+   `illegal_transition_flag = True` — a false positive. The data is correct; the machine's
+   view is incomplete.
+
+2. **Unconditional UPSERT overwrite** (line ~333 in `gold_lifecycle_updater.py`) — the UPSERT
+   uses `COALESCE` for `checkin_ts` (preserves the prior committed value) but writes
+   `illegal_transition_flag = EXCLUDED.illegal_transition_flag` unconditionally. So a
+   batch-local `True` overwrites the already-correct `False` that the first-pass committed, and
+   the false positive is permanently stamped on the row.
+
+**Why cross-batch CHECKOUTs are common:** History events (source='history') have lower
+`ingest_seq` values; stream events have higher ones. When the gold micro-batch runs for the
+first time after a consumer session, it processes history CHECKIN (low seq, prior watermark
+batch) before stream CHECKOUT (high seq, current batch). If both don't fall in the same gold
+pass, the cross-batch case arises naturally for every booking whose history CHECKIN was committed
+in an earlier gold pass and whose stream CHECKOUT arrives later.
+
+**Fix (do NOT implement yet — this is the planned approach):**
+1. In `gold_lifecycle_updater.py`: before evaluating a CHECKOUT event for a booking_id, query
+   `fact_booking_lifecycle` for its existing `checkin_ts`. If `checkin_ts IS NOT NULL` in the
+   gold table, treat it as "CHECKIN already seen" — do not set `illegal_transition_flag = True`
+   for the CHECKOUT.
+2. Change the UPSERT to `illegal_transition_flag = CASE WHEN EXCLUDED.illegal_transition_flag
+   THEN TRUE ELSE fact_booking_lifecycle.illegal_transition_flag END` (i.e., only upgrade to
+   True, never downgrade a stored True to False, and never overwrite a stored False with a
+   batch-local False either). A True can only be cleared by the one-time corrective pass below.
+3. One-time corrective pass: re-evaluate all 5,151 flagged rows against the full
+   `fact_booking_events` history (not just the last batch) and set `illegal_transition_flag =
+   FALSE` wherever no genuine business-timestamp inversion exists.
+
+**Acceptance (sketch):**
+- After fix + corrective pass: `SELECT COUNT(*) FROM fact_booking_lifecycle WHERE
+  illegal_transition_flag = TRUE` returns 0 (or a very small count of genuine inversions).
+- Idempotent re-run of the corrective pass changes 0 rows on the second run.
+- New stream CHECKOUTs for bookings whose CHECKIN is already in gold do NOT produce new false
+  positives.
+- No regression: watermark still advances; forward-only status machine still holds; all other
+  gold acceptance checks still pass.
+
+**Files:** `scripts/gold_lifecycle_updater.py` only. No migration needed (flag column already
+exists; the corrective pass is a plain UPDATE, not a schema change).
 
 ---
 
@@ -1214,3 +1304,7 @@ The old design weights stay documented in `docs/phase-2-streaming.md` as histori
 | ✓ | B-034A — Calendar simulator Phase A (replay engine). `scripts/kafka_event_producer.py` rewritten as a calendar-driven REPLAY of `fact_bookings WHERE booking_ts >= --sim-start` + advancement of the real `sim_open_bookings` backlog. Sim-clock in `scripts/.sim_clock.json`; resume = saved + 1. New wire field `event_date` (sim-day) alongside wall-clock `event_ts`. Same Kafka config / partition key / wire types as before. Cancellation timing + reasons keyed deterministically off `booking_id + chaos-seed`. 21 / 21 acceptance — 0 quarantine on clean run, exact agg-vs-producer sum match, 0 dangling booking_ids, 0 is_cancelled bookings checked in, restart re-emits 0 events, chaos reproducible. Phases B (B-036 net-new + long-stay) and C (B-037 REVIEW) explicitly deferred. | Phase 2 / Phase 6 |
 | ✓ | B-040 — Gold lifecycle layer. Migration 009 (`ingest_seq` cursor column on `fact_booking_events` + `fact_booking_lifecycle` one-row-per-booking gold table + `gold_watermark` single-row cursor). `scripts/gold_lifecycle_updater.py` decoupled ~1-min micro-batch: reads silver `WHERE ingest_seq > watermark`, groups by booking_id, intra-batch lifecycle sort, forward-only status machine, business-timestamp-based `illegal_transition_flag` (NOT processing-order). 7/7 acceptance: 624,388 gold rows = 624,388 distinct silver booking_ids; illegal_flag=0 across all 606,463 history + 5,917 mixed + 12,008 stream rows; outcome completed 85.4%/cancelled 8.0%/no_show 3.4%/in_progress 3.2%; watermark==max_seq 1,763,493; 0 status inconsistencies; idempotent. | Phase 2 / Phase 6 |
 | ✓ | B-030 — REVIEW as a booking-tied stream event (absorbs B-037). Migration 010 (`reviews_raw` extended with 7 new columns: `booking_id`, `customer_id`, `review_stage`, `review_channel`, `event_ts`, `event_date`, `record_source NOT NULL DEFAULT 'seed'`; 2 new indexes). Shared generation library `scripts/review_generator.py` (rating anchored on hotel avg_rating + stage adj + Gaussian noise; negativity bias shape _P_REVIEW_BASE={1:0.75,2:0.65,3:0.40,4:0.25,5:0.20} scaled by REVIEW_PROPENSITY_SCALE=0.47 → effective p={1:0.35,2:0.31,3:0.19,4:0.12,5:0.09}; overall rate ~15%; OTA channel constraint; India reason bank + 40/35/25 blend with Kaggle seed texts; deterministic uuid5 review_id). `scripts/generate_review_backfill.py` backfills 90,980 history reviews from 612,380 bookings (14.9%). `scripts/stream_consumer.py` gains REVIEW branch (intercepts after Gate 4, before silver buffer — routes to bronze + reviews_raw, skips silver/agg/gold), `review_flush()` sink, and review metrics in run summary. `scripts/kafka_event_producer.py` emits REVIEW events at CHECKOUT (lifecycle_status=COMPLETED) and CANCELLATION (lifecycle_status=CANCELLED/same-day). `scripts/review_stats.py` — read-only diagnostic: counts by source/stage, overall rate, hotel_id consistency, no_show check, avg rating by star_category gradient. B-030a: REVIEW_PROPENSITY_SCALE tuned to 0.47 for ~15% rate (down from original 31.6%). 6/6 acceptance: A (90,980 history rows, all fields populated) B (0 orphan booking_ids) C (0 wrong OTA channels) D (negativity gradient intact) E (sentiment gradient 0★2.89→5★3.94 monotone) F (30K seed rows unchanged). Diagnostic write-nothing verified (two runs → identical counts). **event_ts fix (B-030a):** `make_review_event_dict` is a pure function — it returns no `event_ts`. Each of the 3 producer emission sites now stamps `_rv["event_ts"] = _now_iso_utc()` immediately after the non-None check; without this, Gate 2's unconditional `event_ts` check quarantined every REVIEW as `missing_field`. Verified: 666 `record_source='stream'` rows, 0 duplicates, 0 `malformed` growth. | Phase 2 / Phase 6 |
+| ✓ | B-030b — Continuous review embedder + monitor tile activation + run.py full-stack wiring. New `scripts/review_embedder.py`: continuous micro-batch, `pg_try_advisory_lock(7400050)`, loads `all-MiniLM-L6-v2` once, loops every 120s (`EMBED_INTERVAL_SECONDS`), fetches up to 500 (`EMBED_BATCH_SIZE`) NULL rows per pass, encodes + writes, commits per batch. On first "backlog clear" event logs detailed Part B index-rebuild instructions (lists=120 for ~121K rows). `render/server.py`: `_monitor_embeddings` denominator fixed to `COUNT(*) FILTER (WHERE review_text IS NOT NULL)` so NULL-text rows don't cap coverage below 100%; new `_monitor_reviews(conn)` returns total + seed/history/stream split; `/monitor/data` now includes `reviews` and `embed` keys (previously excluded as "static"). `render/templates/monitor.html`: Review + Embedded SOON tiles replaced with live cards (IDs `ev-reviews`, `ev-reviews-note`, `ev-embedded`, `ev-embedded-note`, `ev-embedded-bar`); coverage progress bar added to Embedded tile; JS poller extended with `updateReviews()` + `updateEmbed()` called on each 10s tick. Sentiment tile stays SOON (B-026). `run.py` wired with 5 managed procs: consumer + simulator + dashboard + gold_lifecycle_updater + review_embedder (both with colour tags; started in all modes except `--server-only`; advisory locks prevent duplicate instances). | Phase 3 / Phase 7 |
+| ✓ | B-030b follow-up — Review/Embedded date-scoping + Freshness signal fix. `_monitor_reviews(conn, date_from, date_to)` and `_monitor_embeddings(conn, date_from, date_to)` now filter by `reviews_raw.event_date`; seed reviews (`record_source='seed'`, `NULL event_date`) excluded (static corpus). Return shape change: `reviews` now carries `in_range/history/stream/date_scoped` (not `total/seed/history/stream`). Both `/monitor` and `/monitor/data` routes pass the active date range. Effect: today → only today's reviews, climbs with stream; yesterday → fixed count at ~100% coverage. `badge-scope` chip added to both tile labels. `updateReviews()` JS updated to `in_range`. Stream Freshness tile decoupled: `_monitor_freshness` is now informational context (window age + pill) only; consumer-alive verdict moved to `<span id="freshness-consumer-note">` driven by `live.alive` (heartbeat) on both server render and each 10s tick (new `updateFreshness(data.live)` in the poller). Eliminates the contradiction where "Stale / is the consumer running?" appeared alongside a live events/sec. | Phase 7 |
+| ✓ | B-033 — `quarantine_daily_rollup` DAG + hybrid monitor read-path. Migration 012 (`quarantine_daily_summary DATE PK + malformed_count + late_count + computed_at`). New `airflow/dags/quarantine_daily_rollup.py`: self-healing daily DAG (`schedule_interval='0 3 * * *'`, `catchup=False`); per run computes `missing_days = (calendar range from earliest S3 day to yesterday) − (existing summary rows)` and UPSERT-backfills all gaps; explicit 0/0 rows for quarantine-free days; idempotent. `render/server.py`: old `_monitor_quarantine(date_from, date_to)` renamed `_monitor_quarantine_s3_scan` (graceful fallback); new `_monitor_quarantine(conn, date_from, date_to)` hybrid: past days → Postgres `COALESCE(SUM(malformed_count+late_count), 0)` over `quarantine_daily_summary` (O(1) indexed range); today (if in range) → single S3 day-prefix `list_objects_v2` call; migration 012 absent → warning + fallback to S3 scan. Both `/monitor` and `/monitor/data` route handlers: quarantine call moved inside the existing `try` block (reuses open connection). Eliminates the per-request O(days × 2) S3 listing that scaled unboundedly with quarantine growth. **Superseded by B-044** — `airflow/dags/quarantine_daily_rollup.py` retired; `quarantine_daily_summary` dropped by migration 013. | Phase 6 / Phase 7 |
+| ✓ | B-044 — Hourly quarantine rollup (supersedes B-033 daily DAG + migration 012). Migration 013: drops `quarantine_daily_summary`, creates `quarantine_hourly_summary (summary_date DATE, summary_hour SMALLINT, malformed_count INT, late_count INT, is_final BOOL, computed_at TIMESTAMPTZ, PK(summary_date, summary_hour))`. New `scripts/quarantine_hourly_rollup.py` (run.py 6th proc, `pg_try_advisory_lock(7400060)`): 5-min loop; watermark derived from `MAX(is_final=TRUE)` row (no separate cursor table); each cycle walks watermark+1 → current_hour, re-counts S3 objects via `list_objects_v2 KeyCount` (RAM-safe, no key materialisation); `GRACE_MINUTES=10` — hour finalised only once `now >= hour_end + 10min`; explicit 0/0/FINAL rows for empty completed hours; eager first cycle on startup; O(8) API calls to discover earliest hour for backfill. `airflow/dags/quarantine_daily_rollup.py` deleted. `render/server.py`: ALL S3 code removed from quarantine read-path (`boto3`, `botocore.Config`, S3 constants, both old quarantine functions); new `_monitor_quarantine(conn, date_from, date_to)` is pure Postgres — single `COALESCE(SUM(...))` over `quarantine_hourly_summary`. `render/templates/monitor.html`: tile notes updated to "≈ refreshed every 5 min"; error text → "Hourly rollup unavailable." Verification: 159 hours written on initial backfill (158 final, 1 open); hour-level spot check exact match (2026-05-25 h=16: 229 mal / 94 late); 3-day total = 3110/1008 (matches B-042 reference); 7-day range response sub-1ms (pure Postgres); singleton lock correct; grep confirms 0 S3 references in server.py quarantine path. | Phase 6 / Phase 7 |

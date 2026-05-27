@@ -10,7 +10,7 @@
     EVENTS     bookings / checkins / checkouts / cancellations(≈)
                + SOON tiles: review, embedded, sentiment
     QUARANTINE malformed / late
-    HEALTH     stream freshness + Airflow
+    HEALTH     Airflow scheduler
 
   Reuses the existing tokens from base.html (--green / --gray-* / --font-mono)
   and the .metric / .metric-grid / .pill / .filter-bar neo-brutalist style
@@ -79,6 +79,10 @@
     color: var(--gray-900); outline: none; transition: border-color .12s;
   }
   .filter-field input:focus, .filter-field select:focus { border-color: var(--green); }
+  #filter-date-err {
+    display: none; color: var(--red); font-family: var(--font-mono);
+    font-size: .72rem; align-self: center;
+  }
 
   /* ── Sections ───────────────────────────────────────────────────────────── */
   .mon-section { margin-bottom: 2.25rem; }
@@ -140,7 +144,7 @@
     border: 1px solid var(--gray-300); text-transform: uppercase;
   }
 
-  /* Status pill (used for freshness / airflow text states). */
+  /* Status pill (used for airflow status state). */
   .pill {
     display: inline-block; font-family: var(--font-mono); font-size: 1.05rem;
     font-weight: 800; padding: .25rem .65rem; border: 2px solid; border-radius: 4px;
@@ -205,7 +209,7 @@
   </div>
 
   <!-- ── Filter bar (GET) — date + city, default today UTC ────────────────── -->
-  <form class="filter-bar" method="get" action="/monitor">
+  <form id="filter-form" class="filter-bar" method="get" action="/monitor">
     <div class="filter-field">
       <label for="from">From</label>
       <input type="date" id="from" name="from" value="{{ sel_from }}">
@@ -225,6 +229,7 @@
     </div>
     <button type="submit" class="btn btn-primary">Apply</button>
     <a href="/monitor" class="btn btn-ghost">Clear</a>
+    <span id="filter-date-err">From must be on or before To.</span>
   </form>
 
   <!-- ══ Section — Events (date + city filtered) ═════════════════════════ -->
@@ -275,19 +280,40 @@
         {% endif %}
       </div>
 
-      <!-- SOON tiles — placeholders that activate when upstream lands -->
-      <div class="metric soon">
-        <div class="metric-label">Review <span class="badge-soon">SOON</span></div>
-        <div class="metric-value">—</div>
-        <div class="metric-note">REVIEW not yet a stream event — unblocked by B-030.</div>
+      <!-- Review tile — date-scoped (seed excluded / NULL event_date) -->
+      <div class="metric">
+        <div class="metric-label">Reviews <span class="badge-scope">date-scoped · all cities</span></div>
+        <div class="metric-value {{ 'ok' if reviews.in_range else 'idle' }}" id="ev-reviews">
+          {{- "{:,}".format(reviews.in_range) if reviews.in_range is not none else "—" -}}
+        </div>
+        <div class="metric-note" id="ev-reviews-note">
+          {%- if reviews.in_range is not none -%}
+            {{ "{:,}".format(reviews.history) }} history · {{ "{:,}".format(reviews.stream) }} stream
+          {%- else -%}
+            date range required
+          {%- endif -%}
+        </div>
       </div>
 
-      <div class="metric soon">
-        <div class="metric-label">Embedded <span class="badge-soon">SOON</span></div>
-        <div class="metric-value">—</div>
-        <div class="metric-note">Of reviews in stream, filtered — unblocked by B-030.</div>
+      <!-- Embedded tile — date-scoped (seed excluded); past days ~100%, today climbs -->
+      <div class="metric">
+        <div class="metric-label">Embedded <span class="badge-scope">date-scoped · all cities</span></div>
+        <div class="metric-value {% if embed.coverage_pct is not none %}{% if embed.coverage_pct >= 99 %}ok{% elif embed.coverage_pct > 0 %}warn{% else %}idle{% endif %}{% else %}idle{% endif %}" id="ev-embedded">
+          {%- if embed.coverage_pct is not none -%}{{ "%.1f"|format(embed.coverage_pct) }}%{%- else -%}—{%- endif -%}
+        </div>
+        <div style="height:4px;background:#e5e7eb;border-radius:2px;margin:.1rem 0 .25rem">
+          <div id="ev-embedded-bar" style="height:100%;background:var(--green);border-radius:2px;width:{% if embed.coverage_pct is not none %}{{ [embed.coverage_pct, 100]|min }}{% else %}0{% endif %}%;transition:width .4s"></div>
+        </div>
+        <div class="metric-note" id="ev-embedded-note">
+          {%- if embed.embedded is not none -%}
+            {{ "{:,}".format(embed.embedded) }} / {{ "{:,}".format(embed.received) }} embeddable reviews.
+          {%- else -%}
+            date range required
+          {%- endif -%}
+        </div>
       </div>
 
+      <!-- Sentiment tile — SOON (blocked by B-026) -->
       <div class="metric soon">
         <div class="metric-label">Sentiment <span class="badge-soon">SOON</span></div>
         <div class="metric-value">—</div>
@@ -320,10 +346,10 @@
         <div class="metric-label">Malformed</div>
         {% if quarantine.reachable %}
         <div class="metric-value {{ 'warn' if quarantine.malformed else 'ok' }}" id="qu-malformed">{{ "{:,}".format(quarantine.malformed) }}</div>
-        <div class="metric-note">Objects under <code>malformed_events/</code>.</div>
+        <div class="metric-note">Objects under <code>malformed_events/</code>. ≈&nbsp;refreshed every&nbsp;5&nbsp;min.</div>
         {% else %}
         <div class="metric-value warn" id="qu-malformed">—</div>
-        <div class="metric-note">MinIO unreachable.</div>
+        <div class="metric-note">Hourly rollup unavailable.</div>
         {% endif %}
       </div>
 
@@ -331,10 +357,10 @@
         <div class="metric-label">Late</div>
         {% if quarantine.reachable %}
         <div class="metric-value {{ 'warn' if quarantine.late else 'ok' }}" id="qu-late">{{ "{:,}".format(quarantine.late) }}</div>
-        <div class="metric-note">Objects under <code>late_events/</code>.</div>
+        <div class="metric-note">Objects under <code>late_events/</code>. ≈&nbsp;refreshed every&nbsp;5&nbsp;min.</div>
         {% else %}
         <div class="metric-value warn" id="qu-late">—</div>
-        <div class="metric-note">MinIO unreachable.</div>
+        <div class="metric-note">Hourly rollup unavailable.</div>
         {% endif %}
       </div>
     </div>
@@ -344,27 +370,10 @@
   <section class="mon-section">
     <div class="mon-section-head"><h2>Health</h2></div>
     <p class="mon-caption">
-      Pipeline freshness and scheduler status — the moment you loaded this page.
+      Scheduler status — the moment you loaded this page.
     </p>
 
     <div class="metric-grid">
-      <div class="metric">
-        <div class="metric-label">Stream freshness</div>
-        {% if freshness.status == 'fresh' %}
-        <div><span class="pill ok">Fresh</span></div>
-        <div class="metric-note">Latest window {{ freshness.latest.strftime('%d %b %H:%M') }} UTC · {{ "%.0f"|format(freshness.age_min) }} min ago. Consumer running.</div>
-        {% elif freshness.status == 'aging' %}
-        <div><span class="pill warn">Aging</span></div>
-        <div class="metric-note">Latest window {{ freshness.latest.strftime('%d %b %H:%M') }} UTC · {{ "%.0f"|format(freshness.age_min) }} min ago.</div>
-        {% elif freshness.status == 'stale' %}
-        <div><span class="pill bad">Stale</span></div>
-        <div class="metric-note">Latest window {{ freshness.latest.strftime('%d %b %H:%M') }} UTC · {{ "%.0f"|format(freshness.age_min) }} min ago. Is the consumer running?</div>
-        {% else %}
-        <div><span class="pill warn">No data</span></div>
-        <div class="metric-note">No windows flushed yet — is the consumer running?</div>
-        {% endif %}
-      </div>
-
       <div class="metric">
         <div class="metric-label">Airflow scheduler</div>
         {% if airflow.status == 'healthy' %}
@@ -382,6 +391,23 @@
 </div>
 
 <script>
+  // ── Filter-bar date validation ────────────────────────────────────────────
+  (function () {
+    const form = document.getElementById('filter-form');
+    const fromEl = document.getElementById('from');
+    const toEl   = document.getElementById('to');
+    const errEl  = document.getElementById('filter-date-err');
+    form.addEventListener('submit', function (e) {
+      if (fromEl.value && toEl.value && fromEl.value > toEl.value) {
+        errEl.style.display = 'inline';
+        e.preventDefault();
+      }
+    });
+    [fromEl, toEl].forEach(function (el) {
+      el.addEventListener('change', function () { errEl.style.display = 'none'; });
+    });
+  }());
+
   // ── In-place refresh — poll /monitor/data every 10s and update numbers ──
   // Keeps the live pulse + EVENTS + QUARANTINE numbers current without a
   // full page reload (so scroll position and the filter form's focus state
@@ -458,6 +484,44 @@
       if (l) l.textContent = fmtInt(q.late);
     }
 
+    function updateReviews(reviews) {
+      if (!reviews) return;
+      const el = document.getElementById("ev-reviews");
+      if (el) {
+        el.textContent = fmtInt(reviews.in_range);
+        el.className = "metric-value " + (reviews.in_range ? "ok" : "idle");
+      }
+      const noteEl = document.getElementById("ev-reviews-note");
+      if (noteEl)
+        noteEl.textContent = reviews.in_range == null
+          ? "date range required"
+          : fmtInt(reviews.history) + " history · " + fmtInt(reviews.stream) + " stream";
+    }
+
+    function updateEmbed(embed) {
+      if (!embed) return;
+      const el = document.getElementById("ev-embedded");
+      if (el) {
+        const pct = embed.coverage_pct;
+        if (pct == null) {
+          el.textContent = "—";
+          el.className = "metric-value idle";
+        } else {
+          el.textContent = Number(pct).toFixed(1) + "%";
+          el.className = "metric-value " + (pct >= 99 ? "ok" : pct > 0 ? "warn" : "idle");
+        }
+      }
+      const noteEl = document.getElementById("ev-embedded-note");
+      if (noteEl)
+        noteEl.textContent = embed.embedded == null
+          ? "date range required"
+          : fmtInt(embed.embedded) + " / " + fmtInt(embed.received) + " embeddable reviews.";
+      const barEl = document.getElementById("ev-embedded-bar");
+      if (barEl)
+        barEl.style.width =
+          (embed.coverage_pct == null ? 0 : Math.min(100, Number(embed.coverage_pct))).toFixed(1) + "%";
+    }
+
     async function tick() {
       try {
         const url = "/monitor/data" + window.location.search;
@@ -467,6 +531,8 @@
         updateLive(data.live);
         updateStream(data.stream);
         updateQuarantine(data.quarantine);
+        updateReviews(data.reviews);
+        updateEmbed(data.embed);
       } catch (e) { /* swallow — try again on the next tick */ }
     }
 

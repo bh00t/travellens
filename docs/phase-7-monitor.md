@@ -138,13 +138,16 @@ blocking backlog ID. These activate when the upstream data lands:
 Never render a fake number to fill the space. The dashed-border treatment is
 the design language for "we know this should be here, here's why it isn't".
 
-### Freshness doubles as the consumer-alive signal (and the live pulse adds the second source)
+### Freshness doubles as the consumer-alive signal (and the live pulse adds the second source) [SUPERSEDED]
+
+> [SUPERSEDED] — The STREAM FRESHNESS tile was removed from the HEALTH section (owner decision). See "Owner decision — STREAM FRESHNESS tile removed" in Build History.
 
 The original B-027 design used `MAX(window_start)` as the only "is the
-consumer running?" signal. That signal is still here (HEALTH section), but
-the **live pulse** is the faster, second-by-second answer: a heartbeat is
-"alive" when its age is < 15s (slightly more than one `FLUSH_CHECK_SECONDS`
-tick of slack). When the consumer stops, the dot goes grey within a tick.
+consumer running?" signal. That signal was in the HEALTH section as a
+"Data freshness" tile, but the **live pulse** is the faster, second-by-second
+answer: a heartbeat is "alive" when its age is < 15s (slightly more than one
+`FLUSH_CHECK_SECONDS` tick of slack). When the consumer stops, the dot goes
+grey within a tick.
 
 ### Guarded dependencies
 
@@ -169,8 +172,8 @@ Context passed to the template:
 | `live` | `_monitor_live(conn)` — latest 2 rows of `pipeline_metrics` | No |
 | `stream` | `_monitor_stream_activity(conn, from, to, city)` | **Yes** |
 | `embed` | `_monitor_embeddings(conn)` — `reviews_raw` | No |
-| `freshness` | `_monitor_freshness(conn)` — `MAX(window_start)` | No |
-| `quarantine` | `_monitor_quarantine(from, to)` — MinIO `list_objects_v2` per day-prefix | **Yes (date only)** — see Quarantine scoping below |
+| `freshness` [SUPERSEDED] | ~~`_monitor_freshness(conn)` — `MAX(window_start)`~~ — see Build History: "STREAM FRESHNESS tile removed" | — |
+| `quarantine` | [SUPERSEDED — B-044] ~~`_monitor_quarantine(from, to)` — MinIO `list_objects_v2` per day-prefix~~ → pure-Postgres `SUM` from `quarantine_hourly_summary`; see Build History: B-044 | **Yes (date only)** |
 | `airflow` | `_monitor_airflow()` — HTTP `/health` | No |
 | `sel_from`, `sel_to`, `sel_city` | echoed back for the filter form | — |
 
@@ -195,7 +198,12 @@ state that changes second-to-second:
 Excluded on purpose: `cities` (schema-rare), `embed` (embedding-job-rare),
 `freshness` / `airflow` (server-rendered, re-fetched on full reload).
 
-### Quarantine scoping (B-042)
+### Quarantine scoping (B-042) [SUPERSEDED — see Build History: B-044]
+
+> **Current state:** quarantine counts are read exclusively from `quarantine_hourly_summary`
+> (pure Postgres, no S3 on the request path). The S3-listing approach below is historical —
+> it was the original B-042 implementation, superseded first by B-033 and then definitively
+> by B-044. See Build History entries for both.
 
 `_monitor_quarantine(date_from, date_to)` is **date-scoped, city-agnostic**.
 
@@ -221,9 +229,7 @@ Excluded on purpose: `cities` (schema-rare), `embed` (embedding-job-rare),
 - **Cost** — O(days × 2) `list_objects_v2` calls per render. Each
   day-prefix call is tiny (MinIO indexes per prefix), so a 30-day
   range is 60 cheap calls — well under the page-render budget.
-  The eventual replacement is the **B-033** Airflow DAG
-  (`quarantine_daily_rollup`) which materialises per-day counts into
-  Postgres and turns this into a single SUM query.
+  [Replaced by B-033 (hybrid Postgres+S3) then B-044 (pure Postgres) — see Build History.]
 
 ### Live throughput math
 
@@ -387,6 +393,88 @@ Added the `/monitor/data` JSON sidecar route. JavaScript poller hits `/monitor/d
 Full redesign of `monitor.html`: default-today filter, per-event-type lifecycle counts (BOOKING / CHECKIN / CHECKOUT / CANCELLATION), SOON placeholder tiles (Sentiment, Review, Embedded — honest about what is not built yet), revenue removed from pipeline metrics (business content belongs in Explorer). Live events/sec matches producer rate exactly; page renders even with MinIO stopped.
 
 **Files:** `render/server.py` (five `_monitor_*` helpers, guard on every external dependency), `render/templates/monitor.html` (Chunk 4 layout). Migration 007 is the schema anchor.
+
+---
+
+### B-030b — Review + Embedded tiles lit; sidecar extended
+
+Replaced the two SOON placeholders (Review, Embedded) with live metric cards:
+
+- **Review tile** (`id="ev-reviews"`, `id="ev-reviews-note"`): total review count with seed/history/stream breakdown. Sourced from new `_monitor_reviews(conn)` helper in `render/server.py` — single `COUNT(*) FILTER` query over `reviews_raw.record_source`.
+- **Embedded tile** (`id="ev-embedded"`, `id="ev-embedded-note"`, `id="ev-embedded-bar"`): embedding coverage percentage with a CSS progress bar. Denominator fixed to `COUNT(*) FILTER (WHERE review_text IS NOT NULL)` (embeddable rows only, not total) so coverage can actually reach 100%. Sourced from fixed `_monitor_embeddings(conn)`. Color: `ok` ≥ 99%, `warn` > 0%, `idle` = 0%.
+- **Sentiment tile** stays SOON (blocked by B-026).
+- `/monitor/data` JSON sidecar now includes `reviews` and `embed` keys. JS poller extended with `updateReviews()` + `updateEmbed()` functions called on each 10s tick.
+
+**Why:** B-030/B-030a wrote ~91K booking-tied reviews; the tiles had been SOON placeholders since B-032 Chunk 4. B-030b ships the embedder that fills `embedding`, so the coverage metric is now meaningful in real time.
+
+---
+
+### B-030b follow-up — Review/Embedded date-scoping + Freshness signal fix
+
+Two correctness fixes applied after initial B-030b landing:
+
+**1. Review + Embedded tiles date-scoped.**
+Both helpers (`_monitor_reviews`, `_monitor_embeddings`) now accept `date_from` / `date_to` and filter by `reviews_raw.event_date`. Seed reviews (`record_source='seed'`) have `NULL event_date` — they are excluded (static Kaggle corpus, not date-stamped events); only history + stream reviews participate. Both the `/monitor` route and the `/monitor/data` sidecar pass the active date range to both helpers. Effect: picking today shows only today's reviews/coverage (climbs as `review_embedder` embeds stream arrivals); picking yesterday shows a fixed number at ~100% coverage. `badge-scope` chip ("date-scoped · all cities") added to both tile labels. JS `updateReviews()` updated to use `in_range` (not `total`); note drops the `seed` line. `/monitor/data` response shape change: `reviews` object now has `in_range / history / stream / date_scoped` (no longer `total / seed / history / stream`).
+
+**2. Stream Freshness consumer-alive verdict moved to the heartbeat.**
+Previously the freshness tile derived "is the consumer running?" from `MAX(window_start)` age — causing a contradiction where the header showed "live · Xs ago" with events/sec > 0 while the tile simultaneously said "Stale — is the consumer running?". Fix: `_monitor_freshness` is now informational context only (window age / pill). A separate `<span id="freshness-consumer-note">` is driven by `live.alive` (the heartbeat signal) both on server render and on each 10s JS tick (`updateFreshness(data.live)` added to the poller). The pill (Fresh / Aging / Stale) still reflects window age — it remains a useful diagnostic about when the last window closed, distinct from whether the consumer process is up.
+
+---
+
+### Owner decision — STREAM FRESHNESS tile removed from HEALTH
+
+Removed the "Data freshness" metric card from the HEALTH section.
+
+**Why:** The live pulse (header, `pipeline_metrics` heartbeat) provides second-by-second consumer-alive signal. The Windows flushed tile (EVENTS section) shows window throughput. The `run.py` singleton guard (TCP port 47219 mutex) prevents the consumer-stall failure mode the freshness tile was designed to catch. With those two signals and the guard in place, the freshness card is redundant.
+
+**Changes:**
+- `render/templates/monitor.html`: Data freshness tile removed from HEALTH `metric-grid`; `updateFreshness()` JS function removed; HEALTH section now shows Airflow scheduler only.
+- `render/server.py`: `_monitor_freshness()` helper deleted; `MONITOR_FRESH_MINUTES` / `MONITOR_STALE_MINUTES` constants deleted; `freshness` variable removed from `monitor()` and `monitor_data()` routes; `"freshness"` key removed from `/monitor/data` JSON response.
+
+---
+
+### B-033 — Quarantine read-path: O(1) Postgres SUM replaces whole-bucket S3 scan
+
+Replaced the multi-day S3 listing in `_monitor_quarantine()` with a hybrid read path backed by the new `quarantine_daily_summary` table (migration 012, populated by the `quarantine_daily_rollup` Airflow DAG).
+
+**Why:** The previous implementation called `list_objects_v2` for every day in the filter range on every `/monitor` page load and every `/monitor/data` poll. With a 30-day range that was 60 paginated S3 calls per request — slow and unbounded as quarantine grows. The new path does a single indexed `SUM` over past days, reducing the per-request cost to O(1) regardless of range width.
+
+**Changes — `render/server.py`:**
+- Renamed old `_monitor_quarantine(date_from, date_to)` → `_monitor_quarantine_s3_scan(date_from, date_to)` (preserved as graceful-degradation fallback).
+- Added `_monitor_quarantine(conn, date_from, date_to)` — hybrid read path:
+  - Checks `information_schema` for `quarantine_daily_summary`; falls back to `_monitor_quarantine_s3_scan` with a warning log if migration 012 is absent.
+  - Past days `[d0 .. min(d1, yesterday)]` → `COALESCE(SUM(...), 0)` from `quarantine_daily_summary` (indexed on PK `summary_date`).
+  - Today (only if today ∈ range) → single `list_objects_v2` call for today's day-prefix on each of `malformed_events/` and `late_events/`.
+  - No whole-bucket scan anywhere on the request path.
+- Both `monitor()` and `monitor_data()` route handlers: moved `quarantine = _monitor_quarantine(conn, ...)` inside the `try` block (connection reused; `conn.close()` in the existing `finally` covers it). Old out-of-block calls removed.
+
+**New files:** `db/migrations/012_quarantine_daily_summary.sql`, `airflow/dags/quarantine_daily_rollup.py`. See phase-6-airflow.md BUILD HISTORY for the DAG narrative.
+
+---
+
+### B-044 — Pure-Postgres quarantine read-path (hourly rollup proc)
+
+Supersedes B-033's hybrid read-path (daily DAG + S3-today fallback). The monitor now reads quarantine counts exclusively from `quarantine_hourly_summary` — no S3 listing on the request path at all.
+
+**Why:** The B-033 hybrid still called `list_objects_v2` for today's counts on every poll. With ~200K late-event objects landing in a single day the per-request list call was slow and growing. The hourly rollup proc (B-044, `scripts/quarantine_hourly_rollup.py`) runs in the background every 5 minutes and keeps the Postgres table current; the monitor just reads it.
+
+**Changes — `render/server.py`:**
+- Removed `import boto3`, `from botocore.config import Config`.
+- Removed `MONITOR_S3_BUCKET`, `MONITOR_PREFIX_MALFORMED`, `MONITOR_PREFIX_LATE` constants.
+- Removed `_monitor_quarantine_s3_scan()` (the B-033 S3 scan fallback) and the B-033 hybrid `_monitor_quarantine(conn, ...)`.
+- New `_monitor_quarantine(conn, date_from, date_to)` — pure Postgres only:
+  ```sql
+  SELECT COALESCE(SUM(malformed_count), 0), COALESCE(SUM(late_count), 0)
+  FROM quarantine_hourly_summary WHERE summary_date BETWEEN %s AND %s
+  ```
+  O(1) regardless of date range width or quarantine volume. Returns `{reachable, date_scoped, date_from, date_to, malformed, late}` — JSON shape unchanged; `updateQuarantine()` JS unchanged.
+
+**Changes — `render/templates/monitor.html`:**
+- Malformed tile note: "Objects under `malformed_events/`. ≈ refreshed every 5 min."
+- Late tile note: "Objects under `late_events/`. ≈ refreshed every 5 min."
+- Error state: "Hourly rollup unavailable." (was "MinIO unreachable.")
+
+**New files:** `db/migrations/013_quarantine_hourly_summary.sql`, `scripts/quarantine_hourly_rollup.py`. See phase-6-airflow.md BUILD HISTORY for the proc design.
 
 ---
 

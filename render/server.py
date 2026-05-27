@@ -47,8 +47,6 @@ import json
 import logging
 import psycopg2
 import requests
-import boto3
-from botocore.config import Config
 from decimal import Decimal
 from datetime import datetime, date, timedelta, timezone
 from flask import Flask, render_template, request, jsonify
@@ -602,23 +600,13 @@ def api_refresh_widget(widget_id: int):
 # PHASE 7 — Pipeline monitor (/monitor)
 # ════════════════════════════════════════════════════════════════════════════
 # Reads operational state directly (not via the AI layer): stream activity,
-# embedding coverage, and pipeline health (Airflow + quarantine + freshness).
+# embedding coverage, and pipeline health (Airflow + quarantine).
 # Every external dependency is guarded so the page renders even when something
 # is down. See docs/phase-7-monitor.md.
-
-# Freshness thresholds in MINUTES. window_start advances once per tumbling
-# window (2 min in dev, 60 min in prod), so "fresh" must comfortably exceed the
-# window size. Defaults suit the dev demo; override in .env for prod.
-MONITOR_FRESH_MINUTES = int(os.getenv("MONITOR_FRESH_MINUTES", 15))
-MONITOR_STALE_MINUTES = int(os.getenv("MONITOR_STALE_MINUTES", 90))
 
 # Where to probe Airflow's public /health endpoint.
 AIRFLOW_BASE_URL = os.getenv("AIRFLOW_BASE_URL", "http://localhost:8080")
 
-# MinIO / S3 quarantine location. Prefixes match what stream_consumer.py writes.
-MONITOR_S3_BUCKET        = os.getenv("S3_BUCKET", "travellens-data")
-MONITOR_PREFIX_MALFORMED = os.getenv("S3_PREFIX_MALFORMED", "malformed_events/")
-MONITOR_PREFIX_LATE      = os.getenv("S3_PREFIX_LATE", "late_events/")
 
 
 def _valid_date(s):
@@ -630,6 +618,29 @@ def _valid_date(s):
         return s
     except ValueError:
         return None
+
+
+def _resolve_filter(args) -> tuple[str, str, str]:
+    """
+    Parse and normalise date+city filter from request.args (or any dict-like).
+
+    Both date strings are ALWAYS non-None on return — default-today fires when
+    neither is supplied. This is the single source of filter resolution; every
+    monitor route calls this once and passes the result to all helpers.
+    """
+    date_from = _valid_date(args.get("from"))
+    date_to   = _valid_date(args.get("to"))
+    city      = (args.get("city") or "").strip()
+
+    if not date_from and not date_to:
+        today     = datetime.now(timezone.utc).date().isoformat()
+        date_from = today
+        date_to   = today
+
+    if date_from and date_to and date_from > date_to:
+        date_from, date_to = date_to, date_from
+
+    return date_from, date_to, city
 
 
 def _column_exists(conn, table: str, column: str) -> bool:
@@ -821,24 +832,53 @@ def _monitor_live(conn) -> dict:
     }
 
 
-def _monitor_embeddings(conn) -> dict:
+def _monitor_embeddings(conn, date_from: str, date_to: str) -> dict:
     """
-    Section 2 — review-embedding coverage from reviews_raw. NOT filtered
-    (reviews are static — no time or city axis). Pure processing status.
+    Embedding coverage for reviews in the selected date range.
+
+    Seed reviews (record_source='seed') have NULL event_date and are excluded
+    — they are the static Kaggle corpus, not date-stamped events. history +
+    stream reviews have event_date set.
+
+    A past day reads ~100% (backlog already processed); today climbs as
+    review_embedder works through new stream arrivals.
+
+    Denominator: reviews WHERE event_date IS NOT NULL AND event_date in
+    [from, to] AND review_text IS NOT NULL (the embeddable set in range).
+
+    IMPORTANT: date_from and date_to are required. Call _resolve_filter first.
     """
+    if not date_from or not date_to:
+        log.error(
+            "_monitor_embeddings: called without date range "
+            "(date_from=%r, date_to=%r) — returning error sentinel, not global rows",
+            date_from, date_to,
+        )
+        return {"received": None, "embedded": None, "unprocessed": None,
+                "coverage_pct": None, "error": True}
+
+    where_parts = ["review_text IS NOT NULL", "event_date IS NOT NULL",
+                   "event_date >= %s", "event_date <= %s"]
+    params: list = [date_from, date_to]
+    where_sql = " AND ".join(where_parts)
+
     try:
         with conn.cursor() as cur:
             cur.execute(
-                """
-                SELECT COUNT(*) AS received,
-                       COUNT(*) FILTER (WHERE embedding IS NOT NULL) AS embedded
+                f"""
+                SELECT
+                    COUNT(*)                                       AS received,
+                    COUNT(*) FILTER (WHERE embedding IS NOT NULL) AS embedded
                 FROM reviews_raw
-                """
+                WHERE {where_sql}
+                """,
+                params,
             )
             received, embedded = cur.fetchone()
     except Exception as exc:
         log.warning("monitor: embeddings query failed: %s", exc)
-        return {"received": 0, "embedded": 0, "unprocessed": 0, "coverage_pct": 0.0}
+        return {"received": None, "embedded": None, "unprocessed": None,
+                "coverage_pct": None, "error": True}
 
     received, embedded = int(received), int(embedded)
     coverage = (embedded / received * 100) if received else 0.0
@@ -846,121 +886,111 @@ def _monitor_embeddings(conn) -> dict:
         "received":     received,
         "embedded":     embedded,
         "unprocessed":  received - embedded,
-        "coverage_pct": coverage,
+        "coverage_pct": round(coverage, 1),
     }
 
 
-def _monitor_freshness(conn) -> dict:
+def _monitor_reviews(conn, date_from: str, date_to: str) -> dict:
     """
-    Section 3 — stream freshness from MAX(window_start). Doubles as the
-    consumer-alive signal: a recent latest window ⇒ the consumer is running.
-    Not filtered — this is current pipeline state.
+    Reviews in the selected date range from reviews_raw.event_date.
+    City-agnostic — reviews carry no city field.
+
+    Seed reviews (record_source='seed') have NULL event_date and are excluded
+    — they are the static corpus, not date-stamped events. history + stream
+    reviews have event_date set.
+
+    Returns in_range (history+stream for the date range), plus the history/
+    stream split for that range, plus a date_scoped flag for the template.
+
+    IMPORTANT: date_from and date_to are required. Call _resolve_filter first.
     """
+    if not date_from or not date_to:
+        log.error(
+            "_monitor_reviews: called without date range "
+            "(date_from=%r, date_to=%r) — returning error sentinel, not global rows",
+            date_from, date_to,
+        )
+        return {"in_range": None, "history": None, "stream": None,
+                "date_scoped": False, "error": True}
+
+    where_parts = ["event_date IS NOT NULL", "event_date >= %s", "event_date <= %s"]
+    params: list = [date_from, date_to]
+    where_sql = " AND ".join(where_parts)
+
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT MAX(window_start) FROM agg_hourly_city_stats")
-            latest = cur.fetchone()[0]
+            cur.execute(
+                f"""
+                SELECT
+                    COUNT(*)                                              AS in_range,
+                    COUNT(*) FILTER (WHERE record_source = 'history')    AS history,
+                    COUNT(*) FILTER (WHERE record_source = 'stream')     AS stream
+                FROM reviews_raw
+                WHERE {where_sql}
+                """,
+                params,
+            )
+            in_range, history, stream = cur.fetchone()
     except Exception as exc:
-        log.warning("monitor: freshness query failed: %s", exc)
-        return {"status": "none", "latest": None, "age_min": None}
+        log.warning("monitor: reviews query failed: %s", exc)
+        return {"in_range": None, "history": None, "stream": None,
+                "date_scoped": bool(date_from or date_to), "error": True}
 
-    if latest is None:
-        return {"status": "none", "latest": None, "age_min": None}
-
-    # window_start is TIMESTAMP (naive UTC). Match with naive utcnow; if a tz
-    # ever appears, fall back to aware now so the subtraction never throws.
-    now = datetime.now(timezone.utc) if latest.tzinfo else datetime.utcnow()
-    age_min = (now - latest).total_seconds() / 60.0
-
-    if age_min <= MONITOR_FRESH_MINUTES:
-        status = "fresh"
-    elif age_min <= MONITOR_STALE_MINUTES:
-        status = "aging"
-    else:
-        status = "stale"
-    return {"status": status, "latest": latest, "age_min": age_min}
+    return {
+        "in_range":    int(in_range),
+        "history":     int(history),
+        "stream":      int(stream),
+        "date_scoped": bool(date_from or date_to),
+    }
 
 
-def _monitor_quarantine(date_from: str | None = None,
+def _monitor_quarantine(conn, date_from: str | None = None,
                         date_to:   str | None = None) -> dict:
     """
-    Section 3 — malformed + late event counts in MinIO.
+    Section 3 — malformed + late event counts (B-044 pure-Postgres path).
 
-    Date scoping (B-042): when date_from and date_to are both supplied
-    as 'YYYY-MM-DD' strings, count objects under
-        {prefix}/year=YYYY/month=MM/day=DD/
-    for each day in the inclusive range and sum across days. This matches
-    the EVENTS section's filter (same axis: ingest-time, since the
-    consumer partitions the key by `datetime.now(timezone.utc)` at quarantine
-    time). City is NOT applicable — the keys carry no city segment
-    (malformed events often can't be parsed for a city; quarantine_event
-    has always partitioned date-only). Callers DO NOT pass city.
+    Reads ONLY from quarantine_hourly_summary (migration 013), populated by
+    scripts/quarantine_hourly_rollup.py every ~5 min.  No S3 listing on the
+    request path.
 
-    When either endpoint is missing, fall back to the historical
-    bucket-wide count (kept for safety; the live monitor routes always
-    pass dates via the default-today rule, so this branch is mostly a
-    code-path safety net).
-
-    Guarded: a short timeout and a single attempt so a down/absent MinIO
-    never hangs the page. Each day-prefix is its own list_objects_v2 call
-    (small + indexed under MinIO's tree), so a 30-day filter is 60 cheap
-    calls (30 per prefix), well under the page-render budget.
+    conn is the existing Postgres connection held by the route handler;
+    callers must pass it inside their try/finally block.
     """
     try:
-        s3 = boto3.client(
-            "s3",
-            endpoint_url=os.getenv("AWS_ENDPOINT_URL"),
-            aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
-            aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
-            region_name=os.getenv("AWS_DEFAULT_REGION", "us-east-1"),
-            config=Config(connect_timeout=2, read_timeout=2,
-                          retries={"max_attempts": 1}),
-        )
+        today = datetime.now(timezone.utc).date()
+        try:
+            d0 = datetime.strptime(date_from, "%Y-%m-%d").date() if date_from else today
+            d1 = datetime.strptime(date_to,   "%Y-%m-%d").date() if date_to   else today
+        except ValueError:
+            d0 = today
+            d1 = today
+        if d1 < d0:
+            d0, d1 = d1, d0
 
-        def count_prefix(prefix: str) -> int:
-            total = 0
-            paginator = s3.get_paginator("list_objects_v2")
-            for page in paginator.paginate(Bucket=MONITOR_S3_BUCKET, Prefix=prefix):
-                total += page.get("KeyCount", 0)
-            return total
-
-        # Build the list of prefixes to count under.
-        #   date-scoped → one prefix per day per kind, e.g.
-        #     malformed_events/year=2026/month=05/day=26/
-        #   not date-scoped → the bucket-wide prefix (legacy fallback).
-        def day_prefixes(root: str) -> list[str]:
-            if not (date_from and date_to):
-                return [root]
-            try:
-                d0 = datetime.strptime(date_from, "%Y-%m-%d").date()
-                d1 = datetime.strptime(date_to,   "%Y-%m-%d").date()
-            except ValueError:
-                return [root]
-            if d1 < d0:
-                # Inverted range → empty result (matches "no days in range").
-                return []
-            out = []
-            d = d0
-            while d <= d1:
-                out.append(f"{root}year={d.year:04d}/month={d.month:02d}/day={d.day:02d}/")
-                d += timedelta(days=1)
-            return out
-
-        def count_days(root: str) -> int:
-            return sum(count_prefix(p) for p in day_prefixes(root))
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COALESCE(SUM(malformed_count), 0),
+                       COALESCE(SUM(late_count), 0)
+                FROM   quarantine_hourly_summary
+                WHERE  summary_date BETWEEN %s AND %s
+                """,
+                (d0, d1),
+            )
+            row = cur.fetchone()
 
         return {
-            "reachable":  True,
+            "reachable":   True,
             "date_scoped": bool(date_from and date_to),
             "date_from":   date_from,
             "date_to":     date_to,
-            "malformed":  count_days(MONITOR_PREFIX_MALFORMED),
-            "late":       count_days(MONITOR_PREFIX_LATE),
+            "malformed":   int(row[0]),
+            "late":        int(row[1]),
         }
     except Exception as exc:
-        log.warning("monitor: MinIO quarantine unreachable: %s", exc)
+        log.warning("monitor: quarantine read failed: %s", exc)
         return {
-            "reachable":  False,
+            "reachable":   False,
             "date_scoped": bool(date_from and date_to),
             "date_from":   date_from,
             "date_to":     date_to,
@@ -998,7 +1028,7 @@ def monitor():
     Layout (Chunk 4): a live-throughput pulse in the header (reads
     pipeline_metrics, ignores the filter), then four filtered sections —
     EVENTS (per-type counts + SOON placeholders), QUARANTINE (malformed /
-    late), HEALTH (freshness + Airflow). Business analytics live in the
+    late), HEALTH (Airflow scheduler). Business analytics live in the
     Explorer, not here.
 
     Filter bar: date range + city.
@@ -1013,31 +1043,22 @@ def monitor():
     Every external dependency (DB, MinIO, Airflow, pipeline_metrics) is
     guarded so the page renders even when something is down.
     """
-    date_from = _valid_date(request.args.get("from"))
-    date_to   = _valid_date(request.args.get("to"))
-    city      = (request.args.get("city") or "").strip()
-
-    # Default-today: when no date filter was supplied, pin BOTH endpoints to
-    # today (UTC). We do NOT fall back to "all data" — see docstring.
-    if not date_from and not date_to:
-        today     = datetime.now(timezone.utc).date().isoformat()
-        date_from = today
-        date_to   = today
+    date_from, date_to, city = _resolve_filter(request.args)
 
     conn = get_conn()
     try:
-        cities    = _monitor_cities(conn)
-        live      = _monitor_live(conn)
-        stream    = _monitor_stream_activity(conn, date_from, date_to, city)
-        embed     = _monitor_embeddings(conn)
-        freshness = _monitor_freshness(conn)
+        cities     = _monitor_cities(conn)
+        live       = _monitor_live(conn)
+        stream     = _monitor_stream_activity(conn, date_from, date_to, city)
+        embed      = _monitor_embeddings(conn, date_from, date_to)
+        reviews    = _monitor_reviews(conn, date_from, date_to)
+        # B-033: Postgres range SUM (past) + single S3 day-prefix (today).
+        # City is NOT applied — quarantine keys carry no city segment.
+        quarantine = _monitor_quarantine(conn, date_from, date_to)
     finally:
         conn.close()
 
-    # B-042: quarantine counts now scoped to the same date range as EVENTS.
-    # City is NOT applied — the S3 keys carry no city segment.
-    quarantine = _monitor_quarantine(date_from, date_to)   # MinIO — guarded
-    airflow    = _monitor_airflow()                         # HTTP  — guarded
+    airflow = _monitor_airflow()                            # HTTP  — guarded
 
     return render_template(
         "monitor.html",
@@ -1049,7 +1070,7 @@ def monitor():
         live=live,
         stream=stream,
         embed=embed,
-        freshness=freshness,
+        reviews=reviews,
         quarantine=quarantine,
         airflow=airflow,
     )
@@ -1058,41 +1079,36 @@ def monitor():
 @app.route("/monitor/data")
 def monitor_data():
     """
-    JSON sidecar for the /monitor page (Chunk 4).
+    JSON sidecar for the /monitor page (Chunk 4 + B-030b).
 
-    Returns the subset of monitor state that changes second-to-second:
+    Returns the subset of monitor state that changes on the 10s poll interval:
       live       — pipeline_metrics-derived events/sec + alive signal
       stream     — agg_hourly_city_stats counts (date+city filtered)
-      quarantine — MinIO malformed / late counts
+      quarantine — MinIO malformed / late counts (date-scoped)
+      reviews    — in-range review count + history/stream split (date-scoped,
+                   seed excluded — NULL event_date)
+      embed      — embedding coverage % within the date range (date-scoped,
+                   seed excluded; past days ~100%, today climbs with stream)
 
-    Excluded on purpose: cities list (changes only on schema change),
-    embeddings coverage (changes on the embedding job, not stream activity),
-    freshness/airflow (rendered server-side, refreshed by polling reload).
+    Excluded on purpose: cities list (schema-rare), airflow
+    (rendered server-side on the initial page load, re-fetched on Apply).
 
     Same query-string contract as /monitor — `from`, `to`, `city`. Same
     default-today behaviour, so an empty client request (no params) shows
     today's data, not lifetime totals.
     """
-    date_from = _valid_date(request.args.get("from"))
-    date_to   = _valid_date(request.args.get("to"))
-    city      = (request.args.get("city") or "").strip()
-
-    if not date_from and not date_to:
-        today     = datetime.now(timezone.utc).date().isoformat()
-        date_from = today
-        date_to   = today
+    date_from, date_to, city = _resolve_filter(request.args)
 
     conn = get_conn()
     try:
-        live   = _monitor_live(conn)
-        stream = _monitor_stream_activity(conn, date_from, date_to, city)
+        live       = _monitor_live(conn)
+        stream     = _monitor_stream_activity(conn, date_from, date_to, city)
+        embed      = _monitor_embeddings(conn, date_from, date_to)
+        reviews    = _monitor_reviews(conn, date_from, date_to)
+        # B-033: Postgres range SUM (past) + single S3 day-prefix (today).
+        quarantine = _monitor_quarantine(conn, date_from, date_to)
     finally:
         conn.close()
-
-    # B-042: same date scoping as the EVENTS section above (and as the
-    # server-rendered /monitor route below) so the in-place 10s poll
-    # stays consistent with the page on initial render.
-    quarantine = _monitor_quarantine(date_from, date_to)
 
     # latest_ts is a datetime — serialise for JSON.
     if live.get("latest_ts"):
@@ -1102,6 +1118,8 @@ def monitor_data():
         "live":       live,
         "stream":     stream,
         "quarantine": quarantine,
+        "reviews":    reviews,
+        "embed":      embed,
     })
 
 
@@ -1113,6 +1131,8 @@ if __name__ == "__main__":
         format="%(asctime)s [%(levelname)s] %(message)s",
         datefmt="%H:%M:%S"
     )
-    # debug=True enables auto-reload on file changes — fine for local dev
-    # Never use debug=True in production
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    # Single-process, no reloader. Restart run.py to pick up code changes.
+    # The Werkzeug reloader on Windows spawns child workers that hold the
+    # port socket; after a file change the old worker survives and serves
+    # stale code, making it look like edits aren't taking effect.
+    app.run(host="0.0.0.0", port=5000, debug=False, use_reloader=False)

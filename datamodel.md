@@ -1804,6 +1804,9 @@ the source of truth.
 | 008 | Lifecycle event tables (`fact_booking_events` + `sim_open_bookings`) for the streaming redesign        | Phase 2 — Streaming lifecycle    | B-035      |
 | 009 | Gold lifecycle layer: `ingest_seq` cursor column on `fact_booking_events` + `fact_booking_lifecycle` gold table (one row per booking_id, forward-only status machine, `illegal_transition_flag`, `source_mix`) + `gold_watermark` single-row cursor table | Phase 2 — Gold layer | B-040      |
 | 010 | 7 new nullable columns on `reviews_raw` for booking-tied stream reviews (`booking_id UUID`, `customer_id VARCHAR(12)`, `review_stage VARCHAR(20)`, `review_channel VARCHAR(100)`, `event_ts TIMESTAMPTZ`, `event_date DATE`) + `record_source VARCHAR(10) NOT NULL DEFAULT 'seed'`; 2 new indexes (`idx_reviews_raw_booking_id` partial, `idx_reviews_raw_record_source`) | Phase 2 — REVIEW stream | B-030      |
+| 011 | `idx_reviews_raw_event_date` index on `reviews_raw.event_date` — supports the date-range scoping in `_monitor_reviews` and `_monitor_embeddings` | Phase 7 — Monitor date scoping   | B-030b     |
+| 012 | `quarantine_daily_summary` table (`summary_date DATE PK`, `malformed_count INT`, `late_count INT`, `computed_at TIMESTAMPTZ`) — **RETIRED: dropped by migration 013** | Phase 6 / Phase 7 — Quarantine   | B-033 *(superseded by B-044)* |
+| 013 | Drops `quarantine_daily_summary`; creates `quarantine_hourly_summary` (`summary_date DATE`, `summary_hour SMALLINT`, `malformed_count INT`, `late_count INT`, `is_final BOOL`, `computed_at TIMESTAMPTZ`, PK `(summary_date, summary_hour)`) | Phase 6 / Phase 7 — Quarantine   | B-044      |
 
 ---
 

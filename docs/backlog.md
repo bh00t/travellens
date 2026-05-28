@@ -44,6 +44,7 @@ carry context only.
 - B-045 — `run.py` startup takeover (newest wins): kills live supervisor + all children, polls advisory locks free, then starts fresh; foreign-`:5000` guard (built, pending owner verification + commit)
 - ~~B-046 — Stage 1 dimension expansion (additive: +949 cities → 993, +18,076 hotels → 20,076, +49,904 room types → 55,446, +80,000 customers → 100,000; all fact tables untouched)~~ ✓ Done
 - ~~B-047 — Stage 2a forward generator (data-aware diurnal-timed producer; migrations 014 + 015; `scripts/chaos_injector.py` extracted; single `--rate-multiplier` knob; supersedes B-034A and B-036; closes B-041)~~ ✓ Done
+- ~~B-048 — Explore tab: fact_booking_events live-data routing + cancellation-rate stacking fix~~ ✓ Done
 
 ### OPEN — limitations (L-)
 
@@ -149,6 +150,63 @@ These must be resolved before the dashboard is reliable. A wrong query = wrong w
 > relationships, the two-hop fact_bookings→hotel_master→dim_location chain, date
 > handling (date_id is an INTEGER key, never compare to CURRENT_DATE), and the
 > city-list-is-reference-only rule. No more example-query patching.
+
+---
+
+### B-048 — Explore tab: fact_booking_events live-data routing + cancellation-rate stacking fix ✓ DONE
+
+> **Trace.** Phase(s): [Phase 4](phase-4-ai-layer.md) · datamodel: [`fact_booking_events` schema](../datamodel.md#fact_booking_events) (no schema change — documents the table for Explore-tab routing) · data: none.
+
+**Priority:** High — two narrow Explore-tab defects, both rooted in the text-to-SQL system prompt.
+
+**Problem 1 — Explore has no awareness of live data.** Every "today / now / live / streaming / last hour" question was funnelled through `fact_bookings`, the frozen 1M-row historical snapshot whose latest `booking_ts` is in May 2026. Live-stream events landing on `fact_booking_events` (B-039 silver + B-047 forward producer) were invisible to the Explorer — same dataset the `/monitor` page reads from, never reachable from a natural-language question.
+
+**Problem 2 — "Cancellation rate" always returned 0.00%.** The system prompt's default rule "exclude cancelled bookings: `WHERE NOT b.is_cancelled`" stacked with the cancellation-rate formula `100.0 * SUM(CASE WHEN b.is_cancelled THEN 1 ELSE 0 END) / COUNT(*)`. The `WHERE` filtered out the very rows the numerator was counting → numerator always 0 → rate always 0.00. The "unless the question is specifically about cancellations" caveat in the rule wasn't strong enough; the LLM applied both anyway.
+
+**What shipped (all in `ai/prompts/text_to_sql_system.txt` — general rules, no per-query examples):**
+
+1. **`fact_booking_events` added to SCHEMA section** — all 26 columns enumerated with per-event-type population notes (PRICE_CHANGE has NULL booking_id/customer_id; revenue/rate populated on BOOKING only; REVIEW carries rating/review_channel/review_text; CANCELLATION carries reason). Spans both `source='history'` (B-035 backfill) and `source='stream'` (B-039 silver). Explicit note: NO `is_cancelled` flag — cancellations are EVENTS (`event_type='CANCELLATION'`).
+2. **New "HISTORICAL vs LIVE" routing section** between JOIN MAP and COLUMN LOCATION. Two-rule order: (1) explicit live keywords (`today / now / current / live / streaming / so far today / right now / last <N> hour(s) / last <N> minute(s) / this hour / since midnight`) → `fact_booking_events` with `source='stream'`; (2) everything else → `fact_bookings`. "this month / this year / in 2025 / monthly / by year" stay routed to `fact_bookings` via dim_date. "recent" left ambiguous (defaults to historical). Worked-snippet for "today" + "last hour" included — kept tight (no per-question patches).
+3. **Cancellation-rate stacking fixed.** Default exclude-cancelled rule rewritten to explicitly NOT apply when the query computes a rate/ratio/percentage/share that depends on counting BOTH cancelled and non-cancelled rows in the denominator. Formula changed from `SUM(CASE WHEN ... THEN 1 ELSE 0 END)` to `COUNT(*) FILTER (WHERE b.is_cancelled)` — same math, cleaner idiom, named explicitly so it's harder for the LLM to silently substitute back. Explicit warning that stacking the default filter on a rate formula zeroes the answer.
+4. **Cosmetic:** `opened_year` comment range updated `1975-2023` → `1975-2026` (B-046 widened the column).
+
+**Files:** `ai/prompts/text_to_sql_system.txt`. No code change. `ai/text_to_sql.py` and `ai/query_router.py` untouched.
+
+**Initial test results (12 queries / 11 PASS / 1 fail diagnosed below):** the first build of B-048 left 5e ("revenue this month by zone") failing with the model hallucinating `b.booking_date_key`, `b.booking_date`, `b.checkin_date=d.date_id` across three retries. Initially mis-classified as a pre-existing L-004 flake; the owner asked for a clean before/after diagnostic.
+
+**Diagnostic (no git, hand-revert via backup file):** 5e BEFORE the B-048 prompt edit ran **5/5 PASS** (real per-region figures, correct `JOIN dim_date d ON b.date_id = d.date_id` every time). 5e AFTER the initial B-048 edit ran **1/5 PASS** (4 runs hallucinated the dim_date join column with three different wrong names). Conclusion: not L-004 — the B-048 edit caused it. Root cause: introducing `fact_booking_events` with its prominent `event_date` column gave the model a second "date column on a fact table" pattern; it bled the event-ledger pattern onto historical fact_bookings queries, inventing `b.event_date` / `b.booking_date` / `b.booking_date_key` instead of using the canonical `date_id → dim_date` join.
+
+**Follow-up fix — DATE PARADIGMS rule (verified against real schema via information_schema before applying):**
+
+Replaced the DATE HANDLING block in `ai/prompts/text_to_sql_system.txt` with a two-paradigm rule, picked by FACT TABLE:
+- **fact_bookings paradigm:** canonical `JOIN dim_date d ON b.date_id = d.date_id`; enumerates the real `dim_date` column list (`date_id, full_date, day_of_month, day_of_week, day_num, week_of_year, month, month_name, quarter, year, is_weekend, is_holiday, is_high_demand_holiday, season`) so the model knows the real names rather than inventing `date_key` / `month_number`; enumerates `fact_bookings`' own date columns (`date_id, checkin_date, checkout_date, booking_ts, event_ts` — `booking_ts` and `event_ts` were the columns the LLM kept hinting at via Postgres errors). Closes with "For year/month/season filters on fact_bookings, always use the date_id → dim_date join above."
+- **fact_booking_events paradigm:** `event_date` and `event_ts` live on the row — NO dim_date join. Direct filters: `WHERE event_date = CURRENT_DATE` for today; `WHERE event_ts >= NOW() - INTERVAL '<N> hour'` for last-N-hour.
+
+Iteration notes (every variation pre-flight-tested, several rejected):
+- ✗ Adding `booking_ts` / `event_ts` to the SCHEMA listing helped the model recognise those names but invited a NEW failure — it tried `JOIN dim_date d ON b.booking_ts = d.date_key`, which broke H1. Reverted.
+- ✗ Long preamble paragraphs and negative-example lists (`do NOT invent booking_date / event_date`) made the model lose strict-SQL discipline and emit prose+markdown+SQL — caught by the SELECT-only guard but failing the query. Reverted in favour of positive-only phrasing.
+- ✓ Final form: short positive rule with real column enumerations. The model still reaches for `b.event_date` on the FIRST attempt ~80% of the time on 5e, but the rule plus the B-001 retry loop now self-correct that into a working dim_date join most of the time.
+
+**Final test results (after DATE PARADIGMS — 5e ×5 plus full battery, retried sequentially):**
+
+| TEST | EXPECTED | ACTUAL | PASS/FAIL |
+|---|---|---|---|
+| 5e ×5 "revenue this month by zone" | fact_bookings + dim_date via date_id | Run 1 PASS (retry from b.event_date) · Run 2 PASS (retry) · Run 3 PASS (retry) · **Run 4 FAIL** (intermittent chatty mode — model emitted prose+SQL, rejected by SELECT-only guard, NOT a column hallucination) · Run 5 PASS (retry). Passing runs return real per-region revenue (North ₹6.89cr, West ₹2.00cr, South ₹1.91cr, East ₹0.25cr). | **4 / 5 PASS** (was 1/5 before fix, 5/5 pre-B-048) |
+| 5a "top 5 cities by revenue" | fact_bookings, 5 cities | Goa ₹235.37cr, Varanasi, Alleppey, Delhi, Jaipur (default exclude-cancelled applied this run) | PASS |
+| 5b "hotels in Kumarakom" | hotel_master direct | 1 row (COUNT-form interpretation) — model interpretation drift Ollama-side, query executes correctly | PASS |
+| 5c "average nightly rate in Goa" | fact_bookings + default `NOT is_cancelled` | ₹7,714.92 | PASS |
+| L1 "how many bookings today" | fact_booking_events + event_date + source='stream' | **821** (matches DB) | PASS |
+| L2 "bookings in the last hour" | fact_booking_events + event_ts | 0 (producer idle) | PASS |
+| L3 "live bookings so far today" | fact_booking_events + source='stream' | **821** | PASS |
+| H1 "total bookings in 2025" | fact_bookings (NOT fact_booking_events) | 415,067 via retry — close to DB ground truth 414,755 (small drift from is_active / scope interpretation) | PASS |
+| H2 "revenue by city all time" | fact_bookings chain | 44 cities returned | PASS |
+| C1 "cancellation rate for 5-star hotels" | FILTER-form, no is_cancelled WHERE | **12.69%** | PASS |
+| C2 "overall cancellation rate" | FILTER-form | **11.81%** (matches DB) | PASS |
+| C3 "cancellation rate in Goa" | FILTER + city scope only | **11.83%** (matches DB) | PASS |
+
+**Net result:** 5e moved from 1/5 (regression introduced by initial B-048) → 4/5 (after DATE PARADIGMS rule). All live-routing and cancellation-rate fixes from the initial B-048 still pass with identical results. Residual 1/5 fail on 5e is an intermittent chatty-mode flake (model emits prose+SQL despite "Output ONLY a SELECT" instruction) — falls through the SELECT-only guard cleanly, not a column hallucination. The B-001 retry loop is now load-bearing for 5e; the rule pushed first-attempt and retry into the same successful pattern most of the time.
+
+**Out of scope:** restoring 5/5 on 5e would require either (a) removing `fact_booking_events` from the SCHEMA entirely — abandoning B-048's live-data goal — or (b) a model swap (B-017 territory: Qwen2.5-Coder-7B's bleed between similarly-named patterns is the underlying limit).
 
 ---
 

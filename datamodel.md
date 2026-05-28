@@ -1473,6 +1473,11 @@ Operational queries (monitor, lag tracking) filter on it.
 `scripts/stream_consumer.py` (stream).
 **Update cadence:** Bulk-insert at backfill time; continuous from the
 stream consumer thereafter.
+**Explore-tab routing (B-048):** the AI text-to-SQL layer routes live questions
+(`today / now / live / streaming / so far today / last <N> hour(s)`) to this
+table with `source='stream'`; all historical/analytical questions route to
+`fact_bookings` instead. See `ai/prompts/text_to_sql_system.txt` "HISTORICAL vs
+LIVE" section for the standing convention.
 
 #### Schema (as deployed by migration 008)
 

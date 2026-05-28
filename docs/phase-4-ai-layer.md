@@ -527,6 +527,19 @@ Added `detect_filters()` to `text_to_sql.py` and hotel-scoping logic to `ai/main
 
 ---
 
+### B-048 — Explore tab live-data awareness + cancellation-rate stacking fix
+
+Two prompt-only edits to `ai/prompts/text_to_sql_system.txt` (no code change):
+
+1. **`fact_booking_events` added to the SCHEMA section** and a new "HISTORICAL vs LIVE — pick the right fact table" section inserted between JOIN MAP and COLUMN LOCATION. Two-rule routing order: explicit live keywords (`today / now / current / live / streaming / so far today / right now / last <N> hour(s) / last <N> minute(s) / this hour / since midnight`) → `fact_booking_events` with `source='stream'`; everything else (including `this month / this year / in 2025 / monthly / by year`) → `fact_bookings`. `recent` left ambiguous (defaults to historical).
+2. **Cancellation-rate stacking fixed.** Default `WHERE NOT b.is_cancelled` rule rewritten to NOT apply when the query computes a rate/ratio/percentage/share. Formula changed from `SUM(CASE WHEN ... THEN 1 ELSE 0 END)` to `COUNT(*) FILTER (WHERE b.is_cancelled)` — same math, cleaner idiom, harder for the LLM to silently re-stack the default exclude on top.
+
+**Why:** Live-stream data on `fact_booking_events` (B-039 silver + B-047 forward producer) was unreachable from the Explore tab — every "today" question went to the frozen 1M-row historical snapshot. Separately, "cancellation rate" always returned 0.00% because the default exclude-cancelled filter and the rate formula were both being emitted, filtering out the very rows the numerator counted.
+
+**Verification (12 queries / 11 PASS / 1 PRE-EXISTING L-004 flake):** see [backlog B-048 acceptance table](backlog.md#b-048--explore-tab-fact_booking_events-live-data-routing--cancellation-rate-stacking-fix--done). Live cases route to `fact_booking_events` with `source='stream'`; historical guards stay on `fact_bookings`; cancellation rates now return real percentages (5-star 12.69 %, overall 11.81 %, Goa 11.83 %) matching DB to the last digit.
+
+---
+
 ## NEXT
 
 Phase 5 — HTML Output

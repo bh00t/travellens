@@ -157,10 +157,35 @@ NIGHTS_MIX = [
 P_CANCEL = 0.12
 
 # Season multiplier on city-weight from dim_date.season + is_high_demand_holiday.
+# Keys MUST match the real dim_date.season vocabulary exactly. The real values
+# (verified via SELECT DISTINCT season FROM dim_date) and their month coverage:
+#   Peak     — Jan/Feb/Oct/Nov/Dec (winter peak — highest Indian tourism demand)
+#   Shoulder — March only (transitional)
+#   Summer   — Apr/May/Jun (mixed: hot plains low, hill stations high — neutral)
+#   Monsoon  — Jul/Aug/Sep (lowest demand across most of India)
+# An unexpected value falls back to 1.0 with a one-time WARNING so future vocab
+# drift is caught loudly instead of silently neutralized.
 SEASON_MULT = {
-    "Summer":  1.15, "Winter": 1.20, "Monsoon": 0.85,
-    "Spring":  1.05, "Autumn": 1.05,
+    "Peak":     1.30,
+    "Shoulder": 1.00,
+    "Summer":   1.00,
+    "Monsoon":  0.75,
 }
+_UNKNOWN_SEASON_WARNED = set()
+
+
+def _season_mult(season):
+    """Resolve season multiplier; warn once per unseen value, default 1.0."""
+    if season in SEASON_MULT:
+        return SEASON_MULT[season]
+    if season not in _UNKNOWN_SEASON_WARNED:
+        _UNKNOWN_SEASON_WARNED.add(season)
+        print(f"WARNING: unknown dim_date.season value {season!r} — "
+              f"using multiplier 1.0. Expected one of "
+              f"{sorted(SEASON_MULT.keys())}.", file=sys.stderr)
+    return 1.0
+
+
 HIGH_DEMAND_HOLIDAY_MULT = 1.25
 
 # Tick + bucket sizing.
@@ -445,8 +470,12 @@ def _compute_price(rng, base_price_inr, checkin_date, dim_date_today):
     mult = 1.0
     if weekend:    mult *= 1.15
     if is_holiday: mult *= 1.25
-    if season == "Monsoon": mult *= 0.85
-    elif season == "Winter": mult *= 1.10
+    # Season vocabulary matches dim_date.season exactly (Peak/Shoulder/Summer/Monsoon).
+    # Unknown values fall through silently here — _season_mult() above is the
+    # canonical warner; this is a price-only modifier on a per-booking path
+    # called every tick, so we keep it noise-free.
+    if season == "Monsoon":  mult *= 0.85
+    elif season == "Peak":   mult *= 1.10
     noise = max(0.70, min(1.30, rng.gauss(1.0, 0.05)))
     return max(500, int(round(base_price_inr * mult * noise)))
 
@@ -571,7 +600,7 @@ def generate_booking(rng, cache, conn, today_ist, daily_seed):
       7. booking_source + lifecycle fire-times + cancel decision
     """
     dim_date_today = fetch_dim_date(conn, today_ist)
-    season_mult = SEASON_MULT.get(dim_date_today[0], 1.0)
+    season_mult = _season_mult(dim_date_today[0])
     holiday_mult = HIGH_DEMAND_HOLIDAY_MULT if dim_date_today[1] else 1.0
 
     # Try a few cities × hotels before giving up to PRICE_CHANGE.

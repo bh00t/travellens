@@ -57,6 +57,7 @@ carry context only.
 - ~~B-060 — post-generation cancellation-filter lint + corrective retry (mitigates L-013): `run()`'s retry fires only on an ERROR — clean-but-wrong SQL ships unchallenged. Adds `lint_cancellation_filter_missing(sql, user_query)` (mirrors `run_eval`'s detection) — on a clean first execute, if a `fact_bookings` aggregate dropped `WHERE NOT is_cancelled` (not a rate, no cancellation intent, no `is_cancelled` anywhere — B-048 guard), drive ONE corrective retry naming the general schema rule. Falls back to the original on retry-error/still-firing (never degrades). Lint-only this cut; L-011/DISTINCT lint deferred~~ ✓ Done
 - ~~B-061 — surface the B-060 cancellation-filter lint outcome as a pin-time warning in Explore: the lint records `result["lint_cancellation_filter"]` but nothing shows it. `fired_uncorrected` (lint fired, auto-fix didn't take → answer suspect) now shows a clear, non-blocking caution in the Explore preview BEFORE pinning (complements B-022 pin review); `fired_corrected` shows a subtle info note. WARN, never block — pin stays enabled. Template-only (flag already flows through `/api/query`); no schema change~~ ✓ Done
 - ~~B-058 — Text-to-SQL accuracy eval harness (`ai/eval/`): on-demand measurement tool (NOT pytest) that runs a fixed question fixture through `ai.main.answer()`, grades by EXECUTION MATCH vs an owner-verified reference query (N runs/question, default 3), and flags L-011 (missing DISTINCT) + L-013 (missing cancellation filter) independently of exec-match. Cap-aware + probe-aware honest denominator. Fixture is TEST DATA — never fed back into the prompt~~ ✓ Done
+- ~~B-062 — rating-based polarity filter for semantic search (meanwhile mitigation for L-012): `_detect_polarity` reads general negative/positive/neutral keyword rules off the query; negative → hard-filter retrieval to ≤2★, positive → ≥4★, neutral → unchanged, with a relax-and-note fallback below `MIN_POLARITY_RESULTS`. Flips the dominant polarity ("cleanliness complaints" now returns ≤2★ complaints, not 4-5★ praise). Rating is a coarse proxy — the deeper fix is B-026. `ai/semantic_search.py` + a one-line `filters`-merge in `ai/main.py`; no schema change~~ ✓ Done
 
 ### OPEN — limitations (L-)
 
@@ -100,6 +101,7 @@ B-058 (Text-to-SQL accuracy eval harness `ai/eval/` — on-demand execution-matc
 B-059 (`_validate_columns` false-positive on SELECT alias reused in ORDER BY),
 B-060 (post-generation cancellation-filter lint + corrective retry — meanwhile mitigation for L-013),
 B-061 (surface the B-060 lint outcome as a non-blocking pin-time warning in Explore),
+B-062 (rating-based polarity filter for semantic search — meanwhile mitigation for L-012),
 plus the unnumbered Phase 1–5 foundation items.
 
 ### ABANDONED
@@ -299,6 +301,88 @@ follow-up. Items here span both phases by design.
 **Files:** `db/migrations/00X_review_sentiment.sql`, the ingest/embed pipeline script, `ai/main.py` (`detect_filters`), `ai/semantic_search.py`.
 
 **Acceptance:** "cleanliness complaints" returns predominantly negative-sentiment cleanliness reviews; "best things about hotels" returns positive; the L-012 conflation no longer dominates results.
+
+> **Meanwhile mitigation shipped:** [B-062](#b-062--rating-based-polarity-filter-for-semantic-search-mitigates-l-012--done) uses the existing `reviews_raw.rating` as a coarse sentiment proxy until this dedicated-model fix lands. B-062 is precision-over-recall (it will miss complaints buried in 3★ reviews — exactly the case this item's CardiffNLP classifier is meant to catch); B-026 supersedes it when built.
+
+---
+
+### B-062 — rating-based polarity filter for semantic search (mitigates L-012) · DONE
+
+> **Trace.** Phase(s): [Phase 4](phase-4-ai-layer.md) (AI layer) · datamodel: none · data: none.
+
+**Problem:** [L-012](#completed) — semantic search matches a query's TOPIC but ignores its SENTIMENT.
+"cleanliness complaints" embeds close to *both* praise and complaints about cleanliness, and since
+high-rated topical matches vastly outnumber low-rated ones (live corpus: 19,661 ≥4★ cleanliness
+reviews vs 2,928 ≤2★), the top-K comes back as PRAISE — the opposite of the user's intent. Extends
+[B-004](#completed)'s hybrid-filter pattern (the seam where structured filters slot into the
+pgvector retrieval) with a sentiment dimension. The proper fix is [B-026](#b-026--sentiment-classification-for-reviews)
+(sentiment-at-embed-time); this is the rating-based **meanwhile mitigation**.
+
+**Data gate (passed before building):** rating distribution across the 133,543-review corpus —
+1★ 4,730 · 2★ 19,037 · 3★ 39,520 · 4★ 39,810 · 5★ 30,446. ≤2★ = 23,767 (17.8%), with 2,928 / 5,927 /
+2,608 low-rated reviews on cleanliness / staff-service / noise respectively. The corpus is NOT
+overwhelmingly positive — a polarity filter has ample low-rated reviews to surface.
+
+**What shipped — `ai/semantic_search.py` + a one-line merge in `ai/main.py`:**
+
+- `_detect_polarity(query) -> (polarity, matched_terms)` — GENERAL keyword rules (NOT per-query
+  patterns). Counts DISTINCT terms from a negative lexicon (`complaint(s)`, `bad`, `worst`, `dirty`,
+  `rude`, `terrible`, …) and a positive lexicon (`best`, `love(d)`, `excellent`, `recommend`, …);
+  larger side wins, tie / none → **neutral**. Word-boundary regex so "love" ∉ "glove", "best" ∉
+  "bestseller". "clean"/"cleanliness" deliberately excluded (topic word, not sentiment).
+- `_search_reviews` gains `rating_max` / `rating_min` params → `r.rating <= %s` / `>= %s` appended to
+  the SAME inner WHERE as the city + hotel_ids filters (one execution plan). Review-grain
+  `reviews_raw.rating`; independent of and composes with B-004's hotel-grain `hotel_master.avg_rating`.
+- `run()`: negative → `rating_max=2.0`, positive → `rating_min=4.0`, neutral → no bound.
+  **HARD filter** (not a soft re-rank — a bias would lose to the 19.6K-vs-2.9K volume and not flip
+  the polarity). **Relax-and-note fallback:** if the hard filter returns `< MIN_POLARITY_RESULTS` (5),
+  re-run without the bound and set `polarity_relaxed=True` — handles thin city-scoped scopes honestly.
+- Transparency: the applied polarity is recorded in the result's `filters` field
+  (`polarity`, `polarity_terms`, `polarity_threshold`, `polarity_relaxed`); neutral adds no key
+  (result shape unchanged). `ai/main.py:244` flipped `result["filters"] = filters` →
+  `{**result.get("filters", {}), **filters}` so B-004's keys and B-062's polarity keys coexist
+  (disjoint key-sets — neither transparency is lost).
+
+**Hard boundary honoured:** semantic path ONLY — `text_to_sql.py` / the SQL path untouched. No schema
+change, no migration (reuses the existing rating). Detector is general keyword rules, no per-query
+patches.
+
+**Known caveat (accepted):** the detector fires negative on a single negative word (`neg=1, pos=0`),
+so a query with an incidental "bad"/"best" over-filters. The relax fallback bounds the downside and
+precision-over-recall is the stated stance. Live testing showed no over-firing on the verification
+queries (neutral stayed neutral). Rating is also a coarse proxy — real complaints in mixed-sentiment
+3★ reviews are missed by design; B-026 is the deeper fix.
+
+**Tests (`tests/test_polarity_filter.py`, +16):** detector classification (negative / positive /
+neutral, ties, word-boundary, dedup/lowercase, "clean" not a polarity term); predicate construction
+via a fake cursor (≤2★ / ≥4★ / no-bound SQL; composition with city + hotel_ids); and a slow live-DB
+proof (Ollama stubbed) asserting returned ratings obey the polarity. Two B-004 tests
+(`test_pure_semantic_no_hybrid_keys`, `test_city_only_semantic_no_hybrid_keys`) updated: their queries
+("rude staff", "complaints in Goa") carry sentiment words, so `filters` now legitimately holds polarity
+keys — the assertions were narrowed to the true hybrid markers (`hotel_id_count` + the B-004
+rating/star/city keys), which remain absent.
+
+**Acceptance / quality-gate** (the dev cannot take browser screenshots — the owner does; the dev
+verifies the retrieval deterministically + reports repro queries):
+
+| TEST | EXPECTED | ACTUAL | PASS/FAIL |
+|---|---|---|---|
+| Negative query "…cleanliness complaints" | returned reviews ≤2★ | 20/20 ≤2★ (one 1★, rest 2★) | PASS |
+| Image 3's "…cleanness complaints" | negative, ≤2★ ("complaints" fires it) | 20/20 = 2★ | PASS |
+| Positive query "…love most about beach resorts" | returned reviews ≥4★ | 20/20 ≥4★ (4-5★ mix) | PASS |
+| Neutral "what are guests saying about cleanliness" | unchanged, no polarity filter | spans 3-5★, no `filters` key | PASS |
+| Detector classification (16 unit cases) | correct polarity + terms | all pass | PASS |
+| `r.rating` predicate per bound (fake cursor) | ≤2 / ≥4 / none | all pass | PASS |
+| `pytest tests/ -v` | green | 76 passed, 1 xfailed | PASS |
+| SQL path / `text_to_sql.py` | untouched | unchanged | PASS |
+
+**Owner screenshot repro queries:**
+- Negative: **"top 5 hotels with cleanness complaints"** (Image 3's exact wording) — now surfaces ≤2★ complaints.
+- Positive: **"what do guests love most about beach resorts"** — ≥4★ praise.
+- Neutral: **"what are guests saying about cleanliness"** — unchanged, full star range.
+
+**Out of scope (named):** sentiment-at-embed-time (B-026, the proper fix); surfacing the polarity
+badge in the Explore/dashboard UI (template work, separate item); aspect-based per-topic polarity.
 
 ---
 
@@ -2219,7 +2303,7 @@ The old design weights stay documented in `docs/phase-2-streaming.md` as histori
 | L-009 | Dashboard read path triggers LLM/SQL compute (no cache yet) | Phase 5 | B-022 (cache + frozen SQL), then B-024 (scheduled refresh) |
 | L-010 | ~~7B model miscounts dimension entities — joins fact_bookings and counts booking rows instead of querying the dimension table directly~~ — **RESOLVED.** Migration 006 added `hotel_master.opened_year` and the system prompt gained the ENTITY COUNT RULE plus the COLUMN LOCATION block scoping `is_cancelled` to fact_bookings. Verified stable across the protected suite: "list hotels count created per year" uses `hotel_master.opened_year` (sums to ~2000); "how many hotels per city" / "how many customers per state" / "list 5 customers" all query their dimension tables directly with NO `is_cancelled` filter (Tests 1, 2, 3, 10 each pass on the reverted single-bullet prompt). The fact-aggregation cancellation portion — bare `<aggregate> by <dimension>` queries occasionally dropping `WHERE NOT b.is_cancelled` — is split out as **L-013**. | Phase 4 | RESOLVED (migration 006 + prompt updates) |
 | L-011 | 7B model omits DISTINCT on plain entity-list queries — "5 customers named R" returns the same person repeated (one row per booking). Adding "unique" to the query fixes it. Capability limit, not a prompt bug; further prompt tuning regresses other query types. | Phase 4 | B-017 (bigger model) |
-| L-012 | Sentiment-topic conflation in semantic review search. Embeddings match TOPIC not POLARITY — "cleanliness complaints" returns cleanliness praise and complaints alike, since both are about cleanliness. A `reviews_raw.rating` filter is NOT a reliable proxy: confirmed via testing that complaints (e.g. "foul smell", "cobwebs") appear in mixed-sentiment 3★ reviews with positive openers, and identical review texts exist across 1–5★. Proper fix requires sentiment scoring at embed time (store a sentiment score per review, filter on it) — a feature, not a filter. Current behaviour: semantic search surfaces topically-relevant reviews; summary should describe results as "reviews mentioning X" not "X complaints". Discovered during B-004 manual testing. | Phase 4 | Planned: **B-026** (sentiment-at-embed-time). Copy fix on the summary line is a smaller separate item still open. |
+| L-012 | Sentiment-topic conflation in semantic review search. Embeddings match TOPIC not POLARITY — "cleanliness complaints" returns cleanliness praise and complaints alike, since both are about cleanliness. A `reviews_raw.rating` filter is NOT a reliable proxy: confirmed via testing that complaints (e.g. "foul smell", "cobwebs") appear in mixed-sentiment 3★ reviews with positive openers, and identical review texts exist across 1–5★. Proper fix requires sentiment scoring at embed time (store a sentiment score per review, filter on it) — a feature, not a filter. Current behaviour: semantic search surfaces topically-relevant reviews; summary should describe results as "reviews mentioning X" not "X complaints". Discovered during B-004 manual testing. | Phase 4 | **Mitigated by B-062** (rating-based polarity filter — negative intent → ≤2★, positive → ≥4★; coarse rating proxy, precision-over-recall, misses complaints buried in 3★ reviews). Proper fix still **B-026** (sentiment-at-embed-time), which supersedes B-062. Copy fix on the summary line is a smaller separate item still open. |
 | L-013 | Bare grouped aggregations over `fact_bookings` (shapes like "total revenue by city", "bookings by month", "revenue by customer segment", "average nights stayed by season") intermittently drop the `WHERE NOT b.is_cancelled` filter on Qwen-7B. Stronger cues — `LIMIT`, explicit `WHERE` filters on star_category / city / etc. — usually keep the filter (Tests 6 and 7 in the verification suite). Bare grouped shapes do not. **Confirmed not promptable** at this model size: two prompt rewrites attempted — a single-bullet "applies ONLY when fact_bookings is in FROM/JOIN" version (the current text) and a two-bullet universal-rule-plus-illustrations version. Neither resolves the bare-grouped cases. The two-bullet version improved "by month" and "by segment" to 3/3 but degraded an unnamed-shape generalisation ("average nights stayed by season") and added marginal noise on the LIMIT-bearing cases. Root cause: Qwen 7B underweights universal/conditional rules in the system prompt relative to attention pull from concrete examples in the same prompt — a small-model attention budget limit, not a prompt-wording bug. Same family as L-010 and L-011 (capability ceiling, not prompt tuning). **Safeguards:** (1) **B-060** post-generation lint — on a clean first execute, `run()` detects a bare `fact_bookings` aggregate that dropped `WHERE NOT is_cancelled` (not a rate, no cancellation intent, no `is_cancelled` anywhere) and drives ONE corrective retry naming the general schema rule; falls back to the original on retry-error/still-firing so it never degrades a working query. Catches the live-Explore case the pin-time review can't (mitigation, not a cure — bounded to one retry, leaves the underlying model ceiling). (2) **B-022** freezes generated SQL at pin time, so a missing cancellation filter is a one-time review failure at pin, not a per-refresh data integrity bug — the read path never runs unverified SQL. **Fix path:** B-017 (model tiering — Gemma 12B or similar holds rule discipline better in early testing) is the real remediation. | Phase 4 | B-017 (larger model for SQL) — B-060 post-gen lint + B-022 pin-time review are the meanwhile mitigations |
 | L-014 | ~~CHECKIN / CHECKOUT (and PRICE_CHANGE) events are silently filtered at the consumer's Gate 3 — not aggregated, not counted, not stored.~~ — **RESOLVED (B-032 Chunks 2 + 3).** `PROCESSED_EVENT_TYPES` now spans `BOOKING, CANCELLATION, CHECKIN, CHECKOUT`; the consumer counts each per window and writes `total_checkins / total_checkouts / total_cancellations` to `agg_hourly_city_stats` (migration 007 columns). The producer (Chunk 3) now actually emits both CHECKIN and CHECKOUT at design weights (0.18 / 0.12), so both columns read non-zero on every recent window — verified end-to-end. PRICE_CHANGE is still silently filtered at Gate 3 (valid event type, just not in `PROCESSED_EVENT_TYPES`) — out of scope for this item. **Note:** these counts live ONLY in the stream aggregate (`agg_hourly_city_stats`); they are NOT in `fact_bookings` or any revenue path. Anything that wants a checkin-aware booking model (e.g. tying CHECKIN/CHECKOUT events to specific bookings) still has to be designed separately. | Phase 7 | RESOLVED by B-032 Chunks 2 + 3. |
 | L-015 | ~~No live "events received / sec" throughput metric. The consumer's `run_metrics` counters live in memory and print only at shutdown — not written to a queryable table mid-run.~~ — **RESOLVED in full (B-032 Chunks 1+2+4).** Consumer writes a `pipeline_metrics` heartbeat row every `FLUSH_CHECK_SECONDS` (~10s) with cumulative `events_consumed / bookings / cancellations / malformed / late / active_windows / max_event_ts` (plus reserved-NULL `consumer_lag`). The `/monitor` header pulse reads the latest two heartbeat rows and surfaces events/sec as the delta divided by interval, with `alive = age < 15s` driving a green/grey dot. Verified end-to-end against a 50 evt/s producer: computed rate 49.6–50.2 evt/s mid-run; dot goes grey within one tick when the consumer stops. | Phase 7 | RESOLVED by B-032 (all 4 chunks). |

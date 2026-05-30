@@ -644,6 +644,35 @@ already-has-filter; cancellation-intent; non-`fact_bookings`), and the B-048-gua
 (B-003a stays `xfail`). Full body + eval re-run:
 [backlog B-060](backlog.md#b-060--post-generation-cancellation-filter-lint--corrective-retry-mitigates-l-013--done).
 
+### B-062 — rating-based polarity filter for semantic search (mitigates L-012)
+
+Semantic search matches a query's TOPIC but ignores its SENTIMENT (**L-012**): "cleanliness complaints"
+embeds close to both praise and complaints about cleanliness, and since high-rated topical matches
+vastly outnumber low-rated ones on the live corpus (19,661 ≥4★ vs 2,928 ≤2★ cleanliness reviews), the
+top-K came back as PRAISE — the opposite of intent. This extends the **B-004** hybrid-filter seam
+(the place structured filters slot into the pgvector retrieval) with a sentiment dimension, using the
+`reviews_raw.rating` already on each review as a coarse proxy. It is the rating-based **meanwhile
+mitigation**; the proper fix is **B-026** (sentiment-at-embed-time), which supersedes it.
+
+**What it does** (`ai/semantic_search.py` + a one-line `filters`-merge in `ai/main.py`; SQL path /
+`text_to_sql.py` untouched, no schema change, no migration): a `_detect_polarity()` keyword detector
+(general negative/positive lexicons, distinct-term count, word-boundary matched, tie/none → neutral)
+classifies the query. `run()` then HARD-filters retrieval — negative → `rating <= 2`, positive →
+`rating >= 4`, neutral → unchanged — via new `rating_max`/`rating_min` params on `_search_reviews`
+that AND into the same inner WHERE as the city + hotel_ids filters. A **relax-and-note fallback**
+re-runs without the bound (and sets `polarity_relaxed`) when the hard filter starves a narrow scope
+below `MIN_POLARITY_RESULTS`. HARD (not a soft re-rank) because a bias would lose to the 19.6K-vs-2.9K
+volume and never flip the polarity. Applied polarity is recorded in the result's `filters` field for
+transparency.
+
+**New tests** (`tests/test_polarity_filter.py`, +16): detector classification, rating-predicate
+construction via a fake cursor, and a slow live-DB proof (Ollama stubbed) that returned ratings obey
+the polarity (negative → all ≤2★, positive → all ≥4★, neutral → full star range). Two B-004
+regression tests were narrowed (their queries carry sentiment words, so `filters` now legitimately
+holds polarity keys — assertions moved to the true hybrid markers). Full suite 76 passed, 1 xfailed.
+Full body + acceptance table:
+[backlog B-062](backlog.md#b-062--rating-based-polarity-filter-for-semantic-search-mitigates-l-012--done).
+
 ---
 
 ## NEXT

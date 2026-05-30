@@ -39,6 +39,7 @@ Why Ollama for summarisation, not just returning raw reviews:
 """
 
 import os
+import re
 import logging
 import requests
 import psycopg2
@@ -78,6 +79,88 @@ TOP_K = 20
 # enough to make the "Honestly forgot" opener show at most once or twice in
 # the top-K, loose enough not to merge unrelated reviews.
 DEDUP_PREFIX_LEN = 200
+
+# ── Polarity filter (B-062 — mitigates L-012) ──────────────────────────────────
+#
+# Semantic search matches a query's TOPIC but ignores its SENTIMENT: "cleanliness
+# complaints" returns 4-5★ reviews PRAISING cleanliness, because both praise and
+# complaints are *about* cleanliness and so embed close together. On the live
+# corpus that's 19,661 high-rated cleanliness reviews drowning out 2,928 genuine
+# ≤2★ complaints. This filter uses the rating already on each review (numeric(3,1)
+# on reviews_raw) as a COARSE sentiment proxy: when the query implies negative
+# intent we hard-filter to ≤2★, when positive to ≥4★, otherwise leave the search
+# unchanged.
+#
+# This is a MITIGATION, not the fix. Rating is unreliable at the margins — real
+# complaints live in mixed-sentiment 3★ reviews, and identical texts exist across
+# stars (see L-012). The deeper fix is sentiment-at-embed-time (B-026). We trade
+# recall for precision deliberately: flipping the dominant polarity is worth
+# missing the minority of complaints buried in 3★ reviews.
+#
+# Why HARD filter, not a soft re-rank bias: high-rated topical matches vastly
+# outnumber low-rated ones (cleanliness: 19.6K vs 2.9K), so a soft bias that
+# retrieves more and re-ranks would still come out majority-praise after the
+# TOP_K cut — it would not flip the polarity. A hard rating predicate does. The
+# only downside (too few results in a narrow city scope) is handled by the
+# relax-and-note fallback in run().
+NEGATIVE_MAX_RATING  = 2.0   # negative-intent query → rating <= this
+POSITIVE_MIN_RATING  = 4.0   # positive-intent query → rating >= this
+MIN_POLARITY_RESULTS = 5     # below this, relax the polarity filter (and flag it)
+
+# General keyword lexicons — NOT per-query patterns. The detector counts how many
+# DISTINCT terms from each side appear in the query and picks the larger side;
+# ties and no-matches default to neutral (no filter). "clean" is deliberately
+# absent from both — it's a topic word, not a sentiment word.
+_NEGATIVE_TERMS = [
+    "complaint", "complaints", "complain", "complaining", "complained",
+    "problem", "problems", "issue", "issues", "bad", "worst", "terrible",
+    "awful", "poor", "horrible", "dirty", "filthy", "filth", "unhygienic",
+    "disappointing", "disappointed", "dissatisfied", "unhappy", "avoid",
+    "rude", "gripe", "gripes", "downside", "downsides", "drawback",
+    "drawbacks", "dislike", "disliked", "hate", "hated", "negative",
+    "nightmare", "smelly", "broken", "worse",
+]
+_POSITIVE_TERMS = [
+    "best", "praise", "praised", "love", "loved", "great", "excellent",
+    "amazing", "wonderful", "fantastic", "favourite", "favorite",
+    "recommend", "recommended", "highlight", "highlights", "happy",
+    "satisfied", "enjoyed", "delightful", "positive", "superb", "perfect",
+    "lovely", "pleasant",
+]
+
+# Word-boundary alternation so "love" doesn't match inside "glove" and "best"
+# doesn't match inside "bestseller". Non-capturing terms; findall returns the
+# matched substrings so the caller can report which terms fired.
+_NEG_RE = re.compile(r"\b(?:" + "|".join(map(re.escape, _NEGATIVE_TERMS)) + r")\b", re.IGNORECASE)
+_POS_RE = re.compile(r"\b(?:" + "|".join(map(re.escape, _POSITIVE_TERMS)) + r")\b", re.IGNORECASE)
+
+
+def _detect_polarity(query: str) -> tuple[str, list[str]]:
+    """
+    Classify a query's sentiment intent from general keyword rules (B-062).
+
+    Returns (polarity, matched_terms) where polarity is one of:
+        "negative" — more distinct negative terms than positive  → ≤2★ filter
+        "positive" — more distinct positive terms than negative  → ≥4★ filter
+        "neutral"  — tie or no sentiment terms                   → no filter
+
+    matched_terms is the sorted, de-duplicated list of terms from the WINNING
+    side (empty for neutral) — recorded in the result's `filters` field for
+    transparency.
+
+    Counts DISTINCT terms, not occurrences, so a single word repeated doesn't
+    outweigh a different word on the other side. Default is neutral: when the
+    query carries no clear sentiment, the search behaves exactly as before.
+    """
+    neg_terms = sorted({m.lower() for m in _NEG_RE.findall(query)})
+    pos_terms = sorted({m.lower() for m in _POS_RE.findall(query)})
+
+    if len(neg_terms) > len(pos_terms):
+        return "negative", neg_terms
+    if len(pos_terms) > len(neg_terms):
+        return "positive", pos_terms
+    return "neutral", []
+
 
 DB_CONFIG = {
     "host":     os.getenv("POSTGRES_HOST", "localhost"),
@@ -212,6 +295,8 @@ def _search_reviews(
     query_vec: list,
     city: str | None,
     hotel_ids: list[str] | None = None,
+    rating_max: float | None = None,
+    rating_min: float | None = None,
 ) -> list[dict]:
     """
     Run pgvector cosine similarity search against reviews_raw.embedding.
@@ -260,6 +345,17 @@ def _search_reviews(
         encodes any geographic scope. When `hotel_ids` is None the existing
         global / city-scoped behaviour is preserved byte-for-byte.
 
+    Polarity filter (B-062):
+        `rating_max` / `rating_min`, when given, add `r.rating <= %s` /
+        `r.rating >= %s` to the SAME inner WHERE as the city and hotel_ids
+        filters — so the rating bound, geographic scope, and dedup all stay
+        in one execution plan. The caller (run()) sets at most one of them
+        from the detected query polarity (negative → rating_max=2.0,
+        positive → rating_min=4.0). Both None → unchanged behaviour. This
+        rides on the review-grain `reviews_raw.rating`; it is independent of
+        and composes with B-004's hotel-grain `hotel_master.avg_rating`
+        filter (different column, different grain).
+
     Returns a list of dicts, one per review.
     """
     # Build the inner subquery dynamically so the dedup + scoping stay in
@@ -295,6 +391,16 @@ def _search_reviews(
         # silently bypass the filter.
         inner_where.append("r.hotel_id = ANY(%s)")
         inner_params.append(list(hotel_ids))
+
+    # Polarity rating bound (B-062). Predicate + param appended together so
+    # positional %s ordering stays in lockstep with the rest of inner_where,
+    # ahead of the final DEDUP_PREFIX_LEN + TOP_K bindings below.
+    if rating_max is not None:
+        inner_where.append("r.rating <= %s")
+        inner_params.append(rating_max)
+    if rating_min is not None:
+        inner_where.append("r.rating >= %s")
+        inner_params.append(rating_min)
 
     sql = f"""
         SELECT hotel_id,
@@ -420,6 +526,18 @@ def run(user_query: str, hotel_ids: list[str] | None = None) -> dict:
         "error":    None  — or error message string if anything failed
     }
 
+    When the query carries a sentiment intent (B-062), a "filters" key is
+    added recording the applied polarity:
+        "filters": {
+            "polarity":           "negative" | "positive",
+            "polarity_terms":     [<matched keywords>],
+            "polarity_threshold": "<=2" | ">=4",
+            "polarity_relaxed":   <bool — True if the bound was dropped because
+                                   it left fewer than MIN_POLARITY_RESULTS>,
+        }
+    Neutral queries add no "filters" key (result shape unchanged). On the
+    hybrid path, main.py merges its own B-004 filter keys into this same dict.
+
     Design note: errors go into the dict, not raised as exceptions.
     Phase 5 renders a friendly error page instead of crashing.
     """
@@ -472,12 +590,56 @@ def run(user_query: str, hotel_ids: list[str] | None = None) -> dict:
         # the same geometric space, so cosine similarity is meaningful.
         query_vec = _model.encode(user_query).tolist()
 
+        # Step 4.5 — Detect sentiment polarity (B-062, mitigates L-012)
+        # General keyword rules → negative / positive / neutral. Negative
+        # biases retrieval to ≤2★ reviews (actual complaints), positive to
+        # ≥4★, neutral leaves the search unchanged.
+        polarity, polarity_terms = _detect_polarity(user_query)
+        rating_max = NEGATIVE_MAX_RATING if polarity == "negative" else None
+        rating_min = POSITIVE_MIN_RATING if polarity == "positive" else None
+        if polarity != "neutral":
+            log.info("Polarity '%s' detected (terms=%s) — biasing by rating",
+                     polarity, polarity_terms)
+
         # Step 5 — pgvector cosine similarity search
-        reviews        = _search_reviews(conn, query_vec, city, hotel_ids=hotel_ids)
+        reviews = _search_reviews(
+            conn, query_vec, city, hotel_ids=hotel_ids,
+            rating_max=rating_max, rating_min=rating_min,
+        )
+
+        # Relax-and-note fallback (B-062): a hard polarity filter can starve a
+        # narrow city/hotel scope of results. When it returns too few, re-run
+        # WITHOUT the rating bound and flag it, rather than show an empty or
+        # misleadingly thin result. Neutral queries never enter this branch.
+        polarity_relaxed = False
+        if polarity != "neutral" and len(reviews) < MIN_POLARITY_RESULTS:
+            log.info(
+                "Polarity filter returned %d (<%d) — relaxing rating bound",
+                len(reviews), MIN_POLARITY_RESULTS,
+            )
+            reviews = _search_reviews(conn, query_vec, city, hotel_ids=hotel_ids)
+            polarity_relaxed = True
+
         result["reviews"] = reviews
+
+        # Record the applied polarity in the result's `filters` field for
+        # transparency (only when a filter was actually chosen — neutral
+        # queries stay byte-identical to the pre-B-062 result shape). The
+        # hybrid path (main.py) merges its own B-004 keys into this dict.
+        if polarity != "neutral":
+            result.setdefault("filters", {})
+            result["filters"]["polarity"]           = polarity
+            result["filters"]["polarity_terms"]     = polarity_terms
+            result["filters"]["polarity_threshold"] = (
+                f"<={NEGATIVE_MAX_RATING:g}" if polarity == "negative"
+                else f">={POSITIVE_MIN_RATING:g}"
+            )
+            result["filters"]["polarity_relaxed"]   = polarity_relaxed
+
         log.info(
-            "Retrieved %d reviews (city=%s, hotel_ids=%s)",
-            len(reviews), city or "all", "scoped" if hotel_ids else "unscoped"
+            "Retrieved %d reviews (city=%s, hotel_ids=%s, polarity=%s%s)",
+            len(reviews), city or "all", "scoped" if hotel_ids else "unscoped",
+            polarity, " relaxed" if polarity_relaxed else "",
         )
 
         conn.close()

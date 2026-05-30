@@ -240,8 +240,11 @@ def answer(query: str) -> dict:
 
     result = semantic_run(query, hotel_ids=hotel_ids)
     # Annotate the result so the dashboard / debug surfaces can see that
-    # scoping was applied and what filters drove it.
-    result["filters"]        = filters
+    # scoping was applied and what filters drove it. MERGE (not assign) so the
+    # B-062 polarity keys semantic_run() may have already written into
+    # result["filters"] survive alongside the B-004 rating/star/city keys —
+    # the two key-sets are disjoint, so neither transparency is lost.
+    result["filters"]        = {**result.get("filters", {}), **filters}
     result["hotel_id_count"] = len(hotel_ids)
     return result
 

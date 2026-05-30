@@ -106,7 +106,7 @@ Current phase: **6** — Phase 7 shipped (monitor redesign done end-to-end). Rea
   B-060 lint_cancellation_filter_missing + run() lint-retry hook, B-004 next),
   `ai/prompts/text_to_sql_system.txt` (B-003 schema context, B-022 SQL rules; edit whenever schema
   knowledge or SQL generation rules change — keep in sync with `text_to_sql.py`),
-  `ai/main.py` (B-004, B-005), `ai/semantic_search.py` (B-006 dedup, B-004),
+  `ai/main.py` (B-004, B-005; B-062 one-line `filters`-merge), `ai/semantic_search.py` (B-006 dedup, B-004, B-062 rating-based polarity filter `_detect_polarity` + rating bounds — mitigates L-012),
   `render/server.py` and `render/templates/dashboard.html` (B-022 cache, Show SQL,
   rename),
   `render/templates/explore.html` (B-061 — Explore preview surfaces the B-060

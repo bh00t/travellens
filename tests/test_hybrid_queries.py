@@ -277,13 +277,22 @@ def test_hybrid_result_dict_records_filter():
 # keys. A regression here means we're polluting unrelated result dicts.
 # ══════════════════════════════════════════════════════════════════════════
 
+# Hybrid markers: a result took the B-004 hybrid (hotel_ids) path iff it carries
+# hotel_id_count or one of the B-004 structured filter keys. Post-B-062 the
+# `filters` dict may ALSO hold polarity keys on the pure-semantic path, so
+# `filters` alone is no longer a hybrid marker — assert the specific keys.
+_B004_FILTER_KEYS = {"avg_rating_gte", "avg_rating_lte", "star_category", "city"}
+
+
 @pytest.mark.slow
 def test_pure_semantic_no_hybrid_keys():
-    """'rude staff' — no filter, no hybrid keys, existing path intact."""
+    """'rude staff' — no HYBRID scoping, existing path intact. (B-062: the
+    sentiment word 'rude' now adds a polarity entry to `filters`; the hybrid
+    markers — hotel_id_count and the B-004 rating/star/city keys — stay absent.)"""
     result = answer("rude staff")
     assert result["path"] == "semantic"
-    assert "filters" not in result
     assert "hotel_id_count" not in result
+    assert not (_B004_FILTER_KEYS & set(result.get("filters", {})))
 
 
 @pytest.mark.slow
@@ -292,12 +301,14 @@ def test_city_only_semantic_no_hybrid_keys():
     City-only routes through the EXISTING semantic path (city detection
     handled inside semantic_search). Going through hotel_ids for a pure
     city query would be a behaviour change — explicitly out of scope.
+    (B-062: 'complaints' adds a polarity entry to `filters`; no B-004 hybrid
+    key — including 'city' — is set, since the hybrid path wasn't taken.)
     """
     result = answer("complaints in Goa")
     assert result["path"] == "semantic"
     assert result.get("city") == "goa"
-    assert "filters" not in result
     assert "hotel_id_count" not in result
+    assert not (_B004_FILTER_KEYS & set(result.get("filters", {})))
 
 
 @pytest.mark.slow

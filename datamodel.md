@@ -108,8 +108,9 @@ These two are independent — both read facts/reviews and write derived data on 
 |---|---|---|---|---|---|---|
 | C1 | Lifecycle history backfill | `python -m scripts.generate_lifecycle_history` | ~3–5 min | `fact_bookings` | `fact_booking_events` (~ 2.1M rows tagged `source='history'`: BOOKING + CHECKIN + CHECKOUT or BOOKING + CANCELLATION) and `sim_open_bookings` (~17K rows of in-flight bookings at the `--sim-today` anchor, default 2025-06-01). The FUTURE bucket (`booking_ts >= sim-today`) is SKIPPED — reserved for the stream simulator. | `--reset` (default) runs `DELETE FROM fact_booking_events WHERE source='history'; TRUNCATE sim_open_bookings;` before writing. `source='stream'` rows are never touched. RNG seed pinned → identical counts on rerun. Use `--no-reset` to append without wiping. |
 | C2 | Review embeddings backfill | `python -m scripts.generate_embeddings` | ~5–8 min on RTX 3070 | `reviews_raw WHERE embedding IS NULL` | Writes `embedding` (384-d `vector` from `all-MiniLM-L6-v2`) to each NULL row, then `DROP / CREATE` the IVFFlat index. `lists` is now computed dynamically by `_ivfflat_lists(embedded_rowcount)` at build time (B-051 logged frozen-file exception): `max(rowcount // 1000, 30)` up to 1M vectors; `int(sqrt(rowcount))` past 1M. So a re-embed against the live ~133K corpus rebuilds at `lists≈133` — within rule-of-thumb noise of the manually-shipped `lists=120`. After any full re-embed, the query side stays correct because `ai/semantic_search.py` already issues `SET ivfflat.probes = 11` per connection (pair it manually with the build lists if a future corpus changes the index size materially). | Re-entrant — operates only on `embedding IS NULL`. Restart-safe (no row mid-batch is half-written). The continuous embedder (`scripts/review_embedder.py`) does NOT touch the index. |
+| C3 | Review sentiment backfill (B-026) | `python -m scripts.review_sentiment_scorer --once` | ~15 min on RTX 3070 | `reviews_raw WHERE sentiment_label IS NULL` | Writes `sentiment_label` + `sentiment_score` (CardiffNLP 3-class) to each unscored row. Requires migration 017 applied (the columns must exist). Independent of C2 — does NOT touch `embedding` or the IVFFlat index; order vs. C2 does not matter. | Re-entrant — operates only on `sentiment_label IS NULL`. Commits per batch; restart-safe. Single-instance (advisory lock 7400070). |
 
-After C1 + C2 the database has: the loaded base (Stage A) plus optional expansion (Stage B) plus history events for the simulator to read plus searchable embeddings.
+After C1 + C2 (+ C3) the database has: the loaded base (Stage A) plus optional expansion (Stage B) plus history events for the simulator to read plus searchable embeddings plus per-review sentiment.
 
 ### Tuning knobs (for re-shaping the dataset itself)
 
@@ -139,9 +140,10 @@ python -m scripts.validate_load        # A5  ~5s    → 20 checks on loaded Post
 # Stage B — additive expansion (idempotent, aborts on re-run)
 python -m scripts.expand_dimensions    # B1  ~10s   → 99K new dim rows via INSERT
 
-# Stage C — post-load seeds (independent, either order)
+# Stage C — post-load seeds (independent, any order)
 python -m scripts.generate_lifecycle_history   # C1  ~3-5min  → ~2.1M history events + ~17K sim_open rows
 python -m scripts.generate_embeddings           # C2  ~5-8min  → 384-d vectors + IVFFlat index
+python -m scripts.review_sentiment_scorer --once  # C3  ~15min  → sentiment_label/score (needs migration 017)
 ```
 
 **Re-running A4 after B or C wipes the expansion + history events + embeddings.** That is the only ordering rule that matters.
@@ -1163,6 +1165,36 @@ New indexes: `idx_reviews_raw_booking_id` (partial, WHERE booking_id IS NOT NULL
 
 **Counts as of B-030a backfill:** 30,000 seed + 90,980 history = 120,980 total. History reviews: 14.9% of 612,380 pre-sim-today bookings (REVIEW_PROPENSITY_SCALE=0.47 in `scripts/review_generator.py`; to retune the rate adjust that constant and re-run `generate_review_backfill --reset`).
 
+#### Migration 017 — per-review sentiment columns (B-026 Stage 1)
+
+Added by `db/migrations/017_review_sentiment.sql`. Two nullable columns that hold
+the REAL sentiment of each review, computed by a dedicated classifier — replacing
+the B-062 rating proxy as the fix for L-012 (sentiment-topic conflation). The star
+`rating` is a proven-bad proxy: genuine complaints live in mixed-sentiment 3★
+reviews (29.6% of the corpus) that the ≤2★ / ≥4★ rating filter can never reach.
+
+| Column | Type | Notes |
+|---|---|---|
+| `sentiment_label` | VARCHAR(8) | `positive` / `negative` / `neutral`. **NULL = unscored** — the natural backfill cursor (mirrors `embedding IS NULL`). |
+| `sentiment_score` | NUMERIC(4,3) | Model confidence 0.000–1.000 for the chosen label. Stored so a future "strongly negative" confidence gate can be added without a re-backfill. |
+
+New index: `idx_reviews_raw_sentiment` (partial, WHERE sentiment_label IS NOT NULL) —
+supports the Stage-2 retrieval predicate `WHERE sentiment_label = 'negative'/'positive'`.
+
+**Model:** CardiffNLP `twitter-roberta-base-sentiment-latest` (3-class RoBERTa),
+pinned to safetensors revision `d616e2bdfcdb0ca89d9b6efc4909e1db063af290` and loaded
+with `use_safetensors=True` — the main-revision `.bin` checkpoint is blocked on the
+project's torch 2.3.0 by CVE-2025-32434, and torch is deliberately NOT upgraded
+(L-008). Populated by `scripts/review_sentiment_scorer.py` (advisory lock 7400070):
+`--once` runs the one-time 133K backfill, the bare command runs a continuous
+micro-batch loop. **Sentiment is independent of the embedding** — these columns are
+additive; the 133K vectors and the IVFFlat index are untouched.
+
+**Scope (B-026):** Stage 1 ships the columns + backfill. The retrieval swap that
+makes this user-visible (Stage 2 — replace the rating predicate in
+`_search_reviews` with `sentiment_label`) and the run.py wiring (Stage 3) are
+separate, each gated on the prior stage's verification.
+
 #### Silver variant — schema changes
 
 When Bronze CSV is processed to Silver Parquet:
@@ -1925,6 +1957,7 @@ the source of truth.
 | 014 | `sim_daily_counter` table (`counter_date DATE PK`, `events_emitted INTEGER NOT NULL DEFAULT 0`, `cap INTEGER NOT NULL`, `updated_at TIMESTAMPTZ`). Per-day TOTAL-EVENTS guardrail for the forward generator; `counter_date` is in IST; `cap = 1_000_000 × rate_multiplier` at row creation (not recomputed by later sessions of the same day). On cap-hit the producer sleeps until IST midnight. | Phase 2 — Forward generator      | B-047      |
 | 015 | 4 nullable `TIMESTAMPTZ` cols on `sim_open_bookings` (`checkin_fire_ts`, `checkout_fire_ts`, `cancel_fire_ts`, `review_fire_ts`); 4 partial indexes narrowed by `state` and IS NOT NULL; **state CHECK constraint extended** to allow `'REVIEW_PENDING'` (was `IN ('BOOKED','CHECKED_IN')`, now `IN ('BOOKED','CHECKED_IN','REVIEW_PENDING')`). Fire-time stamps are sampled in IST from per-event-type hour distributions at BOOKING emit time and persisted on the row so a restart picks up exactly where it left off. Catch-up rule: overdue stamps fire at `event_ts = NOW()`, never backdated. | Phase 2 — Forward generator      | B-047      |
 | 016 | COMMENT-only refresh on `sim_daily_counter.cap` documenting the producer's cap-upsert flip from `ON CONFLICT DO NOTHING` (sticky cap) → `ON CONFLICT DO UPDATE SET cap = EXCLUDED.cap` (last-write-wins across same-day sessions). Behavioural change lives in `scripts/kafka_event_producer.py:ensure_daily_counter_row`; this migration is the ledger entry. `events_emitted` is intentionally not in the SET clause and continues to accumulate. | Phase 2 — Forward generator      | B-047 (follow-on) |
+| 017 | 2 new nullable columns on `reviews_raw` for per-review sentiment (`sentiment_label VARCHAR(8)` — positive/negative/neutral, NULL = unscored; `sentiment_score NUMERIC(4,3)` — model confidence) + partial index `idx_reviews_raw_sentiment` (WHERE sentiment_label IS NOT NULL). Populated by `scripts/review_sentiment_scorer.py` (CardiffNLP, pinned safetensors revision). Independent of `embedding` — additive, no re-embed. | Phase 3 — Review sentiment       | B-026 (Stage 1) |
 
 **Note — B-046 added no migration.** Stage 1 dimension expansion (949 cities · 18,076 hotels · 49,904 room types · 80,000 customers) uses existing columns only. The `type_name` field on `dim_room_type` and the `property_type` field on `hotel_master` are both free-text VARCHAR with no CHECK constraint, so the three new room-type values (`Houseboat Suite`, `Tent`, `Treehouse`) and the previously-unused property-types (`Houseboat`, `Treehouse`) inserted cleanly. `opened_year` (migration 006) carries no CHECK constraint either, so extending the data range to 2026 needed no schema change.
 

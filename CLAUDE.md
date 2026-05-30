@@ -322,6 +322,18 @@ travellens/
 │   │                                  CREATE index with lists=120 (for ~121K rows), run same query AFTER.
 │   │                                  Single-instance: pg_try_advisory_lock(7400050); second instance exits 1.
 │   │                                  Run ONE instance only: `python -m scripts.review_embedder`.
+│   ├── review_sentiment_scorer.py   ← B-026 (Stage 1): PER-REVIEW SENTIMENT SCORER — micro-batch process
+│   │                                  mirroring review_embedder.py. Classifies reviews_raw WHERE
+│   │                                  sentiment_label IS NULL with CardiffNLP twitter-roberta-base-sentiment-
+│   │                                  latest (3-class pos/neg/neutral), pinned to safetensors revision
+│   │                                  d616e2bd…, loaded via use_safetensors=True (the .bin checkpoint is
+│   │                                  blocked on torch 2.3.0 by CVE-2025-32434; torch is NOT upgraded — L-008).
+│   │                                  Writes sentiment_label + sentiment_score (migration 017); INDEPENDENT of
+│   │                                  the embedding (never touches the 384-d vectors or the IVFFlat index).
+│   │                                  `--once` = one-time 133K backfill then exit; bare = continuous loop,
+│   │                                  sleep when caught up. Single-instance: pg_try_advisory_lock(7400070);
+│   │                                  second instance exits 1. NOT yet a run.py proc (that is Stage 3). Run:
+│   │                                  `python -m scripts.review_sentiment_scorer --once`.
 │   ├── quarantine_hourly_rollup.py  ← B-044: HOURLY QUARANTINE ROLLUP — 5-min loop run.py proc (6th).
 │   │                                  Each cycle: watermark = MAX(is_final=TRUE row) in quarantine_hourly_summary;
 │   │                                  from watermark+1 to current hour: re-counts S3 objects via
@@ -361,7 +373,8 @@ travellens/
 │       ├── 013_quarantine_hourly_summary.sql ← B-044: drops quarantine_daily_summary; creates quarantine_hourly_summary (summary_date DATE + summary_hour SMALLINT PK, malformed_count, late_count, is_final BOOL, computed_at)
 │       ├── 014_sim_daily_counter.sql        ← B-047: sim_daily_counter (counter_date PK, events_emitted, cap, updated_at); cap = 1_000_000 × rate_multiplier; counter_date is in IST
 │       ├── 015_lifecycle_fire_times.sql     ← B-047: adds 4 TIMESTAMPTZ cols on sim_open_bookings (checkin_fire_ts, checkout_fire_ts, cancel_fire_ts, review_fire_ts), 4 partial indexes, and extends state CHECK to include 'REVIEW_PENDING'
-│       └── 016_sim_daily_counter_cap_upsert.sql ← B-047 follow-on: COMMENT-only ledger entry; producer's startup UPSERT flipped from ON CONFLICT DO NOTHING (sticky cap) → DO UPDATE SET cap=EXCLUDED.cap (last-write-wins across same-day sessions). events_emitted unchanged.
+│       ├── 016_sim_daily_counter_cap_upsert.sql ← B-047 follow-on: COMMENT-only ledger entry; producer's startup UPSERT flipped from ON CONFLICT DO NOTHING (sticky cap) → DO UPDATE SET cap=EXCLUDED.cap (last-write-wins across same-day sessions). events_emitted unchanged.
+│       └── 017_review_sentiment.sql      ← B-026 (Stage 1): 2 nullable cols on reviews_raw (sentiment_label VARCHAR(8), sentiment_score NUMERIC(4,3)) + partial index idx_reviews_raw_sentiment; populated by scripts/review_sentiment_scorer.py. Additive — no re-embed.
 ├── docker/
 │   ├── postgres.Dockerfile          ← Postgres 16 + pgvector
 │   └── docker-compose.yml           ← postgres + kafka + zookeeper + minio

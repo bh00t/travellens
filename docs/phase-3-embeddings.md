@@ -488,6 +488,18 @@ On first "caught up" poll, logs step-by-step Part B index-rebuild instructions: 
 
 ---
 
+### B-026 (Stage 1) — Per-review sentiment column + backfill
+
+New `scripts/review_sentiment_scorer.py`: a micro-batch process mirroring `review_embedder.py` that classifies each review's sentiment and stores it on `reviews_raw`, as the real fix for L-012 (sentiment-topic conflation) — replacing the B-062 rating proxy. Migration 017 adds two nullable columns (`sentiment_label VARCHAR(8)`, `sentiment_score NUMERIC(4,3)`) + a partial index. Model: CardiffNLP `twitter-roberta-base-sentiment-latest` (3-class pos/neg/neutral), pinned to safetensors revision `d616e2bd…` and loaded with `use_safetensors=True` — the main-revision `.bin` checkpoint is refused on the project's pinned torch 2.3.0 (CVE-2025-32434, would need torch ≥2.6), and torch is deliberately NOT upgraded (would risk the cu121 / pgvector / sentence-transformers stack — L-008). Advisory lock `7400070`. `--once` runs the one-time 133K backfill (~15 min on the RTX 3070 at the measured ~153 rev/s); the bare command runs a continuous loop over `sentiment_label IS NULL`.
+
+**Sentiment is independent of the embedding** — this process never touches the `embedding` column or the IVFFlat index; the columns are purely additive (no re-embed). It is NOT yet a `run.py` proc — that wiring is B-026 Stage 3.
+
+**Why a dedicated classifier, not the rating:** star rating is a proven-bad sentiment proxy (L-012) — genuine complaints live in mixed-sentiment 3★ reviews (29.6% of the corpus) that B-062's ≤2★ / ≥4★ rating filter can never reach. The audit's prototype confirmed the classifier recovers those 3★ complaints; Ollama-per-review was ruled out by numbers (12–37 h). The known residual — whole-review sentiment still flattens mixed reviews where a positive opener dominates — is the aspect-level limit, tracked separately and out of scope here.
+
+**Scope:** Stage 1 only (schema + scorer + backfill). The retrieval swap (Stage 2 — `_search_reviews` switches from the rating predicate to `sentiment_label`) and run.py wiring (Stage 3) are gated on this stage's verification. See [backlog → B-026](backlog.md#b-026--sentiment-classification-for-reviews).
+
+---
+
 ## NEXT
 
 **Phase 4 — Text-to-SQL + Semantic Query Router**

@@ -29,7 +29,7 @@ carry context only.
 - B-023 — About page redesign
 - B-024 — `refresh_pinned_widgets` DAG (Phase 6, compute path for B-022)
 - B-025 — fixed-height scrollable table / review widgets
-- B-026 — sentiment classification for reviews (resolves L-012)
+- B-026 — sentiment classification for reviews (resolves L-012) — Stage 1 (schema + scorer + 133K backfill) shipped; Stage 2 (retrieval swap) + Stage 3 (run.py wiring) open
 - B-028 — `run.py` dev launcher (built; not yet committed / verified)
 - ~~B-030 — REVIEW as a stream event~~ ✓ Done
 - B-031 — consumer resilience fix (L-016; fix shipped, pending live verification)
@@ -278,6 +278,9 @@ follow-up. Items here span both phases by design.
 ---
 
 ### B-026 — Sentiment classification for reviews
+
+> **Trace.** Phase(s): [Phase 3](phase-3-embeddings.md) (ingest/embeddings) + [Phase 4](phase-4-ai-layer.md) (AI layer) · datamodel: `reviews_raw` (+ `sentiment_label`, `sentiment_score`; [migration 017](../datamodel.md#migration-017--per-review-sentiment-columns-b-026-stage-1)) · data: `scripts/review_sentiment_scorer.py` (backfill + continuous ingest), [Regenerating the Dataset → Stage C3](../datamodel.md#stage-c--post-load-seeds-run-after-stage-a-safe-before-or-after-stage-b).
+
 **Priority:** Medium — resolves L-012 (sentiment-topic conflation)  
 **Problem:** Semantic search matches review TOPIC not POLARITY, so "cleanliness complaints" returns cleanliness praise too (see L-012). Star rating is not a reliable sentiment proxy — confirmed via testing that complaints ("foul smell", "cobwebs") appear in mixed-sentiment 3★ reviews with positive openers.  
 **Design:**
@@ -302,7 +305,31 @@ follow-up. Items here span both phases by design.
 
 **Acceptance:** "cleanliness complaints" returns predominantly negative-sentiment cleanliness reviews; "best things about hotels" returns positive; the L-012 conflation no longer dominates results.
 
-> **Meanwhile mitigation shipped:** [B-062](#b-062--rating-based-polarity-filter-for-semantic-search-mitigates-l-012--done) uses the existing `reviews_raw.rating` as a coarse sentiment proxy until this dedicated-model fix lands. B-062 is precision-over-recall (it will miss complaints buried in 3★ reviews — exactly the case this item's CardiffNLP classifier is meant to catch); B-026 supersedes it when built.
+**Staging (built + verified in safe steps — each later stage gated on the prior's verification):**
+
+- **Stage 1 — schema + backfill + scoring infra (✅ SHIPPED, retrieval UNCHANGED).** `db/migrations/017_review_sentiment.sql` (2 nullable cols `sentiment_label VARCHAR(8)` + `sentiment_score NUMERIC(4,3)` + partial index `idx_reviews_raw_sentiment`); `scripts/review_sentiment_scorer.py` (advisory lock 7400070; `--once` backfill + continuous loop; CardiffNLP `twitter-roberta-base-sentiment-latest` pinned to safetensors revision `d616e2bd…`, `use_safetensors=True` — the `.bin` checkpoint is blocked on torch 2.3.0 by CVE-2025-32434, torch NOT upgraded per L-008). One-time 133K backfill run; label spot-check gate passed (see verification table). `_search_reviews` / `_detect_polarity` UNTOUCHED — B-062 stays live this stage. NOT wired into run.py yet.
+  - Audit/feasibility decisions: sentiment is INDEPENDENT of the embedding (additive columns, **no re-embed of the 133K vectors**); measured GPU throughput ~153 rev/s → ~15 min backfill (vs. Ollama's 12–37 h, ruled out by numbers); separate process (not co-located in `review_embedder.py`) for VRAM headroom + one-process-per-concern.
+- **Stage 2 — retrieval swap (NOT STARTED).** In `_search_reviews`, **REPLACE** the B-062 rating predicate (`r.rating <= 2.0` / `>= 4.0`) with `sentiment_label = 'negative' / 'positive'`. Do NOT combine with rating — AND-ing `rating<=2` back in re-excludes the 3★ complaints this whole item exists to recover. Reuse `_detect_polarity` unchanged + the relax-and-note fallback. Ship label-only v1 (`sentiment_score` stored for a later confidence gate without re-backfill). This is the user-visible change; it marks L-012 substantially resolved and logs the aspect-level residual as its own tracked limitation.
+- **Stage 3 — run.py wiring (NOT STARTED).** Add `review_sentiment_scorer.py` as run.py's 7th proc + extend the B-045 startup-takeover lock-poll to 7400070. Confirm 3-way VRAM coexistence (CardiffNLP ~500MB + MiniLM ~90MB + Ollama 5–6GB on the 8GB 3070) under load; add a yield/pause if pressured.
+
+**Stage 1 verification (2026-05-30):**
+
+| TEST | EXPECTED | ACTUAL | PASS/FAIL |
+|---|---|---|---|
+| Migration 017 applied | 2 cols + partial index | `sentiment_label`, `sentiment_score`, `idx_reviews_raw_sentiment` created | PASS |
+| Backfill coverage | 133,543 scored / 0 unscored | 133,543 / 0 (5,209s ≈ 87 min on shared GPU) | PASS |
+| Embedding untouched | 133,543 embedded, index intact | unchanged (additive columns only) | PASS |
+| `pytest tests/ -q` | green | 76 passed, 1 xfailed (B-003a) — = baseline | PASS |
+| Retrieval / SQL path untouched | `_search_reviews` / `_detect_polarity` / `text_to_sql.py` unchanged | unchanged this stage | PASS |
+| **Label spot-check GATE** | model beats rating proxy; labels trustworthy | **~93% net-sentiment agreement on 100 stratified; PASSED** (below) | PASS |
+
+**Label distribution (all 133,543):** positive 89,800 (67%) · negative 38,834 (29%) · neutral 4,909 (4%). Star×label crosstab is monotonic and correct: 1★ 91% neg · 2★ 94% neg · **3★ 38% neg / 53% pos / 9% neutral** · 4★ 96% pos · 5★ 98% pos.
+
+**Spot-check (100 stratified, 20/star, hand-adjudicated on NET sentiment of the text, not the star):** ~93/100 agree. 1★ 19/20 · 2★ 20/20 · 4★ 20/20 · 5★ 19/20; the disagreements are **all** concentrated in mixed-sentiment 3★ reviews and off-topic noise — i.e. the documented aspect-level residual (a positive opener flattening a later complaint), NOT systematic error. **Decisive B-026-vs-B-062 test (18 hard 3★ complaint-text reviews — B-062 gives 3★ NO filter, so it renders all 18 invisible to a negative query):** B-026 recovers **11/18 genuine complaints as `negative`**; the 7 it labels positive are the positive-opener mixed cases (the known residual). The 3★ band is exactly where the rating proxy is blind, and B-026 correctly splits it. **Gate passed — labels are trustworthy for the Stage-2 retrieval swap.**
+
+> **Status:** Stage 1 shipped + verified; item stays OPEN until Stage 3. Each stage is committed before the next stage's session opens (converge state).
+
+> **Meanwhile mitigation shipped:** [B-062](#b-062--rating-based-polarity-filter-for-semantic-search-mitigates-l-012--done) uses the existing `reviews_raw.rating` as a coarse sentiment proxy until this dedicated-model fix lands. B-062 is precision-over-recall (it will miss complaints buried in 3★ reviews — exactly the case this item's CardiffNLP classifier is meant to catch); B-026's Stage 2 retrieval swap supersedes it.
 
 ---
 

@@ -99,6 +99,8 @@ Current phase: **6** — Phase 7 shipped (monitor redesign done end-to-end). Rea
   `db/schema.sql`, `scripts/load_to_postgres.py`, `scripts/validate_load.py`,
   `scripts/generate_embeddings.py`, `scripts/init_s3_buckets.py`,
   `ai/query_router.py`.
+  - **Logged frozen-file exceptions** (one-line each — file · reason · B-number · date):
+    - `scripts/generate_embeddings.py` — IVFFlat `lists` made dynamic so a future re-embed sizes correctly for the grown corpus · B-051 · 2026-05-28.
 - **Under active hardening — edit ONLY per a specific backlog item:**
   `ai/text_to_sql.py` (B-022 run_stored_sql, B-003 _validate_columns, B-004 next),
   `ai/prompts/text_to_sql_system.txt` (B-003 schema context, B-022 SQL rules; edit whenever schema

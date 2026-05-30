@@ -238,6 +238,105 @@
     .tape-strip{position:absolute;top:-10px;left:50%;transform:translateX(-50%);width:60px;height:16px;background:#F4F4F5;border:1px solid #D4D4D8;opacity:.9;z-index:1;}
     .tape-callout-head{display:flex;align-items:flex-start;gap:.75rem;margin-bottom:.875rem;}
     .tape-callout-label{font-family:'JetBrains Mono',monospace;font-size:.68rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:#000;}
+
+    /* ── Section animations (B-054) — namespaced `.tl-*` to prevent collisions ── */
+    @keyframes tl-blink{0%,49%{opacity:1;}50%,100%{opacity:0;}}
+    @keyframes tl-line-in{to{opacity:1;transform:translateX(0);}}
+    @keyframes tl-bar-in{to{transform:scaleY(1);}}
+    @keyframes tl-hbar-in{to{transform:scaleX(1);}}
+    @keyframes tl-type-q{to{width:var(--tl-qw,11ch);}}
+    @keyframes tl-card-match{0%{opacity:0;transform:translateY(6px) scale(1);background:#fff;border-color:#000;box-shadow:2px 2px 0 #595959;}15%,28%{opacity:1;transform:translateY(0) scale(1);background:#fff;border-color:#000;box-shadow:2px 2px 0 #595959;}40%,100%{opacity:1;transform:translateY(0) scale(1.03);background:#EDFAF2;border-color:#00B140;box-shadow:2px 2px 0 #007A2C;}}
+    @keyframes tl-card-noma{0%{opacity:0;transform:translateY(6px);}15%,100%{opacity:.35;transform:translateY(0);}}
+    @keyframes tl-note-in{0%,30%{opacity:0;}45%,100%{opacity:1;}}
+
+    /* anim1 — Ask → SQL → Chart cycler */
+    .tl-anim1{position:relative;height:400px;padding:1.75rem;background:#fff;border:2px solid #000;box-shadow:4px 4px 0 #000;margin:1.25rem 0 1.5rem;overflow:hidden;}
+    .tl-anim1 .tl-ex{position:absolute;inset:1.75rem;display:none;}
+    .tl-anim1 .tl-ex.tl-ex-active{display:block;}
+    .tl-anim1 .tl-layer{position:absolute;inset:0;opacity:0;transition:opacity .35s ease;display:flex;flex-direction:column;justify-content:center;}
+    .tl-anim1 .tl-ex.tl-ex-active[data-phase="q"]     .tl-layer-q    {opacity:1;}
+    .tl-anim1 .tl-ex.tl-ex-active[data-phase="sql"]   .tl-layer-sql  {opacity:1;}
+    .tl-anim1 .tl-ex.tl-ex-active[data-phase="chart"] .tl-layer-chart{opacity:1;}
+    .tl-anim1 .tl-q-prefix{font-family:'JetBrains Mono',monospace;font-size:.7rem;font-weight:800;color:#00B140;letter-spacing:.08em;margin-bottom:.6rem;}
+    .tl-anim1 .tl-q-text{font-family:'Fraunces',serif;font-size:clamp(1.2rem,2.8vw,1.55rem);font-weight:600;color:#000;line-height:1.3;max-width:100%;}
+    .tl-anim1 .tl-q-cursor{display:inline-block;width:3px;height:1.5rem;background:#00B140;vertical-align:-3px;margin-left:4px;}
+    .tl-anim1 .tl-ex.tl-ex-active[data-phase="q"] .tl-q-cursor{animation:tl-blink .65s infinite;}
+    .tl-anim1 .tl-sql-header,.tl-anim1 .tl-chart-header{font-family:'JetBrains Mono',monospace;font-size:.7rem;font-weight:800;color:#595959;letter-spacing:.04em;text-transform:uppercase;margin-bottom:.7rem;}
+    .tl-anim1 .tl-sql-block{background:#F4F4F5;border-left:4px solid #00B140;padding:.9rem 1.2rem;font-family:'JetBrains Mono',monospace;font-size:.74rem;line-height:1.7;color:#000;}
+    .tl-anim1 .tl-sql-line{display:block;opacity:0;transform:translateX(-8px);}
+    .tl-anim1 .tl-ex.tl-ex-active[data-phase="sql"] .tl-sql-line{animation:tl-line-in .5s ease forwards;}
+    .tl-anim1 .tl-ex.tl-ex-active[data-phase="sql"] .tl-sql-line:nth-child(1){animation-delay:.05s;}
+    .tl-anim1 .tl-ex.tl-ex-active[data-phase="sql"] .tl-sql-line:nth-child(2){animation-delay:.20s;}
+    .tl-anim1 .tl-ex.tl-ex-active[data-phase="sql"] .tl-sql-line:nth-child(3){animation-delay:.35s;}
+    .tl-anim1 .tl-ex.tl-ex-active[data-phase="sql"] .tl-sql-line:nth-child(4){animation-delay:.50s;}
+    .tl-anim1 .tl-ex.tl-ex-active[data-phase="sql"] .tl-sql-line:nth-child(5){animation-delay:.65s;}
+    .tl-anim1 .tl-ex.tl-ex-active[data-phase="sql"] .tl-sql-line:nth-child(6){animation-delay:.80s;}
+    .tl-anim1 .tl-ex.tl-ex-active[data-phase="sql"] .tl-sql-line:nth-child(7){animation-delay:.95s;}
+    .tl-anim1 .tl-bars{display:flex;align-items:flex-end;gap:6px;height:230px;padding-bottom:35px;}
+    .tl-anim1 .tl-bar-col{flex:1;display:flex;flex-direction:column;align-items:center;position:relative;height:100%;}
+    .tl-anim1 .tl-bar{width:100%;background:#00B140;border:1.5px solid #007A2C;transform:scaleY(0);transform-origin:bottom;}
+    .tl-anim1 .tl-ex.tl-ex-active[data-phase="chart"] .tl-bar{animation:tl-bar-in .5s ease forwards;}
+    .tl-anim1 .tl-ex.tl-ex-active[data-phase="chart"] .tl-bar-col:nth-child(1)  .tl-bar{animation-delay:0s;}
+    .tl-anim1 .tl-ex.tl-ex-active[data-phase="chart"] .tl-bar-col:nth-child(2)  .tl-bar{animation-delay:.04s;}
+    .tl-anim1 .tl-ex.tl-ex-active[data-phase="chart"] .tl-bar-col:nth-child(3)  .tl-bar{animation-delay:.08s;}
+    .tl-anim1 .tl-ex.tl-ex-active[data-phase="chart"] .tl-bar-col:nth-child(4)  .tl-bar{animation-delay:.12s;}
+    .tl-anim1 .tl-ex.tl-ex-active[data-phase="chart"] .tl-bar-col:nth-child(5)  .tl-bar{animation-delay:.16s;}
+    .tl-anim1 .tl-ex.tl-ex-active[data-phase="chart"] .tl-bar-col:nth-child(6)  .tl-bar{animation-delay:.20s;}
+    .tl-anim1 .tl-ex.tl-ex-active[data-phase="chart"] .tl-bar-col:nth-child(7)  .tl-bar{animation-delay:.24s;}
+    .tl-anim1 .tl-ex.tl-ex-active[data-phase="chart"] .tl-bar-col:nth-child(8)  .tl-bar{animation-delay:.28s;}
+    .tl-anim1 .tl-ex.tl-ex-active[data-phase="chart"] .tl-bar-col:nth-child(9)  .tl-bar{animation-delay:.32s;}
+    .tl-anim1 .tl-ex.tl-ex-active[data-phase="chart"] .tl-bar-col:nth-child(10) .tl-bar{animation-delay:.36s;}
+    .tl-anim1 .tl-bar-label{font-family:'JetBrains Mono',monospace;font-size:.55rem;font-weight:700;color:#595959;position:absolute;bottom:8px;writing-mode:vertical-rl;transform:rotate(180deg);}
+    .tl-anim1 .tl-hbar-list{display:flex;flex-direction:column;gap:.55rem;}
+    .tl-anim1 .tl-hbar-row{display:flex;align-items:center;gap:.7rem;}
+    .tl-anim1 .tl-hbar-name{font-family:'JetBrains Mono',monospace;font-size:.72rem;font-weight:700;color:#000;width:165px;flex-shrink:0;text-align:right;}
+    .tl-anim1 .tl-hbar-track{flex:1;height:18px;background:#F4F4F5;border:1.5px solid #000;position:relative;}
+    .tl-anim1 .tl-hbar-fill{height:100%;background:#00B140;border-right:1.5px solid #007A2C;transform:scaleX(0);transform-origin:left;}
+    .tl-anim1 .tl-ex.tl-ex-active[data-phase="chart"] .tl-hbar-fill{animation:tl-hbar-in .55s ease forwards;}
+    .tl-anim1 .tl-ex.tl-ex-active[data-phase="chart"] .tl-hbar-row:nth-child(1) .tl-hbar-fill{animation-delay:0s;}
+    .tl-anim1 .tl-ex.tl-ex-active[data-phase="chart"] .tl-hbar-row:nth-child(2) .tl-hbar-fill{animation-delay:.08s;}
+    .tl-anim1 .tl-ex.tl-ex-active[data-phase="chart"] .tl-hbar-row:nth-child(3) .tl-hbar-fill{animation-delay:.16s;}
+    .tl-anim1 .tl-ex.tl-ex-active[data-phase="chart"] .tl-hbar-row:nth-child(4) .tl-hbar-fill{animation-delay:.24s;}
+    .tl-anim1 .tl-ex.tl-ex-active[data-phase="chart"] .tl-hbar-row:nth-child(5) .tl-hbar-fill{animation-delay:.32s;}
+    .tl-anim1 .tl-hbar-pct{font-family:'JetBrains Mono',monospace;font-size:.7rem;font-weight:700;color:#007A2C;width:48px;}
+    /* Note: .kw/.str/.fn syntax classes are shared with blueprint code-blocks (line 70) — no override needed. */
+
+    /* anim2 — Semantic spotlight cycler */
+    .tl-anim2{position:relative;height:420px;padding:1.75rem;background:#fff;border:2px solid #000;box-shadow:4px 4px 0 #000;margin:1.25rem 0 1.5rem;overflow:hidden;}
+    .tl-anim2 .tl-ex{position:absolute;inset:1.75rem;display:none;}
+    .tl-anim2 .tl-ex.tl-ex-active{display:block;}
+    .tl-anim2 .tl-search-box{display:inline-flex;align-items:center;gap:.6rem;padding:.7rem 1rem;background:#000;color:#fff;font-family:'JetBrains Mono',monospace;font-size:.85rem;font-weight:700;margin-bottom:1.25rem;}
+    .tl-anim2 .tl-search-prefix{color:#00B140;font-size:.62rem;letter-spacing:.08em;}
+    .tl-anim2 .tl-search-query{display:inline-block;overflow:hidden;white-space:nowrap;width:0;vertical-align:bottom;}
+    .tl-anim2 .tl-ex.tl-ex-active .tl-search-query{animation:tl-type-q 1.4s steps(20) forwards;}
+    .tl-anim2 .tl-search-cursor{display:inline-block;width:2px;height:.95rem;background:#00B140;animation:tl-blink .65s infinite;vertical-align:-1px;}
+    .tl-anim2 .tl-review-grid{display:grid;grid-template-columns:1fr 1fr;gap:.875rem;}
+    @media (max-width:640px){.tl-anim2{height:760px;}.tl-anim2 .tl-review-grid{grid-template-columns:1fr;}}
+    .tl-anim2 .tl-review-card{padding:.7rem .85rem;background:#fff;border:1.5px solid #000;box-shadow:2px 2px 0 #595959;opacity:0;position:relative;}
+    .tl-anim2 .tl-review-card p{font-size:.77rem;color:#595959;line-height:1.5;margin:0;max-width:none;}
+    .tl-anim2 .tl-ex.tl-ex-active .tl-review-card.tl-match{animation:tl-card-match 6.5s ease forwards;}
+    .tl-anim2 .tl-ex.tl-ex-active .tl-review-card.tl-no-match{animation:tl-card-noma 6.5s ease forwards;}
+    .tl-anim2 .tl-ex.tl-ex-active .tl-review-card:nth-child(1){animation-delay:1.4s;}
+    .tl-anim2 .tl-ex.tl-ex-active .tl-review-card:nth-child(2){animation-delay:1.5s;}
+    .tl-anim2 .tl-ex.tl-ex-active .tl-review-card:nth-child(3){animation-delay:1.6s;}
+    .tl-anim2 .tl-ex.tl-ex-active .tl-review-card:nth-child(4){animation-delay:1.7s;}
+    .tl-anim2 .tl-ex.tl-ex-active .tl-review-card:nth-child(5){animation-delay:1.8s;}
+    .tl-anim2 .tl-ex.tl-ex-active .tl-review-card:nth-child(6){animation-delay:1.9s;}
+    .tl-anim2 .tl-match-note{display:block;margin-top:.45rem;font-family:'JetBrains Mono',monospace;font-size:.6rem;font-weight:700;color:#00B140;letter-spacing:.03em;opacity:0;}
+    .tl-anim2 .tl-ex.tl-ex-active .tl-match-note{animation:tl-note-in 6.5s ease forwards;}
+    .tl-anim2 .tl-ex.tl-ex-active .tl-review-card:nth-child(1) .tl-match-note{animation-delay:3s;}
+    .tl-anim2 .tl-ex.tl-ex-active .tl-review-card:nth-child(3) .tl-match-note{animation-delay:3.1s;}
+    .tl-anim2 .tl-ex.tl-ex-active .tl-review-card:nth-child(5) .tl-match-note{animation-delay:3.2s;}
+
+    /* Reduced motion */
+    @media (prefers-reduced-motion:reduce){
+      .tl-anim1 .tl-layer{opacity:1 !important;}
+      .tl-anim1 .tl-sql-line{opacity:1 !important;transform:none !important;animation:none !important;}
+      .tl-anim1 .tl-bar,.tl-anim1 .tl-hbar-fill{transform:scaleY(1) scaleX(1) !important;animation:none !important;}
+      .tl-anim2 .tl-review-card{opacity:1 !important;animation:none !important;}
+      .tl-anim2 .tl-search-query{width:auto !important;animation:none !important;}
+      .tl-anim2 .tl-search-cursor,.tl-anim1 .tl-q-cursor{animation:none !important;}
+    }
   </style>
 </head>
 <body class="selection:bg-black selection:text-white">
@@ -322,7 +421,7 @@
     <a href="https://github.com/bh00t/travellens" target="_blank" rel="noopener" style="display:flex;align-items:center;justify-content:center;padding:0.6rem 0.75rem;border:2px solid #000;box-shadow:2px 2px 0 #000;background:#F4F4F5;transition:all 0.15s;flex:1;" onmouseenter="this.style.background='#000';this.style.color='#fff';" onmouseleave="this.style.background='#F4F4F5';this.style.color='#000';">
       <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.385-1.335-1.755-1.335-1.755-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 21.795 24 17.295 24 12c0-6.63-5.37-12-12-12"/></svg>
     </a>
-    <a href="https://linkedin.com" target="_blank" rel="noopener" style="display:flex;align-items:center;justify-content:center;padding:0.6rem 0.75rem;border:2px solid #000;box-shadow:2px 2px 0 #000;background:#F4F4F5;transition:all 0.15s;flex:1;" onmouseenter="this.style.background='#000';this.style.color='#fff';" onmouseleave="this.style.background='#F4F4F5';this.style.color='#000';">
+    <a href="https://linkedin.com/in/rishabh-tripathi-7b2b507b" target="_blank" rel="noopener" style="display:flex;align-items:center;justify-content:center;padding:0.6rem 0.75rem;border:2px solid #000;box-shadow:2px 2px 0 #000;background:#F4F4F5;transition:all 0.15s;flex:1;" onmouseenter="this.style.background='#000';this.style.color='#fff';" onmouseleave="this.style.background='#F4F4F5';this.style.color='#000';">
       <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 0 1-2.063-2.065 2.064 2.064 0 1 1 2.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
     </a>
   </div>
@@ -400,7 +499,7 @@
       <div style="width:32px;height:32px;border:2px solid #000;display:flex;align-items:center;justify-content:center;margin-bottom:.875rem;background:#fff;"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div>
       <div style="font-family:'JetBrains Mono',monospace;font-size:.6rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:#595959;margin-bottom:.3rem;">Pillar 03</div>
       <div style="font-family:'Fraunces',serif;font-size:1.05rem;font-weight:700;margin-bottom:.4rem;line-height:1.2;">Review Intelligence</div>
-      <p style="font-size:.78rem;color:#595959;line-height:1.55;margin:0;">30,000+ real MakeMyTrip/OYO reviews stored as JSON in S3. Semantic vector search surfaces what guests actually complain about — beyond star ratings, into specific themes.</p>
+      <p style="font-size:.78rem;color:#595959;line-height:1.55;margin:0;">~133K reviews — 30K real MakeMyTrip/OYO seed plus history backfill, stored as JSON in S3 with embeddings in pgvector. Semantic search surfaces what guests actually complain about — beyond star ratings, into specific themes.</p>
     </div>
     <div class="stat-card reveal d4">
       <div style="width:32px;height:32px;border:2px solid #000;display:flex;align-items:center;justify-content:center;margin-bottom:.875rem;background:#F4F4F5;"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg></div>
@@ -458,23 +557,6 @@
     <div><div style="font-family:'JetBrains Mono',monospace;font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:#000;margin-bottom:.4rem;">Why not just build a Power BI dashboard?</div><p style="font-size:.82rem;color:#595959;line-height:1.7;margin:0;">Dashboards show you what someone else decided you'd need — pre-built, on a refresh schedule. They're excellent for weekly management reviews. They're useless at 11pm during Diwali weekend when a revenue manager needs to know <em style="color:#000;">right now</em> whether Jaipur's cluster is at 90% occupancy — a question nobody pre-built a filter for. TravelLens lets any user ask in plain English and receive an answer in under two seconds, against live data, without involving an analyst or waiting for a nightly refresh.</p></div>
   </div>
 
-  <!-- Before / After -->
-  <div style="font-family:'JetBrains Mono',monospace;font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:#595959;margin-bottom:.875rem;display:flex;align-items:center;gap:.5rem;">
-    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 014-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 01-4 4H3"/></svg>Life before vs. after TravelLens
-  </div>
-  <div style="display:grid;grid-template-columns:1fr 1fr;border:2px solid #000;box-shadow:4px 4px 0 #000;overflow:hidden;margin-bottom:1.75rem;">
-    <div style="padding:.625rem 1rem;background:#595959;color:#fff;font-family:'JetBrains Mono',monospace;font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em;border-right:2px solid #000;">Without TravelLens</div>
-    <div style="padding:.625rem 1rem;background:#000;color:#fff;font-family:'JetBrains Mono',monospace;font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em;">With TravelLens</div>
-    <div style="padding:.875rem 1rem;background:#fff;border-top:2px solid #000;border-right:2px solid #000;display:flex;gap:.625rem;align-items:flex-start;"><span style="color:#595959;font-size:.9rem;flex-shrink:0;">✗</span><p style="font-size:.8rem;color:#595959;line-height:1.55;margin:0;">Revenue manager checks occupancy from last night's export. Surge pricing lags 12–18 hours behind actual demand.</p></div>
-    <div style="padding:.875rem 1rem;background:#fff;border-top:2px solid #000;display:flex;gap:.625rem;align-items:flex-start;"><span style="color:#00B140;font-size:.9rem;flex-shrink:0;">✓</span><p style="font-size:.8rem;color:#000;line-height:1.55;margin:0;font-weight:600;">Stream consumer aggregates city occupancy every window. "Goa cluster occupancy right now?" answers in under 2 seconds.</p></div>
-    <div style="padding:.875rem 1rem;background:#F4F4F5;border-top:2px solid #000;border-right:2px solid #000;display:flex;gap:.625rem;align-items:flex-start;"><span style="color:#595959;font-size:.9rem;flex-shrink:0;">✗</span><p style="font-size:.8rem;color:#595959;line-height:1.55;margin:0;">Hotel GM reads 300 OTA reviews manually to find complaint trends. Takes a full working day. Usually skipped.</p></div>
-    <div style="padding:.875rem 1rem;background:#F4F4F5;border-top:2px solid #000;display:flex;gap:.625rem;align-items:flex-start;"><span style="color:#00B140;font-size:.9rem;flex-shrink:0;">✓</span><p style="font-size:.8rem;color:#000;line-height:1.55;margin:0;font-weight:600;">"What do guests complain about most this month?" — semantic search across 30K reviews — local LLM (Qwen2.5-Coder-7B) summarises top 3 themes in 4 seconds.</p></div>
-    <div style="padding:.875rem 1rem;background:#fff;border-top:2px solid #000;border-right:2px solid #000;display:flex;gap:.625rem;align-items:flex-start;"><span style="color:#595959;font-size:.9rem;flex-shrink:0;">✗</span><p style="font-size:.8rem;color:#595959;line-height:1.55;margin:0;">State tourism board requests district-level data from the ministry. Report arrives 3 months later covering 6-month-old data.</p></div>
-    <div style="padding:.875rem 1rem;background:#fff;border-top:2px solid #000;display:flex;gap:.625rem;align-items:flex-start;"><span style="color:#00B140;font-size:.9rem;flex-shrink:0;">✓</span><p style="font-size:.8rem;color:#000;line-height:1.55;margin:0;font-weight:600;">"Which Rajasthan districts are below state average this quarter?" — SQL — ranked HTML table, shareable in one link.</p></div>
-    <div style="padding:.875rem 1rem;background:#F4F4F5;border-top:2px solid #000;border-right:2px solid #000;display:flex;gap:.625rem;align-items:flex-start;"><span style="color:#595959;font-size:.9rem;flex-shrink:0;">✗</span><p style="font-size:.8rem;color:#595959;line-height:1.55;margin:0;">Analyst builds a Tableau dashboard for one specific question. It breaks when the export schema changes.</p></div>
-    <div style="padding:.875rem 1rem;background:#F4F4F5;border-top:2px solid #000;display:flex;gap:.625rem;align-items:flex-start;"><span style="color:#00B140;font-size:.9rem;flex-shrink:0;">✓</span><p style="font-size:.8rem;color:#000;line-height:1.55;margin:0;font-weight:600;">Any question answerable by SQL against the schema can be asked in plain English — including questions never anticipated at build time.</p></div>
-  </div>
-
   <!-- Sample queries -->
   <div style="font-family:'JetBrains Mono',monospace;font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:#595959;margin-bottom:.875rem;display:flex;align-items:center;gap:.5rem;"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>Questions TravelLens answers in natural language</div>
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:.75rem;margin-bottom:2rem;">
@@ -494,7 +576,7 @@
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1.25rem;margin-bottom:2rem;">
     <div class="card" style="padding:1.25rem;border-top:6px solid #00B140;">
       <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.625rem;"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><h4 style="font-family:'Fraunces',serif;font-size:.975rem;font-weight:700;color:#000;margin:0;">What it is</h4></div>
-      <p style="font-size:.82rem;color:#595959;line-height:1.65;margin:0;">A real-time hotel intelligence platform covering the full data engineering stack: event streaming (Kafka + Python consumer), a 15-table star schema warehouse (Postgres + pgvector), an S3 data lake with hotel CSVs and 30K+ review JSONs, a Text-to-SQL engine running a local LLM (Ollama + Qwen2.5-Coder-7B), and an HTML dashboard output layer. <strong>Fully offline — no API dependencies.</strong></p>
+      <p style="font-size:.82rem;color:#595959;line-height:1.65;margin:0;">A real-time hotel intelligence platform covering the full data engineering stack: event streaming (Kafka + Python consumer), a 22-table warehouse on a star-schema core (Postgres + pgvector), an S3 data lake with hotel CSVs and ~133K review JSONs, a Text-to-SQL engine running a local LLM (Ollama + Qwen2.5-Coder-7B), and an HTML dashboard output layer. <strong>Fully offline — no API dependencies.</strong></p>
     </div>
     <div class="card surf" style="padding:1.25rem;border-top:6px solid #000;">
       <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.625rem;"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg><h4 style="font-family:'Fraunces',serif;font-size:.975rem;font-weight:700;color:#000;margin:0;">What problem it solves</h4></div>
@@ -507,11 +589,12 @@
   </div>
   <!-- Key metrics -->
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));border:2px solid #000;box-shadow:4px 4px 0 #000;overflow:hidden;margin-bottom:2rem;">
-    <div style="padding:1rem;border-right:1px solid #E4E4E7;text-align:center;"><div style="font-family:'Fraunces',serif;font-size:2rem;font-weight:700;color:#00B140;line-height:1;">15</div><div style="font-family:'JetBrains Mono',monospace;font-size:.6rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#595959;margin-top:.25rem;">Schema tables</div></div>
+    <div style="padding:1rem;border-right:1px solid #E4E4E7;text-align:center;"><div style="font-family:'Fraunces',serif;font-size:2rem;font-weight:700;color:#00B140;line-height:1;">22</div><div style="font-family:'JetBrains Mono',monospace;font-size:.6rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#595959;margin-top:.25rem;">Schema tables</div></div>
     <div style="padding:1rem;border-right:1px solid #E4E4E7;text-align:center;"><div style="font-family:'Fraunces',serif;font-size:2rem;font-weight:700;color:#000;line-height:1;">6</div><div style="font-family:'JetBrains Mono',monospace;font-size:.6rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#595959;margin-top:.25rem;">S3 prefixes</div></div>
-    <div style="padding:1rem;border-right:1px solid #E4E4E7;text-align:center;"><div style="font-family:'Fraunces',serif;font-size:2rem;font-weight:700;color:#000;line-height:1;">30K+</div><div style="font-family:'JetBrains Mono',monospace;font-size:.6rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#595959;margin-top:.25rem;">Real reviews</div></div>
+    <div style="padding:1rem;border-right:1px solid #E4E4E7;text-align:center;"><div style="font-family:'Fraunces',serif;font-size:2rem;font-weight:700;color:#000;line-height:1;">133K</div><div style="font-family:'JetBrains Mono',monospace;font-size:.6rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#595959;margin-top:.25rem;">Real reviews</div></div>
     <div style="padding:1rem;border-right:1px solid #E4E4E7;text-align:center;"><div style="font-family:'Fraunces',serif;font-size:2rem;font-weight:700;color:#00B140;line-height:1;">&lt;2s</div><div style="font-family:'JetBrains Mono',monospace;font-size:.6rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#595959;margin-top:.25rem;">SQL path latency</div></div>
-    <div style="padding:1rem;text-align:center;"><div style="font-family:'Fraunces',serif;font-size:2rem;font-weight:700;color:#000;line-height:1;">~1hr</div><div style="font-family:'JetBrains Mono',monospace;font-size:.6rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#595959;margin-top:.25rem;">Stream window</div></div>
+    <div style="padding:1rem;border-right:1px solid #E4E4E7;text-align:center;"><div style="font-family:'Fraunces',serif;font-size:2rem;font-weight:700;color:#000;line-height:1;">~1hr</div><div style="font-family:'JetBrains Mono',monospace;font-size:.6rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#595959;margin-top:.25rem;">Stream window</div></div>
+    <div style="padding:1rem;text-align:center;"><div style="font-family:'Fraunces',serif;font-size:2rem;font-weight:700;color:#00B140;line-height:1;">~20</div><div style="font-family:'JetBrains Mono',monospace;font-size:.6rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#595959;margin-top:.25rem;">Peak evt/sec @ 19 IST</div></div>
   </div>
   <!-- Terminal -->
   <div class="code-block">
@@ -521,7 +604,7 @@
 <span class="str">▶ window</span>           1-hr tumbling, city keyed  <span class="kw">ACTIVE</span>
 <span class="str">▶ last-aggregate</span>   Goa: 78.3% occ, ₹2.1L rev   <span class="num">14:00–15:00</span>
 <span class="str">▶ query</span>            <span id="typewriter">routing to Text-to-SQL engine</span>
-<span class="str">▶ s3-reviews</span>       30,000 reviews indexed, embeddings ready</code></pre>
+<span class="str">▶ s3-reviews</span>       133K reviews indexed, embeddings ready</code></pre>
   </div>
 </section>
 
@@ -939,101 +1022,112 @@
 <!-- ══ 07 TEXT-TO-SQL ══ -->
 <section id="textsql" style="margin-bottom:4rem;" class="reveal">
   <h2 style="font-family:'Fraunces',serif;font-size:1.75rem;font-weight:700;color:#000;display:flex;align-items:center;gap:.875rem;margin-bottom:.75rem;"><span class="section-num">07</span> Text-to-SQL Engine</h2>
-  <p style="font-size:.875rem;color:#595959;line-height:1.7;max-width:620px;margin-bottom:1.25rem;">The query engine detects whether a question is structured ("top 5 cities by RevPAR") or qualitative ("what do guests complain about"). Structured questions route to Text-to-SQL. Qualitative questions route to semantic search (Section 08). This routing decision is the core architectural insight of the AI layer.</p>
+  <p style="font-size:.875rem;color:#595959;line-height:1.7;max-width:620px;margin-bottom:.5rem;">A revenue manager wants to know which cities are pulling their weight this month. They type the question. The system writes the SQL, runs it, and returns the chart. No analyst in the loop, no API key in the request.</p>
 
-  <div style="border:2px solid #000;box-shadow:4px 4px 0 #000;overflow:hidden;margin-bottom:1.75rem;">
-    <div style="background:#F4F4F5;border-bottom:2px solid #000;padding:.875rem 1rem;"><span style="font-family:'Fraunces',serif;font-size:1rem;font-weight:700;color:#000;">The 80/20 Query Split — SQL Path vs Semantic Path</span></div>
-    <table class="tbl" style="min-width:480px;">
-      <thead><tr><th>Attribute</th><th style="text-align:center;">SQL Path (80%)</th><th style="text-align:center;">Semantic Path (20%)</th></tr></thead>
-      <tbody>
-        <tr><td style="font-weight:700;">Trigger</td><td style="text-align:center;font-family:'JetBrains Mono',monospace;font-weight:700;font-size:.8rem;">Structured data question</td><td style="text-align:center;font-family:'JetBrains Mono',monospace;font-weight:700;font-size:.8rem;background:#FAFAFA;">Review / opinion question</td></tr>
-        <tr><td style="font-weight:700;">Mechanism</td><td style="text-align:center;font-size:.82rem;">Local LLM generates SQL → DB executes</td><td style="text-align:center;font-size:.82rem;background:#FAFAFA;">Query embed → pgvector cosine → Local LLM summarises</td></tr>
-        <tr><td style="font-weight:700;">Latency</td><td style="text-align:center;"><span class="tag inv">&lt;2s</span></td><td style="text-align:center;background:#FAFAFA;"><span class="tag">&lt;5s</span></td></tr>
-        <tr><td style="font-weight:700;">Example</td><td style="text-align:center;font-size:.8rem;font-style:italic;color:#595959;">"Top 5 states by revenue Q3 2024?"</td><td style="text-align:center;font-size:.8rem;font-style:italic;color:#595959;background:#FAFAFA;">"What do Mumbai guests complain about?"</td></tr>
-        <tr><td style="font-weight:700;">Output</td><td style="text-align:center;"><span class="tag grn" style="font-size:.6rem;">Table / Chart</span></td><td style="text-align:center;background:#FAFAFA;"><span class="tag inv" style="font-size:.6rem;">Theme Summary</span></td></tr>
-      </tbody>
-    </table>
-  </div>
-
-  <!-- Try this — sample questions UI mockup -->
-  <div style="border:2px solid #000;box-shadow:4px 4px 0 #000;background:#fff;margin-bottom:1.75rem;overflow:hidden;">
-    <div style="background:#000;color:#fff;padding:.55rem .875rem;display:flex;align-items:center;justify-content:space-between;">
-      <span style="font-family:'JetBrains Mono',monospace;font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em;">⚡ Try this — sample queries to test</span>
-      <span style="font-family:'JetBrains Mono',monospace;font-size:.55rem;font-weight:700;color:#00B140;text-transform:uppercase;letter-spacing:.05em;">Router auto-detects path</span>
-    </div>
-    <!-- chat input field -->
-    <div style="padding:.85rem 1rem;background:#FAFAFA;border-bottom:1px solid #E4E4E7;">
-      <div style="display:flex;gap:.5rem;align-items:center;">
-        <span style="font-family:'JetBrains Mono',monospace;font-size:.9rem;color:#00B140;font-weight:800;">›</span>
-        <div style="flex:1;background:#fff;border:1.5px solid #000;padding:.5rem .75rem;font-family:'JetBrains Mono',monospace;font-size:.78rem;color:#000;display:flex;align-items:center;gap:.4rem;"><span style="color:#595959;font-style:italic;">Ask about hotels in India…</span><span class="typewriter" style="border-right:1.5px solid #00B140;width:1px;height:14px;display:inline-block;"></span></div>
-        <button style="background:#00B140;color:#fff;border:1.5px solid #007A2C;padding:.5rem .9rem;font-family:'JetBrains Mono',monospace;font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;cursor:pointer;">Run ↵</button>
+  <!-- Animation 1 — Ask → SQL → Chart, 3 cycling personas -->
+  <div class="tl-anim1" role="img" aria-label="Animation cycling through three hotel personas — revenue manager, operations head, marketing — each asking a different question and watching the system generate SQL, run it, and render a chart.">
+    <!-- EXAMPLE A — Revenue manager · top cities by revenue -->
+    <div class="tl-ex" data-ex="0">
+      <div class="tl-layer tl-layer-q">
+        <span class="tl-q-prefix">› REVENUE MANAGER ASKS</span>
+        <h3 class="tl-q-text">Show top 10 cities by revenue this month<span class="tl-q-cursor"></span></h3>
       </div>
-    </div>
-    <!-- sample prompts grid -->
-    <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:0;">
-      <div style="padding:.7rem .95rem;border-right:1px solid #E4E4E7;border-bottom:1px solid #E4E4E7;cursor:pointer;transition:background .1s;" onmouseenter="this.style.background='#F4F4F5'" onmouseleave="this.style.background=''">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.25rem;">
-          <span style="font-family:'JetBrains Mono',monospace;font-size:.55rem;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:#595959;">Aggregation</span>
-          <span style="font-family:'JetBrains Mono',monospace;font-size:.5rem;font-weight:800;padding:.1rem .35rem;background:#00B140;color:#fff;text-transform:uppercase;letter-spacing:.04em;">SQL</span>
+      <div class="tl-layer tl-layer-sql">
+        <div class="tl-sql-header">› generated SQL</div>
+        <div class="tl-sql-block">
+          <span class="tl-sql-line"><span class="kw">SELECT</span> dl.city, <span class="fn">SUM</span>(fb.revenue_inr) <span class="kw">AS</span> total_revenue</span>
+          <span class="tl-sql-line"><span class="kw">FROM</span> fact_bookings fb</span>
+          <span class="tl-sql-line"><span class="kw">JOIN</span> hotel_master h <span class="kw">ON</span> fb.hotel_id = h.hotel_id</span>
+          <span class="tl-sql-line"><span class="kw">JOIN</span> dim_location dl <span class="kw">USING</span>(location_id)</span>
+          <span class="tl-sql-line"><span class="kw">JOIN</span> dim_date dd <span class="kw">USING</span>(date_id)</span>
+          <span class="tl-sql-line"><span class="kw">WHERE</span> dd.year = <span class="str">2026</span> <span class="kw">AND</span> dd.month = <span class="str">5</span></span>
+          <span class="tl-sql-line"><span class="kw">GROUP BY</span> dl.city <span class="kw">ORDER BY</span> total_revenue <span class="kw">DESC</span> <span class="kw">LIMIT</span> <span class="str">10</span>;</span>
         </div>
-        <div style="font-size:.82rem;color:#000;font-weight:500;">"Top 5 cities by RevPAR last month"</div>
       </div>
-      <div style="padding:.7rem .95rem;border-bottom:1px solid #E4E4E7;cursor:pointer;transition:background .1s;" onmouseenter="this.style.background='#F4F4F5'" onmouseleave="this.style.background=''">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.25rem;">
-          <span style="font-family:'JetBrains Mono',monospace;font-size:.55rem;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:#595959;">Filter + Join</span>
-          <span style="font-family:'JetBrains Mono',monospace;font-size:.5rem;font-weight:800;padding:.1rem .35rem;background:#00B140;color:#fff;text-transform:uppercase;letter-spacing:.04em;">SQL</span>
+      <div class="tl-layer tl-layer-chart">
+        <div class="tl-chart-header">› revenue by city · ₹ lakhs · may 2026</div>
+        <div class="tl-bars">
+          <div class="tl-bar-col"><div class="tl-bar" style="height:90%"></div><span class="tl-bar-label">Mumbai</span></div>
+          <div class="tl-bar-col"><div class="tl-bar" style="height:78%"></div><span class="tl-bar-label">Goa</span></div>
+          <div class="tl-bar-col"><div class="tl-bar" style="height:67%"></div><span class="tl-bar-label">Delhi</span></div>
+          <div class="tl-bar-col"><div class="tl-bar" style="height:58%"></div><span class="tl-bar-label">Bangalore</span></div>
+          <div class="tl-bar-col"><div class="tl-bar" style="height:52%"></div><span class="tl-bar-label">Chennai</span></div>
+          <div class="tl-bar-col"><div class="tl-bar" style="height:45%"></div><span class="tl-bar-label">Jaipur</span></div>
+          <div class="tl-bar-col"><div class="tl-bar" style="height:40%"></div><span class="tl-bar-label">Pune</span></div>
+          <div class="tl-bar-col"><div class="tl-bar" style="height:33%"></div><span class="tl-bar-label">Udaipur</span></div>
+          <div class="tl-bar-col"><div class="tl-bar" style="height:28%"></div><span class="tl-bar-label">Kolkata</span></div>
+          <div class="tl-bar-col"><div class="tl-bar" style="height:22%"></div><span class="tl-bar-label">Manali</span></div>
         </div>
-        <div style="font-size:.82rem;color:#000;font-weight:500;">"Budget hotels in Goa with rating &gt; 4.0"</div>
-      </div>
-      <div style="padding:.7rem .95rem;border-right:1px solid #E4E4E7;border-bottom:1px solid #E4E4E7;cursor:pointer;transition:background .1s;" onmouseenter="this.style.background='#F4F4F5'" onmouseleave="this.style.background=''">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.25rem;">
-          <span style="font-family:'JetBrains Mono',monospace;font-size:.55rem;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:#595959;">Time series</span>
-          <span style="font-family:'JetBrains Mono',monospace;font-size:.5rem;font-weight:800;padding:.1rem .35rem;background:#00B140;color:#fff;text-transform:uppercase;letter-spacing:.04em;">SQL</span>
-        </div>
-        <div style="font-size:.82rem;color:#000;font-weight:500;">"Monthly occupancy in Mumbai 2024"</div>
-      </div>
-      <div style="padding:.7rem .95rem;border-bottom:1px solid #E4E4E7;cursor:pointer;transition:background .1s;" onmouseenter="this.style.background='#F4F4F5'" onmouseleave="this.style.background=''">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.25rem;">
-          <span style="font-family:'JetBrains Mono',monospace;font-size:.55rem;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:#595959;">Review analysis</span>
-          <span style="font-family:'JetBrains Mono',monospace;font-size:.5rem;font-weight:800;padding:.1rem .35rem;background:#000;color:#fff;text-transform:uppercase;letter-spacing:.04em;">Semantic</span>
-        </div>
-        <div style="font-size:.82rem;color:#000;font-weight:500;">"What do Mumbai guests complain about?"</div>
-      </div>
-      <div style="padding:.7rem .95rem;border-right:1px solid #E4E4E7;cursor:pointer;transition:background .1s;" onmouseenter="this.style.background='#F4F4F5'" onmouseleave="this.style.background=''">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.25rem;">
-          <span style="font-family:'JetBrains Mono',monospace;font-size:.55rem;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:#595959;">Geo aggregation</span>
-          <span style="font-family:'JetBrains Mono',monospace;font-size:.5rem;font-weight:800;padding:.1rem .35rem;background:#00B140;color:#fff;text-transform:uppercase;letter-spacing:.04em;">SQL</span>
-        </div>
-        <div style="font-size:.82rem;color:#000;font-weight:500;">"Revenue by tourism zone, ranked"</div>
-      </div>
-      <div style="padding:.7rem .95rem;cursor:pointer;transition:background .1s;" onmouseenter="this.style.background='#F4F4F5'" onmouseleave="this.style.background=''">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.25rem;">
-          <span style="font-family:'JetBrains Mono',monospace;font-size:.55rem;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:#595959;">Theme extraction</span>
-          <span style="font-family:'JetBrains Mono',monospace;font-size:.5rem;font-weight:800;padding:.1rem .35rem;background:#000;color:#fff;text-transform:uppercase;letter-spacing:.04em;">Semantic</span>
-        </div>
-        <div style="font-size:.82rem;color:#000;font-weight:500;">"Common feedback on cleanliness in budget hotels"</div>
       </div>
     </div>
-    <div style="padding:.55rem .95rem;background:#F4F4F5;border-top:1px solid #E4E4E7;font-family:'JetBrains Mono',monospace;font-size:.58rem;color:#595959;font-weight:600;text-transform:uppercase;letter-spacing:.05em;">Note · UI mockup. Real queries run via <code style="background:#fff;padding:1px 4px;border:1px solid #D4D4D8;text-transform:none;">python -m ai.main "..."</code> or through the dashboard.</div>
+
+    <!-- EXAMPLE B — Operations · cancellation rate by Mumbai hotels -->
+    <div class="tl-ex" data-ex="1">
+      <div class="tl-layer tl-layer-q">
+        <span class="tl-q-prefix">› OPS MANAGER ASKS</span>
+        <h3 class="tl-q-text">Which Mumbai hotels had the highest cancellation rate last week?<span class="tl-q-cursor"></span></h3>
+      </div>
+      <div class="tl-layer tl-layer-sql">
+        <div class="tl-sql-header">› generated SQL</div>
+        <div class="tl-sql-block">
+          <span class="tl-sql-line"><span class="kw">SELECT</span> h.hotel_name,</span>
+          <span class="tl-sql-line">       <span class="fn">COUNT</span>(*) <span class="kw">FILTER</span> (<span class="kw">WHERE</span> fb.is_cancelled) * <span class="str">100.0</span> / <span class="fn">COUNT</span>(*) <span class="kw">AS</span> cancel_pct</span>
+          <span class="tl-sql-line"><span class="kw">FROM</span> fact_bookings fb</span>
+          <span class="tl-sql-line"><span class="kw">JOIN</span> hotel_master h <span class="kw">USING</span>(hotel_id)</span>
+          <span class="tl-sql-line"><span class="kw">JOIN</span> dim_location dl <span class="kw">USING</span>(location_id)</span>
+          <span class="tl-sql-line"><span class="kw">JOIN</span> dim_date dd <span class="kw">USING</span>(date_id)</span>
+          <span class="tl-sql-line"><span class="kw">WHERE</span> dl.city = <span class="str">'Mumbai'</span> <span class="kw">AND</span> dd.full_date &gt;= <span class="kw">CURRENT_DATE</span> - <span class="str">7</span></span>
+        </div>
+      </div>
+      <div class="tl-layer tl-layer-chart">
+        <div class="tl-chart-header">› Mumbai hotels · cancellation rate · last 7 days</div>
+        <div class="tl-hbar-list">
+          <div class="tl-hbar-row"><span class="tl-hbar-name">Sea Pearl Mumbai</span><div class="tl-hbar-track"><div class="tl-hbar-fill" style="width:78%"></div></div><span class="tl-hbar-pct">28.4%</span></div>
+          <div class="tl-hbar-row"><span class="tl-hbar-name">Bombay Crest</span><div class="tl-hbar-track"><div class="tl-hbar-fill" style="width:62%"></div></div><span class="tl-hbar-pct">22.6%</span></div>
+          <div class="tl-hbar-row"><span class="tl-hbar-name">Andheri Suites</span><div class="tl-hbar-track"><div class="tl-hbar-fill" style="width:51%"></div></div><span class="tl-hbar-pct">18.5%</span></div>
+          <div class="tl-hbar-row"><span class="tl-hbar-name">Marine Drive Inn</span><div class="tl-hbar-track"><div class="tl-hbar-fill" style="width:38%"></div></div><span class="tl-hbar-pct">13.8%</span></div>
+          <div class="tl-hbar-row"><span class="tl-hbar-name">Powai Comfort</span><div class="tl-hbar-track"><div class="tl-hbar-fill" style="width:25%"></div></div><span class="tl-hbar-pct">9.1%</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- EXAMPLE C — Marketing · booking source mix -->
+    <div class="tl-ex" data-ex="2">
+      <div class="tl-layer tl-layer-q">
+        <span class="tl-q-prefix">› MARKETING ASKS</span>
+        <h3 class="tl-q-text">What's the booking-source mix this month?<span class="tl-q-cursor"></span></h3>
+      </div>
+      <div class="tl-layer tl-layer-sql">
+        <div class="tl-sql-header">› generated SQL</div>
+        <div class="tl-sql-block">
+          <span class="tl-sql-line"><span class="kw">SELECT</span> fb.booking_source,</span>
+          <span class="tl-sql-line">       <span class="fn">COUNT</span>(*) <span class="kw">AS</span> bookings,</span>
+          <span class="tl-sql-line">       <span class="fn">ROUND</span>(<span class="fn">COUNT</span>(*) * <span class="str">100.0</span> / <span class="fn">SUM</span>(<span class="fn">COUNT</span>(*)) <span class="kw">OVER</span> (), <span class="str">1</span>) <span class="kw">AS</span> pct</span>
+          <span class="tl-sql-line"><span class="kw">FROM</span> fact_bookings fb</span>
+          <span class="tl-sql-line"><span class="kw">JOIN</span> dim_date dd <span class="kw">USING</span>(date_id)</span>
+          <span class="tl-sql-line"><span class="kw">WHERE</span> dd.year = <span class="str">2026</span> <span class="kw">AND</span> dd.month = <span class="str">5</span></span>
+          <span class="tl-sql-line"><span class="kw">GROUP BY</span> fb.booking_source <span class="kw">ORDER BY</span> bookings <span class="kw">DESC</span>;</span>
+        </div>
+      </div>
+      <div class="tl-layer tl-layer-chart">
+        <div class="tl-chart-header">› booking source mix · may 2026</div>
+        <div class="tl-hbar-list">
+          <div class="tl-hbar-row"><span class="tl-hbar-name">MakeMyTrip</span><div class="tl-hbar-track"><div class="tl-hbar-fill" style="width:88%"></div></div><span class="tl-hbar-pct">42.1%</span></div>
+          <div class="tl-hbar-row"><span class="tl-hbar-name">Direct (website)</span><div class="tl-hbar-track"><div class="tl-hbar-fill" style="width:64%"></div></div><span class="tl-hbar-pct">30.7%</span></div>
+          <div class="tl-hbar-row"><span class="tl-hbar-name">OYO</span><div class="tl-hbar-track"><div class="tl-hbar-fill" style="width:56%"></div></div><span class="tl-hbar-pct">26.8%</span></div>
+          <div class="tl-hbar-row"><span class="tl-hbar-name">Booking.com</span><div class="tl-hbar-track"><div class="tl-hbar-fill" style="width:14%"></div></div><span class="tl-hbar-pct">0.4%</span></div>
+        </div>
+      </div>
+    </div>
   </div>
 
-  <!-- Sample SQL -->
-  <div style="font-family:'JetBrains Mono',monospace;font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:#595959;margin-bottom:.875rem;">Sample — natural language → LLM-generated SQL</div>
-  <div style="border:2px solid #000;box-shadow:3px 3px 0 #000;margin-bottom:.875rem;overflow:hidden;">
-    <div style="background:#000;padding:.625rem 1rem;display:flex;align-items:center;gap:.5rem;"><span style="color:#00B140;font-size:.9rem;">▶</span><span style="font-family:'JetBrains Mono',monospace;font-size:.7rem;font-weight:800;color:#fff;">"Top 5 cities by revenue this year"</span></div>
-    <div class="code-block-header" style="border-top:1px solid #333;"><span class="code-block-label">Generated SQL</span></div>
-<pre><code><span class="kw">SELECT</span> l.city, <span class="fn">ROUND</span>(<span class="fn">SUM</span>(b.revenue_inr) / <span class="num">1e7</span>, <span class="num">2</span>) <span class="kw">AS</span> revenue_crore
-<span class="kw">FROM</span> fact_bookings b
-<span class="kw">JOIN</span> hotel_master h <span class="kw">ON</span> b.hotel_id = h.hotel_id
-<span class="kw">JOIN</span> dim_location l <span class="kw">ON</span> h.location_id = l.location_id
-<span class="kw">JOIN</span> dim_date d <span class="kw">ON</span> b.date_id = d.date_id
-<span class="kw">WHERE</span> d.year = <span class="fn">EXTRACT</span>(<span class="kw">YEAR FROM</span> <span class="fn">CURRENT_DATE</span>)
-<span class="kw">GROUP BY</span> l.city
-<span class="kw">ORDER BY</span> revenue_crore <span class="kw">DESC</span> <span class="kw">LIMIT</span> <span class="num">5</span>;</code></pre>
-  </div>
-  <div style="border:2px solid #000;box-shadow:3px 3px 0 #000;margin-bottom:1.75rem;overflow:hidden;">
+  <h3 style="font-family:'Fraunces',serif;font-size:1.1rem;font-weight:700;color:#000;margin:1.5rem 0 .6rem;">What the LLM is given — and what it isn't allowed to do</h3>
+  <p style="font-size:.85rem;color:#595959;line-height:1.7;margin-bottom:.875rem;">Every call to Qwen2.5-Coder-7B includes the <strong style="color:#000;">live schema</strong> (every table, column, type, and FK — read at startup from <code>information_schema</code>, never hardcoded), <strong style="color:#000;">India-specific context</strong> (INR currency, "budget" resolves to <code>ref_price_tiers</code> &lt; ₹2,000), <strong style="color:#000;">explicit column-location rules</strong> for cities, dates, and historical-vs-live routing, and a hard <em>SELECT-only</em> constraint. Generated SQL is parsed by <code>sqlparse</code> and validated against the live schema before execution; an execution error triggers one self-correcting retry with the error fed back in. Honest accuracy and the residual failure modes live in <code>docs/capabilities-and-limits.md</code>.</p>
+
+  <!-- ONE generated SQL example (the more interesting one — Budget tier resolves through ref_price_tiers) -->
+  <div style="border:2px solid #000;box-shadow:3px 3px 0 #000;margin-bottom:1.25rem;overflow:hidden;">
     <div style="background:#000;padding:.625rem 1rem;display:flex;align-items:center;gap:.5rem;"><span style="color:#00B140;font-size:.9rem;">▶</span><span style="font-family:'JetBrains Mono',monospace;font-size:.7rem;font-weight:800;color:#fff;">"Show budget hotels in Goa with rating above 4.0"</span></div>
-    <div class="code-block-header" style="border-top:1px solid #333;"><span class="code-block-label">Generated SQL (joins ref_price_tiers)</span></div>
+    <div class="code-block-header" style="border-top:1px solid #333;"><span class="code-block-label">Generated SQL — note how "budget" resolves through ref_price_tiers, not a hardcoded number</span></div>
 <pre><code><span class="kw">SELECT</span> h.hotel_name, h.avg_rating, h.total_rooms, pt.tier_name
 <span class="kw">FROM</span> hotel_master h
 <span class="kw">JOIN</span> dim_location l <span class="kw">ON</span> h.location_id = l.location_id
@@ -1044,10 +1138,7 @@
 <span class="kw">ORDER BY</span> h.avg_rating <span class="kw">DESC</span>;</code></pre>
   </div>
 
-  <div style="border:2px dashed #000;padding:1.125rem 1.375rem;background:#F4F4F5;display:flex;gap:.875rem;align-items:flex-start;">
-    <div style="flex-shrink:0;margin-top:2px;"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></div>
-    <div><div style="font-family:'JetBrains Mono',monospace;font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:#000;margin-bottom:.4rem;">What the system prompt must contain — and why it matters</div><p style="font-size:.82rem;color:#595959;line-height:1.7;margin:0;">Every LLM call to Qwen2.5-Coder-7B includes: (1) <strong style="color:#000;">Full schema</strong> — every table, column, type, and FK relationship. (2) <strong style="color:#000;">India-specific context</strong> — currency as INR, common city names, that "budget" means under ₹2,000/night. (3) <strong style="color:#000;">Explicit join maps + column-location rules</strong> — which columns live on which table and how to reach city/date through the dimension chain, written as general schema rules rather than per-query examples (so they generalise instead of overfitting). (4) A hard constraint: <em>only generate SELECT statements</em>. Without the schema, the model invents column names. Without the join rules, it gets JOIN direction wrong for FKs. Without the India context, "budget hotel" generates an arbitrary price filter. Prompt engineering is what makes Text-to-SQL reliable — not the model alone. After generation, every query is parsed with <code>sqlparse</code> and validated against the live schema before execution.</p></div>
-  </div>
+  <p style="font-size:.78rem;color:#595959;line-height:1.6;margin:0;">Run a query locally with <code style="background:#F4F4F5;padding:1px 5px;border:1px solid #D4D4D8;font-family:'JetBrains Mono',monospace;">python -m ai.main "..."</code>, or through the dashboard's Explore tab. The router (a fast keyword classifier — no second LLM call) decides whether to take the SQL path here or the semantic path in §08.</p>
 </section>
 
 <hr class="sec-divider">
@@ -1055,26 +1146,101 @@
 <!-- ══ 08 REVIEWS ══ -->
 <section id="reviews" style="margin-bottom:4rem;" class="reveal">
   <h2 style="font-family:'Fraunces',serif;font-size:1.75rem;font-weight:700;color:#000;display:flex;align-items:center;gap:.875rem;margin-bottom:.75rem;"><span class="section-num">08</span> Review Intelligence — Semantic Search</h2>
-  <p style="font-size:.875rem;color:#595959;line-height:1.7;max-width:620px;margin-bottom:1.25rem;">The review path answers qualitative questions that SQL cannot. "What are guests complaining about?" is not a GROUP BY query. It requires understanding meaning across 30,000 free-text reviews and surfacing the dominant themes — in seconds.</p>
+  <p style="font-size:.875rem;color:#595959;line-height:1.7;max-width:620px;margin-bottom:.5rem;">An operations head wants every complaint about cleanliness — not just reviews containing the word "dirty." They type <em>"dirty room."</em> The system finds reviews mentioning mildew, stains, grime — synonyms, not string matches.</p>
 
-  <h3 style="font-family:'Fraunces',serif;font-size:1.1rem;font-weight:700;color:#000;margin:0 0 .75rem;">Why not just full-text search?</h3>
-  <div style="border:2px solid #000;box-shadow:4px 4px 0 #000;overflow:hidden;margin-bottom:1.5rem;">
+  <!-- Animation 2 — Semantic spotlight, 3 cycling themes -->
+  <div class="tl-anim2" role="img" aria-label="Animation cycling through three search themes — rude staff, dirty room, amazing view — each highlighting reviews whose meaning matches even when the wording does not.">
+    <!-- EXAMPLE A — "rude staff" -->
+    <div class="tl-ex" data-ex="0">
+      <div class="tl-search-box">
+        <span class="tl-search-prefix">SEMANTIC SEARCH ›</span>
+        <span class="tl-search-query" style="--tl-qw:10ch;">rude staff</span>
+        <span class="tl-search-cursor"></span>
+      </div>
+      <div class="tl-review-grid">
+        <div class="tl-review-card tl-match">
+          <p>"Reception was unprofessional and dismissive throughout our stay."</p>
+          <span class="tl-match-note">› 'unprofessional' → 'rude'</span>
+        </div>
+        <div class="tl-review-card tl-no-match"><p>"Bed sheets had stains and the room smelled of mildew."</p></div>
+        <div class="tl-review-card tl-match">
+          <p>"Front desk had a bad attitude when we arrived after a long flight."</p>
+          <span class="tl-match-note">› 'bad attitude' → 'rude'</span>
+        </div>
+        <div class="tl-review-card tl-no-match"><p>"Beautiful view of the beach from our balcony, totally worth it."</p></div>
+        <div class="tl-review-card tl-match">
+          <p>"Staff was discourteous and seemed annoyed at simple requests."</p>
+          <span class="tl-match-note">› 'discourteous' → 'rude'</span>
+        </div>
+        <div class="tl-review-card tl-no-match"><p>"WiFi was slow and breakfast options were mediocre at best."</p></div>
+      </div>
+    </div>
+
+    <!-- EXAMPLE B — "dirty room" -->
+    <div class="tl-ex" data-ex="1">
+      <div class="tl-search-box">
+        <span class="tl-search-prefix">SEMANTIC SEARCH ›</span>
+        <span class="tl-search-query" style="--tl-qw:10ch;">dirty room</span>
+        <span class="tl-search-cursor"></span>
+      </div>
+      <div class="tl-review-grid">
+        <div class="tl-review-card tl-match">
+          <p>"Bed linens had visible stains and a strong mildew smell — yuck."</p>
+          <span class="tl-match-note">› 'stains', 'mildew' → 'dirty'</span>
+        </div>
+        <div class="tl-review-card tl-no-match"><p>"Check-in was fast and the staff were genuinely warm."</p></div>
+        <div class="tl-review-card tl-match">
+          <p>"Floor felt sticky, bathroom tiles had grime in the corners."</p>
+          <span class="tl-match-note">› 'sticky', 'grime' → 'dirty'</span>
+        </div>
+        <div class="tl-review-card tl-no-match"><p>"Excellent location, walking distance from the beach and cafes."</p></div>
+        <div class="tl-review-card tl-match">
+          <p>"AC vents were caked with dust, clearly not cleaned in months."</p>
+          <span class="tl-match-note">› 'caked with dust' → 'dirty'</span>
+        </div>
+        <div class="tl-review-card tl-no-match"><p>"Loved the rooftop pool, especially at sunset — really memorable."</p></div>
+      </div>
+    </div>
+
+    <!-- EXAMPLE C — "amazing view" -->
+    <div class="tl-ex" data-ex="2">
+      <div class="tl-search-box">
+        <span class="tl-search-prefix">SEMANTIC SEARCH ›</span>
+        <span class="tl-search-query" style="--tl-qw:12ch;">amazing view</span>
+        <span class="tl-search-cursor"></span>
+      </div>
+      <div class="tl-review-grid">
+        <div class="tl-review-card tl-match">
+          <p>"Our room overlooked the entire Marine Drive arc — breathtaking at night."</p>
+          <span class="tl-match-note">› 'overlooked', 'breathtaking' → 'view'</span>
+        </div>
+        <div class="tl-review-card tl-no-match"><p>"Pricier than other options nearby, but breakfast was decent."</p></div>
+        <div class="tl-review-card tl-match">
+          <p>"Panoramic Arabian Sea from the balcony, woke up to it every morning."</p>
+          <span class="tl-match-note">› 'panoramic' → 'amazing view'</span>
+        </div>
+        <div class="tl-review-card tl-no-match"><p>"Spa treatments were professional and the masseuse was very skilled."</p></div>
+        <div class="tl-review-card tl-match">
+          <p>"Sunsets from the rooftop terrace are the kind you remember for years."</p>
+          <span class="tl-match-note">› 'sunsets from rooftop' → 'amazing view'</span>
+        </div>
+        <div class="tl-review-card tl-no-match"><p>"Free shuttle service to the airport saved us a fortune on cabs."</p></div>
+      </div>
+    </div>
+  </div>
+
+  <h3 style="font-family:'Fraunces',serif;font-size:1.1rem;font-weight:700;color:#000;margin:1.25rem 0 .6rem;">Why not just full-text search?</h3>
+  <div style="border:2px solid #000;box-shadow:4px 4px 0 #000;overflow:hidden;margin-bottom:1.25rem;">
     <div style="display:grid;grid-template-columns:1fr 1fr;">
       <div style="padding:1rem;border-right:2px solid #000;background:#F4F4F5;"><div style="font-family:'JetBrains Mono',monospace;font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#595959;margin-bottom:.625rem;border-bottom:1px dashed #D4D4D8;padding-bottom:.4rem;">Full-text search for "cleanliness"</div><div style="font-size:.78rem;color:#595959;line-height:1.7;">"The room was <strong style="color:#000;">clean</strong> and tidy." ✓ matched<br>"Housekeeping was disappointing." ✗ missed<br>"The bathroom had an unpleasant smell." ✗ missed<br>"Unhygienic facilities throughout." ✗ missed<br><br>3 of 4 relevant reviews missed — keywords don't match.</div></div>
       <div style="padding:1rem;background:#fff;"><div style="font-family:'JetBrains Mono',monospace;font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#595959;margin-bottom:.625rem;border-bottom:1px dashed #D4D4D8;padding-bottom:.4rem;">Semantic search for "cleanliness"</div><div style="font-size:.78rem;color:#595959;line-height:1.7;">"The room was clean and tidy." ✓ matched (similarity: 0.92)<br>"<strong style="color:#000;">Housekeeping was disappointing.</strong>" ✓ matched (0.84)<br>"<strong style="color:#000;">The bathroom had an unpleasant smell.</strong>" ✓ matched (0.81)<br>"<strong style="color:#000;">Unhygienic facilities throughout.</strong>" ✓ matched (0.78)<br><br>All 4 found — <em>meaning</em>, not just keywords.</div></div>
     </div>
   </div>
 
-  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));border:2px solid #000;box-shadow:4px 4px 0 #000;overflow:hidden;margin-bottom:1.75rem;">
-    <div style="padding:1rem;border-right:1px solid #E4E4E7;background:#F4F4F5;"><div style="font-family:'JetBrains Mono',monospace;font-size:.6rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#595959;margin-bottom:.5rem;">Step 1 — Detect</div><div style="font-size:.8rem;color:#000;font-weight:600;margin-bottom:.375rem;">Query routing</div><p style="font-size:.75rem;color:#595959;line-height:1.5;margin:0;">Keyword detection: "complain", "feedback", "like", "guests say", "think about". If triggered → semantic path. If not → SQL path.</p></div>
-    <div style="padding:1rem;border-right:1px solid #E4E4E7;background:#fff;"><div style="font-family:'JetBrains Mono',monospace;font-size:.6rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#595959;margin-bottom:.5rem;">Step 2 — Embed</div><div style="font-size:.8rem;color:#000;font-weight:600;margin-bottom:.375rem;">Query vectorisation</div><p style="font-size:.75rem;color:#595959;line-height:1.5;margin:0;">Run the question through <code>all-MiniLM-L6-v2</code>. Produces a 384-dim vector in the same space as the pre-computed review embeddings.</p></div>
-    <div style="padding:1rem;border-right:1px solid #E4E4E7;background:#F4F4F5;"><div style="font-family:'JetBrains Mono',monospace;font-size:.6rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#595959;margin-bottom:.5rem;">Step 3 — Filter + Search</div><div style="font-size:.8rem;color:#000;font-weight:600;margin-bottom:.375rem;">pgvector cosine</div><p style="font-size:.75rem;color:#595959;line-height:1.5;margin:0;">Filter by hotel.city + hotel.star_category from query context. Run pgvector cosine similarity (<code>&lt;=&gt;</code> operator) against review embeddings. Return top-20 most semantically similar reviews.</p></div>
-    <div style="padding:1rem;background:#000;"><div style="font-family:'JetBrains Mono',monospace;font-size:.6rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#595959;margin-bottom:.5rem;">Step 4 — Summarise</div><div style="font-size:.8rem;color:#00B140;font-weight:600;margin-bottom:.375rem;">Local LLM theme extraction</div><p style="font-size:.75rem;color:#888;line-height:1.5;margin:0;">Pass top-20 review chunks to Qwen2.5-Coder-7B: "Identify the top 3 complaint themes. Be specific." Returns structured theme breakdown in plain English. Runs locally on the same GPU as the SQL generation model.</p></div>
-  </div>
+  <p style="font-size:.85rem;color:#595959;line-height:1.7;margin-bottom:.875rem;">Each review is encoded by <code>all-MiniLM-L6-v2</code> into a 384-dim vector and stored alongside its text in <code>reviews_raw</code>. At query time the question is embedded into the same space and matched with pgvector cosine similarity (the <code>&lt;=&gt;</code> operator), filtered by city/star-category from the question context, top-20 fed to Qwen2.5-Coder-7B for theme extraction. The IVFFlat index is sized by the B-051 rule of thumb — <code>lists ≈ rows ÷ 1000</code>, <code>probes ≈ √lists</code> — so for the ~133K-review corpus, <code>lists = 120</code> and <code>probes = 11</code>. Per-feature accuracy and known caveats are in <code>docs/capabilities-and-limits.md</code>.</p>
 
-  <div style="border:2px dashed #000;box-shadow:4px 4px 0 #000;background:#fff;padding:1.125rem 1.375rem;display:flex;gap:1rem;align-items:flex-start;">
-    <div style="flex-shrink:0;margin-top:2px;"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/></svg></div>
-    <div><div style="font-family:'JetBrains Mono',monospace;font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:#000;margin-bottom:.4rem;">Real data — not simulated reviews</div><p style="font-size:.82rem;color:#595959;line-height:1.7;margin:0;">The reviews_raw table is seeded from real public datasets on Kaggle: MakeMyTrip Hotel Reviews India and OYO Hotels India — sampled down to 30K reviews covering 2,000 hotels. These are actual guest reviews with real complaint patterns — WiFi issues, housekeeping inconsistency, food quality at budget properties, noise problems at urban hotels. The semantic search works on real signal. Search "MakeMyTrip hotel reviews India Kaggle" and "OYO hotel reviews Kaggle" to find both datasets.</p></div>
+  <div style="border:2px dashed #000;box-shadow:4px 4px 0 #000;background:#fff;padding:.95rem 1.25rem;font-size:.8rem;color:#595959;line-height:1.65;">
+    <strong style="color:#000;">Real data, not simulated.</strong> The original 30K Kaggle MakeMyTrip + OYO India reviews seeded <code>reviews_raw</code>; B-030 layered another ~91K history reviews and an ongoing stream, bringing the live corpus to ~133K. The synonym patterns in the animation above match patterns that actually appear in the data.
   </div>
 </section>
 
@@ -1185,10 +1351,6 @@
         <span style="color:#00B140;">SQL: 387 ms · Render: 0.6 s</span>
       </div>
     </div>
-  </div>
-  <div style="border:2px dashed #000;padding:1.125rem 1.375rem;background:#F4F4F5;display:flex;gap:.875rem;align-items:flex-start;">
-    <div style="flex-shrink:0;margin-top:2px;"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div>
-    <div><div style="font-family:'JetBrains Mono',monospace;font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:#000;margin-bottom:.4rem;">Why a single HTML file — not Streamlit or Tableau?</div><p style="font-size:.82rem;color:#595959;line-height:1.7;margin:0;">A revenue manager in Jaipur needs to share a weekly occupancy trend with her regional head. A single HTML file can be attached to WhatsApp, emailed, or uploaded to Google Drive — no Tableau server, no Streamlit deployment, no login. It opens in any browser on any device. CSS and Chart.js are inlined, so it works fully offline. This is the right delivery format for a market where IT infrastructure is variable and most operational decisions happen on a phone.</p></div>
   </div>
 </section>
 
@@ -1379,7 +1541,7 @@
       <!-- Branding block -->
       <div>
         <div style="font-family:'Fraunces',serif;font-size:1.25rem;font-weight:700;color:#000;margin-bottom:.4rem;">TravelLens.</div>
-        <p style="font-size:.775rem;color:#595959;line-height:1.6;margin:0 0 .75rem;">India Hotel &amp; Tourism Intelligence Blueprint — a ~24-day data engineering portfolio project. 30K+ real reviews · Kafka + Python consumer · Postgres + pgvector · S3 · Ollama (Qwen2.5-Coder-7B) · Jinja2 HTML. Fully offline.</p>
+        <p style="font-size:.775rem;color:#595959;line-height:1.6;margin:0 0 .75rem;">India Hotel &amp; Tourism Intelligence Blueprint — a ~24-day data engineering portfolio project. ~133K reviews · Kafka + Python consumer · Postgres + pgvector · S3 · Ollama (Qwen2.5-Coder-7B) · Jinja2 HTML. Fully offline.</p>
         <span style="font-family:'JetBrains Mono',monospace;font-size:.6rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:#595959;">v1.0 · 2026</span>
       </div>
 
@@ -1390,7 +1552,7 @@
             <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.385-1.335-1.755-1.335-1.755-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 21.795 24 17.295 24 12c0-6.63-5.37-12-12-12"/></svg>
             GitHub Repository
           </a>
-          <a href="https://linkedin.com" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:.5rem;font-size:.8rem;color:#000;font-weight:600;text-decoration:none;border-bottom:2px solid #000;width:fit-content;padding-bottom:1px;" onmouseenter="this.style.color='#00B140';this.style.borderColor='#00B140'" onmouseleave="this.style.color='#000';this.style.borderColor='#000'">
+          <a href="https://linkedin.com/in/rishabh-tripathi-7b2b507b" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:.5rem;font-size:.8rem;color:#000;font-weight:600;text-decoration:none;border-bottom:2px solid #000;width:fit-content;padding-bottom:1px;" onmouseenter="this.style.color='#00B140';this.style.borderColor='#00B140'" onmouseleave="this.style.color='#000';this.style.borderColor='#000'">
             <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
             LinkedIn
           </a>
@@ -1867,6 +2029,74 @@
   document.addEventListener('keydown', function(e){
     if(e.key === 'Escape' && document.querySelector('.cf-overlay.open')) cfClose();
   });
+</script>
+
+<!-- ── Section animations (B-054) — cyclers for tl-anim1 (Text-to-SQL personas) + tl-anim2 (semantic spotlight) ── -->
+<script>
+  (function () {
+    // Anim 1 cycler — 3 personas × 4 phases (q → sql → chart → pause)
+    var root = document.querySelector('.tl-anim1');
+    if (!root) return;
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      // Reduced motion: show first example, all layers visible, no cycling
+      var first = root.querySelector('.tl-ex');
+      if (first) { first.classList.add('tl-ex-active'); first.setAttribute('data-phase', 'chart'); }
+      return;
+    }
+    var examples = root.querySelectorAll('.tl-ex');
+    var phases = [
+      { name: 'q',     dur: 2200 },
+      { name: 'sql',   dur: 2400 },
+      { name: 'chart', dur: 4000 },
+      { name: 'pause', dur: 1000 }
+    ];
+    var exIdx = 0, phaseIdx = 0;
+    function paint() {
+      examples.forEach(function (el, i) {
+        if (i === exIdx) {
+          el.classList.add('tl-ex-active');
+          el.setAttribute('data-phase', phases[phaseIdx].name);
+        } else {
+          el.classList.remove('tl-ex-active');
+          el.removeAttribute('data-phase');
+        }
+      });
+    }
+    function tick() {
+      paint();
+      setTimeout(function () {
+        phaseIdx++;
+        if (phaseIdx >= phases.length) { phaseIdx = 0; exIdx = (exIdx + 1) % examples.length; }
+        tick();
+      }, phases[phaseIdx].dur);
+    }
+    tick();
+  })();
+
+  (function () {
+    // Anim 2 cycler — 3 themes × (~7.5s active + 1s pause)
+    var root = document.querySelector('.tl-anim2');
+    if (!root) return;
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      var first = root.querySelector('.tl-ex');
+      if (first) first.classList.add('tl-ex-active');
+      return;
+    }
+    var examples = root.querySelectorAll('.tl-ex');
+    var SHOW_MS = 7500, PAUSE_MS = 1000;
+    var exIdx = 0;
+    function paint(active) {
+      examples.forEach(function (el, i) { el.classList.toggle('tl-ex-active', active && i === exIdx); });
+    }
+    function tick() {
+      paint(true);
+      setTimeout(function () {
+        paint(false);
+        setTimeout(function () { exIdx = (exIdx + 1) % examples.length; tick(); }, PAUSE_MS);
+      }, SHOW_MS);
+    }
+    tick();
+  })();
 </script>
 </body>
 </html>

@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 240" role="img"
+     aria-label="TravelLens pipeline: booking events stream through Kafka and a Python consumer into a Postgres + S3 dual sink, with an Ollama AI layer serving the Flask dashboard."
+     font-family="ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0c121b"/>
+      <stop offset="1" stop-color="#080b11"/>
+    </linearGradient>
+    <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+      <path d="M32 0H0V32" fill="none" stroke="#ffffff" stroke-opacity="0.022"/>
+    </pattern>
+  </defs>
+
+  <!-- Dark gradient background + faint grid -->
+  <rect width="800" height="240" fill="url(#bg)"/>
+  <rect width="800" height="240" fill="url(#grid)"/>
+
+  <!-- Title -->
+  <text x="24" y="32" font-size="15" font-weight="800" fill="#d3dded">TravelLens India</text>
+  <text x="24" y="50" font-family="ui-monospace,SFMono-Regular,Consolas,monospace"
+        font-size="9.5" letter-spacing="2.5" fill="#3fe0a4">NEAR-REAL-TIME PIPELINE · DATA FLOW</text>
+
+  <!-- Connector lines between stages -->
+  <g stroke="#26384c" stroke-width="1.2" fill="none">
+    <line x1="117" y1="130" x2="150" y2="130"/>
+    <line x1="250" y1="130" x2="283" y2="130"/>
+    <line x1="383" y1="130" x2="417" y2="130"/>
+    <line x1="517" y1="130" x2="550" y2="130"/>
+    <line x1="650" y1="130" x2="683" y2="130"/>
+  </g>
+
+  <!-- Stages -->
+  <g>
+    <rect x="17" y="100" width="100" height="60" rx="8" fill="#10171f" stroke="#26384c"/>
+    <rect x="150" y="100" width="100" height="60" rx="8" fill="#10171f" stroke="#26384c"/>
+    <rect x="283" y="100" width="100" height="60" rx="8" fill="#10171f" stroke="#26384c"/>
+    <rect x="417" y="100" width="100" height="60" rx="8" fill="#10171f" stroke="#26384c"/>
+    <!-- AI layer: purple lane (matches existing pipeline.svg color language) -->
+    <rect x="550" y="100" width="100" height="60" rx="8" fill="#15102a" stroke="#5b4a8f" stroke-width="1.5"/>
+    <rect x="683" y="100" width="100" height="60" rx="8" fill="#10171f" stroke="#26384c"/>
+  </g>
+
+  <!-- Stage labels -->
+  <g>
+    <text x="67" y="126" font-size="12" font-weight="700" fill="#d3dded" text-anchor="middle">Booking event</text>
+    <text x="67" y="144" font-family="ui-monospace,Consolas,monospace" font-size="9" fill="#73849a" text-anchor="middle">create · cancel</text>
+
+    <text x="200" y="126" font-size="12" font-weight="700" fill="#d3dded" text-anchor="middle">Kafka</text>
+    <text x="200" y="144" font-family="ui-monospace,Consolas,monospace" font-size="9" fill="#73849a" text-anchor="middle">topic stream</text>
+
+    <text x="333" y="126" font-size="12" font-weight="700" fill="#d3dded" text-anchor="middle">consumer</text>
+    <text x="333" y="144" font-family="ui-monospace,Consolas,monospace" font-size="9" fill="#73849a" text-anchor="middle">event-time tumble</text>
+
+    <text x="467" y="126" font-size="12" font-weight="700" fill="#d3dded" text-anchor="middle">dual sink</text>
+    <text x="467" y="144" font-family="ui-monospace,Consolas,monospace" font-size="9" fill="#73849a" text-anchor="middle">Postgres + S3</text>
+
+    <text x="600" y="126" font-size="12" font-weight="700" fill="#e7ddff" text-anchor="middle">AI layer</text>
+    <text x="600" y="144" font-family="ui-monospace,Consolas,monospace" font-size="9" fill="#9d8bc4" text-anchor="middle">text-to-SQL · pgvector</text>
+
+    <text x="733" y="126" font-size="12" font-weight="700" fill="#d3dded" text-anchor="middle">dashboard</text>
+    <text x="733" y="144" font-family="ui-monospace,Consolas,monospace" font-size="9" fill="#73849a" text-anchor="middle">pinned widgets</text>
+  </g>
+
+  <!-- Three event dots flowing left-to-right, staggered -->
+  <circle cy="130" r="4" fill="#3fe0a4">
+    <animate attributeName="cx" values="-12;812" dur="7s" repeatCount="indefinite"/>
+  </circle>
+  <circle cy="130" r="4" fill="#3fe0a4" opacity="0.55">
+    <animate attributeName="cx" values="-12;812" dur="7s" begin="2.3s" repeatCount="indefinite"/>
+  </circle>
+  <circle cy="130" r="4" fill="#3fe0a4" opacity="0.3">
+    <animate attributeName="cx" values="-12;812" dur="7s" begin="4.6s" repeatCount="indefinite"/>
+  </circle>
+
+  <!-- Single, simple value caption -->
+  <text x="24" y="210" font-family="ui-monospace,SFMono-Regular,Consolas,monospace"
+        font-size="10.5" fill="#5d6e84">events stream in   ·   pinned in seconds   ·   ask in English</text>
+</svg>

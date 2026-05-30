@@ -107,7 +107,7 @@ These two are independent — both read facts/reviews and write derived data on 
 | # | Step | Script | Runtime | Reads | Writes | Idempotency |
 |---|---|---|---|---|---|---|
 | C1 | Lifecycle history backfill | `python -m scripts.generate_lifecycle_history` | ~3–5 min | `fact_bookings` | `fact_booking_events` (~ 2.1M rows tagged `source='history'`: BOOKING + CHECKIN + CHECKOUT or BOOKING + CANCELLATION) and `sim_open_bookings` (~17K rows of in-flight bookings at the `--sim-today` anchor, default 2025-06-01). The FUTURE bucket (`booking_ts >= sim-today`) is SKIPPED — reserved for the stream simulator. | `--reset` (default) runs `DELETE FROM fact_booking_events WHERE source='history'; TRUNCATE sim_open_bookings;` before writing. `source='stream'` rows are never touched. RNG seed pinned → identical counts on rerun. Use `--no-reset` to append without wiping. |
-| C2 | Review embeddings backfill | `python -m scripts.generate_embeddings` | ~5–8 min on RTX 3070 | `reviews_raw WHERE embedding IS NULL` | Writes `embedding` (384-d `vector` from `all-MiniLM-L6-v2`) to each NULL row, then `DROP / CREATE` the IVFFlat index ([scripts/generate_embeddings.py:60-65](scripts/generate_embeddings.py#L60-L65)). | Re-entrant — operates only on `embedding IS NULL`. Restart-safe (no row mid-batch is half-written). Default `IVFFLAT_LISTS=30` was sized for the original 30K seed reviews; with the post-B-030a 133K-row corpus the index rebuild target is `lists≈134` — `scripts/review_embedder.py` (continuous embedder used during stream runs) prints the exact rebuild SQL on its first "caught up" tick. |
+| C2 | Review embeddings backfill | `python -m scripts.generate_embeddings` | ~5–8 min on RTX 3070 | `reviews_raw WHERE embedding IS NULL` | Writes `embedding` (384-d `vector` from `all-MiniLM-L6-v2`) to each NULL row, then `DROP / CREATE` the IVFFlat index. `lists` is now computed dynamically by `_ivfflat_lists(embedded_rowcount)` at build time (B-051 logged frozen-file exception): `max(rowcount // 1000, 30)` up to 1M vectors; `int(sqrt(rowcount))` past 1M. So a re-embed against the live ~133K corpus rebuilds at `lists≈133` — within rule-of-thumb noise of the manually-shipped `lists=120`. After any full re-embed, the query side stays correct because `ai/semantic_search.py` already issues `SET ivfflat.probes = 11` per connection (pair it manually with the build lists if a future corpus changes the index size materially). | Re-entrant — operates only on `embedding IS NULL`. Restart-safe (no row mid-batch is half-written). The continuous embedder (`scripts/review_embedder.py`) does NOT touch the index. |
 
 After C1 + C2 the database has: the loaded base (Stage A) plus optional expansion (Stage B) plus history events for the simulator to read plus searchable embeddings.
 
@@ -1363,15 +1363,23 @@ ORDER BY avg_occ DESC LIMIT 10;
 | `model_version` | VARCHAR(50) | e.g. `'all-MiniLM-L6-v2'` — for audit when models change |
 | `embedded_at` | TIMESTAMP | When this row was generated |
 
-**Storage in this build:** Column `embedding vector(384)` added to `reviews_raw` via Phase 3 migration (option 2). The standalone-table schema above is the production-flexible form. The actual IVFFlat index uses `lists=30` (correct for ~30K rows; `lists=100` from the blueprint is wrong).
+**Storage in this build:** Column `embedding vector(384)` added to `reviews_raw` via Phase 3 migration (option 2). The standalone-table schema above is the production-flexible form. The actual IVFFlat index now uses `lists=120` paired with a session-scoped `SET ivfflat.probes = 11` in `ai/semantic_search.py` (B-051; sized for the 133K-row post-B-030a / B-046 corpus). The original `lists=30` was correct for the 30K seed corpus only.
 
 #### Index (actual, on `reviews_raw`)
 
 ```sql
+-- Build-time (one of: the manual rebuild shipped under B-051 turn 1,
+-- or a future re-run of scripts/generate_embeddings.py — its
+-- _ivfflat_lists() helper sizes this automatically for the corpus):
 CREATE INDEX ON reviews_raw
 USING ivfflat (embedding vector_cosine_ops)
-WITH (lists = 30);
+WITH (lists = 120);   -- live value; helper computes 133 against the live ~133K-row corpus
+
+-- Query-time (per-connection GUC inside ai/semantic_search.run()):
+SET ivfflat.probes = 11;
 ```
+
+**Rule of thumb for resizing the index.** `lists ≈ rows / 1000` up to ~1M vectors (HNSW above that — tracked as L-005; `_ivfflat_lists()` falls back to `int(sqrt(rows))` past 1M as a graceful interim); `probes ≈ sqrt(lists)`. Raising `lists` without raising `probes` silently degrades recall — `lists=120` with the pgvector default `probes=1` would scan only ~1/120 of partitions per query. The two parameters move together: `_ivfflat_lists()` in `scripts/generate_embeddings.py` handles the build-side size automatically; the `SET ivfflat.probes` line in `ai/semantic_search.py` must be paired manually if a future re-embed produces an index whose lists differ materially from the current 120 (e.g. lists jumps to 250 → probes target ≈ 16).
 
 #### Use cases
 

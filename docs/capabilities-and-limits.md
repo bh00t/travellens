@@ -49,6 +49,18 @@ runs that exact string.
   resolved for entity counts via migration 006 + the ENTITY COUNT
   RULE); the residual answerability gap is what pin-time review is
   for.
+- **`fact_bookings` ↔ `dim_date` join paradigm is the model's hardest
+  shape.** Year/month/season filters on historical bookings need
+  `JOIN dim_date d ON b.date_id = d.date_id` and then `d.year` /
+  `d.month` / `d.month_name`. Qwen-7B repeatedly invents
+  `b.booking_date`, `d.date_key`, or `d.month_number` even after the
+  B-001 retry catches one; chatty-mode escape (model wraps SQL in
+  prose) is also more common on this shape. During the B-053 portfolio
+  curation pass, "Revenue by month in 2025" was the one widget skipped
+  out of 12 after 5 phrasings — pinning at all would have either
+  frozen broken SQL or routed silently to `fact_booking_events`. See
+  [**B-053**](./backlog.md) for the phrasings tried and the documented
+  skip.
 
 ---
 
@@ -230,6 +242,21 @@ AI layer) — that is the deliberate exception called out in
 `render/server.py`'s module docstring. Tables that Phase-6 DAGs fill
 (`agg_daily_hotel_kpi`, sentiment, LTV) are intentionally absent;
 those are the Explorer's job.
+
+---
+
+## 6. Data Limits
+
+Caveats rooted in how the source data is generated, not in any code
+path. These are answers the system computes correctly from the data it
+has — but the data itself doesn't reflect real-world distributions, so
+the answers shouldn't be read as such.
+
+- Widget "Repeat customer share by zone" (id=13) returns ~40%+ —
+  structurally inflated because fact_bookings has 1M bookings sampled
+  uniformly from a 100K dim_customer pool (≈10 bookings per customer
+  average). Real-hospitality typical is 20-25%. Same caveat applies to
+  any customer-LTV / cohort / top-customer query. Fix tracked in B-055.
 
 ---
 

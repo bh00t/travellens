@@ -437,6 +437,15 @@ def run(user_query: str, hotel_ids: list[str] | None = None) -> dict:
         conn = psycopg2.connect(**DB_CONFIG)
         register_vector(conn)  # tells psycopg2 how to handle vector type
 
+        # IVFFlat probes (B-051). Postgres default is 1 partition scanned per
+        # query — fine at the original lists=30, but after B-051 raised lists
+        # to 120 (rule of thumb: rows/1000 ≈ 134 for ~133K embedded reviews),
+        # probes=1 would scan only ~1/120 of partitions and silently drop
+        # recall vs. the previous index. probes ≈ sqrt(lists) ≈ 11 restores
+        # coverage. Session GUC — set per-connection, not globally.
+        with conn.cursor() as cur:
+            cur.execute("SET ivfflat.probes = 11")
+
         # Step 2 — Load known cities for scoping (no-op after first call)
         _load_cities(conn)
 

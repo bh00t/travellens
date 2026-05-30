@@ -57,12 +57,23 @@ BATCH_SIZE = 128
 # We do NOT skip long reviews. Skipping = NULL embedding = invisible to search.
 MAX_CHARS = 1000
 
-# IVFFlat clustering parameter. pgvector rule of thumb: lists ≈ rows / 1000.
-# For 30K reviews that's 30. The blueprint says 100 — that's too high for this
-# row count and will slow down queries without improving recall.
-# IVFFlat works by grouping all vectors into `lists` clusters at index build
-# time. At query time it searches only the nearest clusters, not all 30K rows.
-IVFFLAT_LISTS = 30
+# IVFFlat clustering parameter, computed at index-build time (B-051 — logged
+# frozen-file exception in CLAUDE.md). Rule of thumb: `lists ≈ rows / 1000`
+# up to ~1M vectors; past ~1M, IVFFlat recall degrades and HNSW is the proper
+# answer (tracked as L-005) — `sqrt(rows)` is a graceful interim. Floor of 30
+# preserves the original 30K-seed sizing for tiny corpora.
+#
+# IVFFlat works by grouping all vectors into `lists` clusters at index-build
+# time. At query time it scans only the nearest `ivfflat.probes` clusters, not
+# every vector. The probes side is wired in `ai/semantic_search.py` as
+# `SET ivfflat.probes = 11` (≈ sqrt(lists)); the two parameters move together.
+def _ivfflat_lists(embedded_rowcount: int) -> int:
+    if embedded_rowcount <= 1_000_000:
+        return max(embedded_rowcount // 1000, 30)
+    # Past 1M vectors IVFFlat is the wrong index — HNSW is L-005's planned
+    # remedy. sqrt() here is a fallback so a future re-embed past the 1M mark
+    # still produces a sane (if non-optimal) index instead of clamping at 1000.
+    return int(embedded_rowcount ** 0.5)
 
 # Postgres connection — reads from .env file.
 DB_CONFIG = {
@@ -168,14 +179,23 @@ def build_ivfflat_index(conn) -> None:
     operator). This is the right choice for semantic similarity — we care about
     the angle between vectors, not their magnitude.
     """
-    log.info("Building IVFFlat index (lists=%d)...", IVFFLAT_LISTS)
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT COUNT(*) FROM reviews_raw WHERE embedding IS NOT NULL"
+        )
+        embedded_rowcount = cur.fetchone()[0]
+    lists = _ivfflat_lists(embedded_rowcount)
+    log.info(
+        "Building IVFFlat index (lists=%d, embedded_rows=%d)...",
+        lists, embedded_rowcount,
+    )
     with conn.cursor() as cur:
         cur.execute("DROP INDEX IF EXISTS idx_reviews_embedding;")
         cur.execute(f"""
             CREATE INDEX idx_reviews_embedding
             ON reviews_raw
             USING ivfflat (embedding vector_cosine_ops)
-            WITH (lists = {IVFFLAT_LISTS});
+            WITH (lists = {lists});
         """)
     conn.commit()
     log.info("IVFFlat index built successfully.")

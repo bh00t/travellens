@@ -1,22 +1,5 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
-  "_comment": [
-    "Shared Claude Code permissions for the TravelLens project.",
-    "Distilled from accumulated settings.local.json into a durable",
-    "project-wide subset. Per-developer / one-off rules belong in",
-    ".claude/settings.local.json (gitignored).",
-    "",
-    "Grouped by purpose:",
-    "  1. Docker / compose / per-container exec",
-    "  2. Python: venv + module entry points",
-    "  3. Dependency install + inspection",
-    "  4. Service health probes (dashboard, Ollama, MinIO, Airflow)",
-    "  5. Pytest entry points",
-    "  6. Read-only filesystem and process inspection",
-    "",
-    "Be conservative when expanding `allow`. An over-broad rule trades a",
-    "safety prompt for a silent destructive action."
-  ],
   "permissions": {
     "allow": [
       "Bash(docker --version)",
@@ -24,8 +7,8 @@
       "Bash(docker ps *)",
       "Bash(docker compose *)",
       "Bash(docker stop *)",
-      "Bash(docker rm *)",
-      "Bash(docker volume *)",
+      "Bash(docker volume ls)",
+      "Bash(docker volume inspect *)",
       "Bash(docker exec travellens-postgres *)",
       "Bash(docker exec travellens-kafka *)",
       "Bash(docker exec travellens-minio *)",
@@ -36,37 +19,65 @@
       "PowerShell(docker exec travellens-kafka *)",
       "PowerShell(docker exec travellens-minio *)",
       "PowerShell(docker version *)",
-
       "Bash(python *)",
       "Bash(python3 *)",
       "Bash(.venv/Scripts/python.exe *)",
       "Bash(PYTHONIOENCODING=utf-8 python *)",
       "PowerShell(python *)",
       "PowerShell(.\\.venv\\Scripts\\python.exe *)",
-
-      "Bash(pip install *)",
       "Bash(pip list *)",
-      "PowerShell(pip install *)",
       "PowerShell(pip list *)",
-
       "Bash(curl -fs http://localhost:5000/*)",
       "Bash(curl -fs http://localhost:11434/api/tags)",
       "Bash(curl -fs http://localhost:8080/health)",
       "Bash(curl -fs http://localhost:9000/minio/health/live)",
-
       "Bash(.venv/Scripts/python.exe -m pytest *)",
       "PowerShell(.\\.venv\\Scripts\\python.exe -m pytest *)",
       "Bash(python -m pytest *)",
       "PowerShell(python -m pytest *)",
-
       "Bash(dir)",
       "Bash(tasklist)",
+      "Bash(tasklist /FI \"IMAGENAME eq python.exe\")",
+      "Bash(netstat -tlnp)",
       "PowerShell(Get-ChildItem -Force)",
       "PowerShell(Get-Process *)",
       "PowerShell(Get-Command *)",
       "PowerShell(Get-Job *)",
-
-      "Read(//tmp/**)"
+      "PowerShell(netstat -ano)",
+      "PowerShell(Get-WmiObject Win32_Process -Filter \"Name='python.exe'\")",
+      "PowerShell(Get-NetTCPConnection -LocalPort 5000 -ErrorAction SilentlyContinue)",
+      "PowerShell(Get-NetTCPConnection -LocalPort 47219 -ErrorAction SilentlyContinue)",
+      "Read(//tmp/**)",
+      "Read(//mnt/c/Users/risha/Desktop/Code/repo/**)"
+    ],
+    "additionalDirectories": [
+      "C:\\Users\\risha\\Desktop\\Code\\repo\\travellens"
     ]
-  }
+  },
+  "_comment": [
+    "Shared Claude Code permissions for the TravelLens project.",
+    "Distilled from accumulated settings.local.json into a durable",
+    "project-wide subset. Per-developer / one-off rules belong in",
+    ".claude/settings.local.json (gitignored).",
+    "",
+    "Grouped by purpose:",
+    "  1. Docker / compose / per-container exec",
+    "  2. Python: venv + module entry points",
+    "  3. Dependency inspection (pip list only)",
+    "  4. Service health probes (dashboard, Ollama, MinIO, Airflow)",
+    "  5. Pytest entry points",
+    "  6. Read-only filesystem and process inspection",
+    "",
+    "Be conservative when expanding `allow`. An over-broad rule trades a",
+    "safety prompt for a silent destructive action. Destructive or",
+    "arbitrary-code ops are deliberately NOT allowlisted and must prompt:",
+    "  - data loss: `docker volume rm/prune`, `docker rm` (only `docker",
+    "    volume ls` / `inspect` and `docker stop` are allowed — they are",
+    "    read-only or restartable)",
+    "  - arbitrary install: `pip install` (only `pip list` is allowed)",
+    "  - process kills: `Stop-Process` / `taskkill` (any form)",
+    "  - host file copy: `docker cp`",
+    "One-off, dated, PID-, or path-specific commands belong in the",
+    "gitignored .claude/settings.local.json, never here."
+  ]
 }

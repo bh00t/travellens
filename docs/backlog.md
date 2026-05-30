@@ -58,6 +58,7 @@ carry context only.
 - ~~B-061 — surface the B-060 cancellation-filter lint outcome as a pin-time warning in Explore: the lint records `result["lint_cancellation_filter"]` but nothing shows it. `fired_uncorrected` (lint fired, auto-fix didn't take → answer suspect) now shows a clear, non-blocking caution in the Explore preview BEFORE pinning (complements B-022 pin review); `fired_corrected` shows a subtle info note. WARN, never block — pin stays enabled. Template-only (flag already flows through `/api/query`); no schema change~~ ✓ Done
 - ~~B-058 — Text-to-SQL accuracy eval harness (`ai/eval/`): on-demand measurement tool (NOT pytest) that runs a fixed question fixture through `ai.main.answer()`, grades by EXECUTION MATCH vs an owner-verified reference query (N runs/question, default 3), and flags L-011 (missing DISTINCT) + L-013 (missing cancellation filter) independently of exec-match. Cap-aware + probe-aware honest denominator. Fixture is TEST DATA — never fed back into the prompt~~ ✓ Done
 - ~~B-062 — rating-based polarity filter for semantic search (meanwhile mitigation for L-012): `_detect_polarity` reads general negative/positive/neutral keyword rules off the query; negative → hard-filter retrieval to ≤2★, positive → ≥4★, neutral → unchanged, with a relax-and-note fallback below `MIN_POLARITY_RESULTS`. Flips the dominant polarity ("cleanliness complaints" now returns ≤2★ complaints, not 4-5★ praise). Rating is a coarse proxy — the deeper fix is B-026. `ai/semantic_search.py` + a one-line `filters`-merge in `ai/main.py`; no schema change~~ ✓ Done
+- B-063 — `.claude/settings.json` allowlist hardening: narrow/remove destructive wildcards so they prompt (`docker volume *` → `ls` + `inspect` only; drop `docker rm *` / `docker cp *` / `pip install *` / broad `Stop-Process` + `taskkill`), declutter ~80 stale one-offs (specific PIDs, `c:\tmp\…` log paths, dated `monitor/data?from=…` URLs, dead B-047 `--rate`/`--duration` runs) down to the durable grouped subset the file's own `_comment` describes. Config-only; one-offs belong in the gitignored `.claude/settings.local.json` (built — pending owner review + commit).
 
 ### OPEN — limitations (L-)
 
@@ -2305,6 +2306,27 @@ The old design weights stay documented in `docs/phase-2-streaming.md` as histori
 - Registry stays bounded (max ≤ 5000) over the run.
 - Consumer (unchanged) still aggregates: `agg_hourly_city_stats` populates `total_bookings / total_checkins / total_checkouts / total_cancellations` on new windows.
 - Quarantine sinks pick up chaos as before (`malformed_events/`, `late_events/`); no new quarantine on clean runs (the enriched fields are additive — consumer ignores unknown extras).
+
+---
+
+### B-063 — `.claude/settings.json` permission-allowlist hardening (destructive ops prompt; one-offs live in local)
+
+> **Trace.** Phase(s): ops/dev (no phase doc — Claude Code config; the committed allowlist lives in [`.claude/settings.json`](../.claude/settings.json), per-developer/one-off rules in the gitignored `.claude/settings.local.json`) · datamodel: none · data: none.
+
+**Priority:** Medium — built; pending owner review + commit (config-only, isolated to `.claude/`).
+**Problem:** The committed `allow` list had grown to ~127 entries by distillation from `settings.local.json`. Two issues: (1) over-broad **destructive** wildcards traded a safety prompt for a silent irreversible action — most dangerously `Bash(docker volume *)`, which permits `docker volume rm/prune` and can wipe the Postgres data volume (993 cities / 20,076 hotels / 1M bookings / 2M+ lifecycle events / 133K reviews — unrecoverable); also `docker rm *`, `docker cp *`, `pip install *` (arbitrary code), and broad/argument-less `Stop-Process` / `taskkill` (kill any process). (2) Accumulated single-use clutter — specific PIDs, `c:\tmp\…` log-capture paths, dated `monitor/data?from=2026-05-…` curls, and dead B-047 `--rate`/`--duration`/`--chaos-seed` producer runs — none of which are durable rules.
+
+**What changed (`.claude/settings.json`):**
+- **Narrowed** `Bash(docker volume *)` → `Bash(docker volume ls)` + `Bash(docker volume inspect *)` (read-only only; `rm`/`prune` now prompt).
+- **Removed** (now prompt): `Bash(docker rm *)`, `Bash(docker cp *)`, `Bash(pip install *)`, `PowerShell(pip install *)`, and every `Stop-Process` / `taskkill` form (specific-PID and argument-less alike, incl. `PowerShell(Stop-Process -Force)`).
+- **Decluttered** ~80 stale one-offs down to the durable grouped subset the file's own `_comment` enumerates (docker/exec · venv+module python · `pip list` · health probes · pytest · read-only fs/process inspection). `docker stop *` kept (restartable, non-destructive).
+- **Kept** all benign work permissions: `python *` / `python3 *` / venv python, `pytest *`, `pip list`, the four service health-probe curls, and read-only inspection (`Get-ChildItem`, `tasklist`, `netstat`, `Get-NetTCPConnection` on the project ports 5000/47219, `Get-WmiObject Win32_Process`, `Read(…)`).
+- **`_comment`** updated to list the deliberately-not-allowlisted destructive ops and to state that one-offs belong in `.claude/settings.local.json`.
+- The stale one-offs were **removed, not moved** — being exact-match PID/path/date strings, they would never match a future command, so relocating them to local adds no value. `settings.local.json` was left untouched; confirmed gitignored.
+
+**Convention reinforced:** any allow rule that can silently destroy data, kill arbitrary processes, or install arbitrary code must require a prompt; the committed `settings.json` holds only durable general rules, and dated/PID-/path-specific commands live in the gitignored `.claude/settings.local.json`.
+
+**File:** `.claude/settings.json` (committed). Result: 47 durable `allow` entries (from ~127); valid JSON; zero destructive wildcards.
 
 ---
 

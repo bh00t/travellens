@@ -191,6 +191,35 @@ def test_constant_expression_skipped():
     _validate_columns("SELECT 1 + 1 AS sanity")
 
 
+# ── 3b. B-059: SELECT alias reused in ORDER BY on a single-table query ───────
+# A SELECT-list output alias referenced in ORDER BY / GROUP BY / HAVING is
+# resolved by Postgres against the projection, not the table. On a single-table
+# query the validator's bare-ref check used to mistake the alias for a
+# hallucinated column and raise (false-POSITIVE — the worse class, it silently
+# broke valid SQL). The fix collects the SELECT aliases and skips them.
+
+def test_b059_single_table_alias_in_order_by_not_rejected():
+    """The exact B-059 repro — alias in ORDER BY on one table must NOT raise."""
+    _validate_columns("""
+        SELECT home_state, COUNT(*) AS customer_count
+        FROM dim_customer
+        GROUP BY home_state
+        ORDER BY customer_count DESC
+    """)
+
+
+def test_b059_single_table_hallucinated_order_by_still_rejected():
+    """
+    Guard: a genuinely hallucinated bare ORDER BY column on a single-table
+    query — NOT a SELECT alias — must STILL raise. The alias-skip must not
+    open a new false-negative.
+    """
+    with pytest.raises(ValueError, match="made_up_col"):
+        _validate_columns(
+            "SELECT city FROM dim_location ORDER BY made_up_col DESC"
+        )
+
+
 # ── 4. Known limitation (B-003a): bare ref inside WHERE on single-table ──────
 # Documents the false-NEGATIVE gap. `_walk_columns` doesn't recurse into
 # `sqlparse.sql.Comparison`, so a bare column ref inside a single-table

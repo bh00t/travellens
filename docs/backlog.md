@@ -53,6 +53,8 @@ carry context only.
 - ~~B-054 — Blueprint AI-sell: two namespaced (`.tl-*`) animations + business-first lead paragraphs for §07 Text-to-SQL and §08 Semantic Search; §02 metric strip updates (Schema tables 15 → 22 to match live DB · Real reviews 30K+ → 133K · added 6th tile "~20 Peak evt/sec @ 19 IST"); "Life before vs. after TravelLens" comparison block removed from §01 (header + 2-column ✗/✓ grid both gone); §05 schema heading + body left at "15 Tables" (curated star-schema view of the original 14 + dashboard_widgets), and README's "14 tables" mention flagged for a separate follow-up~~ ✓ Done
 - B-055 — Realistic customer distribution in bookings: fact_bookings samples customer_id uniformly from a 100K dim_customer pool → ≈10 bookings/customer avg → every customer is structurally a "repeat" (widget id=13 reads ~40%+ vs real-hospitality 20-25%). Regenerate with weighted long-tail sampler; same distribution wired into the live producer.
 - B-056 — Router: operation detection + hybrid-aggregation path: `ai/query_router.py` classifies on topic only (no operation primitive), so review-analytics queries route to semantic which has no aggregation ("top 5 hotels with most cleanliness complaints" returns 5★ "high cleanliness standards" reviews). Add pattern-based operation detection + new `ai/hybrid_aggregator.py`; `query_router.py` logged frozen-file exception.
+- ~~B-059 — `_validate_columns` false-positive on SELECT-list alias reused in ORDER BY (single-table query): an alias like `COUNT(*) AS customer_count … ORDER BY customer_count` is rejected as a hallucinated bare column → valid model SQL becomes a both-attempts error. Surfaced by the B-058 eval harness (`customers_per_state` runs 1 & 3). B-003a-adjacent (false-POSITIVE). Fix in `ai/text_to_sql._validate_columns` — treat SELECT-list output aliases as known identifiers when validating ORDER BY on single-table queries~~ ✓ Done
+- ~~B-058 — Text-to-SQL accuracy eval harness (`ai/eval/`): on-demand measurement tool (NOT pytest) that runs a fixed question fixture through `ai.main.answer()`, grades by EXECUTION MATCH vs an owner-verified reference query (N runs/question, default 3), and flags L-011 (missing DISTINCT) + L-013 (missing cancellation filter) independently of exec-match. Cap-aware + probe-aware honest denominator. Fixture is TEST DATA — never fed back into the prompt~~ ✓ Done
 
 ### OPEN — limitations (L-)
 
@@ -92,6 +94,7 @@ B-051 (IVFFlat resize for the 133K-row corpus — lists=30 → lists=120 + sessi
 B-052 (README portfolio polish — animated dual-theme SVG hero replaces ASCII; engineering-highlights intro tightened; reviews_raw count corrected to 133K; redundant DuckDB aside dropped),
 B-053 (dashboard curation — 11 portfolio widgets pinned across simple / grouped / complex / live / hybrid tiers; prior 13 exploratory widgets cleared first; 1 of 12 widgets skipped on date-paradigm bleed),
 B-054 (blueprint AI-sell — two namespaced animations + business-first lead paragraphs for §07/§08; metric strip reconciled to live DB; "Life before vs. after TravelLens" comparison block removed from §01; README's "14 tables" mention flagged for follow-up),
+B-058 (Text-to-SQL accuracy eval harness `ai/eval/` — on-demand execution-match measurement tool, N runs/question, L-011/L-013 flags independent of exec-match, cap/probe-aware denominator; fixture is test data, never prompt content),
 plus the unnumbered Phase 1–5 foundation items.
 
 ### ABANDONED
@@ -1106,6 +1109,203 @@ Once shipped, the blocked widget "Top 5 hotels by cleanliness complaint count" c
 - LLM-based routing (a separate alternative, more complex; keep on the table as B-057 if pattern-based detection proves insufficient).
 - B-026 sentiment-classification per review (orthogonal — would improve PRECISION of the semantic match but doesn't solve the aggregation gap).
 - Per-domain query expansion (food / amenity / location verticals).
+
+---
+
+### B-058 — Text-to-SQL accuracy eval harness (`ai/eval/`) ✓ DONE
+
+> **Trace.** Phase(s): [Phase 4](phase-4-ai-layer.md) (AI layer) · datamodel: none · data: none.
+
+**What:** An on-demand accuracy **measurement** tool for the Text-to-SQL path — explicitly **NOT** a
+pytest regression suite and **NOT** part of `pytest tests/`. It runs a fixed fixture of
+natural-language questions through `ai.main.answer()` against the live DB + Ollama, scores each by
+**EXECUTION MATCH** against an owner-verified reference query, and flags the two known
+confident-wrong failure modes (L-011 missing `DISTINCT`, L-013 missing cancellation filter). Run:
+`python -m ai.eval.run_eval` (`--runs N` / `--only sql` / `--id <question_id>`).
+
+**Why execution match, not SQL-string match:** many correct SQLs exist per question and the dataset
+is regenerable, so comparing SQL text or hardcoding expected row values both break. The harness runs
+the model's SQL AND the reference SQL against live data and compares **normalized result sets**, so
+the metric survives a dataset regenerate.
+
+**Hard boundary:** the fixture (`ai/eval/eval_questions.py`) is **TEST DATA, not prompt content**. It
+is never read by, written into, or referenced from `ai/prompts/text_to_sql_system.txt`. The harness
+never feeds examples back into the model — it is not a few-shot patch and must not become one.
+
+**Design highlights (locked):**
+
+- **N runs/question (default 3)** — Ollama is non-deterministic and L-013 is intermittent; one run
+  passes/fails by luck. Per-question pass-rate + aggregate.
+- **Flags recorded INDEPENDENTLY of execution match** — a result can match by coincidence while the
+  SQL is structurally wrong. Proven live: `avg_nights_by_segment` had `cancellation_filter_missing×2`
+  yet one filterless run coincidentally matched the reference — exec-match alone would have hidden it.
+- **`is_rate_query` defined narrowly** — `FILTER (WHERE ... is_cancelled)`, `100.0 *`, `/ NULLIF(COUNT`,
+  or a rate/ratio/share/percent alias. A `/ 1e7` crore unit-conversion is NOT a rate, so the
+  cancellation-filter flag is not suppressed on the exact L-013 revenue cases it must catch.
+- **Half-up rounding** to 2 dp (`Decimal(str(v)).quantize(..., ROUND_HALF_UP)`) to match Postgres
+  `ROUND()`; positional column comparison (names ignored, count enforced); multiset by default,
+  ordered list when the fixture sets `ordered: true`.
+- **Headline metric counts errors as failures** — `execution accuracy = passed / ALL runs` (a
+  both-attempts error or a misroute is a non-pass, not a free exclusion). A secondary
+  `among scored runs` line and a per-subtype error breakdown
+  (`validator_rejection` / `model_sql_error` / `ollama_unreachable` / `other`) are reported alongside,
+  so a B-059 validator false-positive is visibly distinct from a genuine model failure.
+- **Honest denominator** — exec-match is excluded from the *among-scored* accuracy % (and reported
+  separately) when it is meaningless rather than failed: INDETERMINATE (result set hit `MAX_ROWS=100`
+  → truncated subset) or PROBE (a `scored: False` entry whose answer is inherently under-determined,
+  e.g. "5 of 1,418 valid rows" — exists for its L-011 flag, not for exec-match).
+- **Skip cleanly** — if Postgres or Ollama is unreachable, prints a clear SKIP and exits 2; never
+  reports a fake 100%. Exit codes: 0 ran · 2 clean skip · other nonzero crashed.
+
+**Files (all additive):** `ai/eval/__init__.py`, `ai/eval/eval_questions.py` (11-question fixture),
+`ai/eval/run_eval.py` (runner), `ai/eval/results/` (gitignored). Plus `.gitignore`
+(`ai/eval/results/`), `CLAUDE.md` (repo-layout tree), `docs/phase-4-ai-layer.md` (BUILD HISTORY
+entry). No frozen file touched; no schema change (datamodel.md untouched). Reference SQLs lifted
+from owner-verified origins (`tests/test_validate_columns.py`, `docs/phase-4-ai-layer.md` E1 +
+acceptance, prompt OUTPUT RULES).
+
+**Re-run after owner-requested fixes (11 questions × 3 runs = 33, default `--runs 3`)** — headline
+now counts errors/misroutes as failures; fixture reworked (`top10_cities_by_hotel_count` replaces the
+permanently cap-excluded `how many hotels per city`; `list 5 customers named R` drops the "unique"
+that made `distinct_missing` vacuous); errors tagged by subtype:
+
+```
+TEST                               PATH  RUNS PASS/TOTAL  EXEC-MATCH  FLAGS
+top5_cities_by_revenue             sql      3        0/3        0.0%  cancellation_filter_missingx3
+cancellation_rate_by_segment       sql      3        2/3       66.7%  -
+adr_5star_goa                      sql      3        0/3        0.0%  cancellation_filter_missingx1, err:otherx1
+revenue_by_month_2025              sql      3        0/3         n/a  err:model_sql_errorx1, err:otherx1, err:validator_rejectionx1
+top10_cities_by_hotel_count        sql      3        3/3      100.0%  -
+customers_per_state                sql      3        1/3      100.0%  err:validator_rejectionx2
+hotels_opened_per_year             sql      3        3/3      100.0%  -
+list_5_customers_named_r           sql      3        0/3       probe  err:validator_rejectionx2
+bookings_by_segment                sql      3        0/3        0.0%  -
+revenue_by_star_category           sql      3        1/3       33.3%  cancellation_filter_missingx2
+avg_nights_by_segment              sql      3        1/3       33.3%  cancellation_filter_missingx2
+```
+
+| Metric | Value |
+|---|---|
+| execution accuracy (headline — errors & misroutes count as fails) | **33.3%** (11/33 of ALL runs) |
+| among scored runs only | 45.8% (11/24; excludes cap=0, probe=1, error=8, misroute=0) |
+| `cancellation_filter_missing` (L-013) fired | 8 |
+| `distinct_missing` (L-011) fired | 0 (the model still emitted `DISTINCT` on its one successful `list_5` run; its other 2 runs errored before a flag could be computed) |
+| error rate | 24.2% (8/33) — `validator_rejection` 5 · `model_sql_error` 1 · `other` 2 |
+| misroute rate | 0.0% (0/33) |
+| indeterminate (cap) / probe runs | 0 / 1 (excluded from both accuracy denominators except the headline total) |
+
+Per-question reading: `top10_cities_by_hotel_count` / `hotels_opened_per_year` → 3/3 ·
+`top5_cities_by_revenue` → 0/3 (filter dropped all 3 runs — flagged ×3) · `adr_5star_goa` → 0/3
+(filter dropped + the kept-filter run emits `ROUND(...,2)` vs the prompt-mandated ADR `,0`, line 315 —
+a genuine format miss, reference left at `,0` per design) · `revenue_by_month_2025` → 0/3 all errored
+(date-paradigm bleed → `booking_date`/`date_key`/`l.month`; the expected low signal) ·
+`customers_per_state` → 1/3 with `validator_rejection×2` (the B-059 false-positive). The 5
+`validator_rejection` errors are visibly separated from the 1 genuine `model_sql_error`.
+
+**Acceptance / quality-gate:**
+
+| TEST | EXPECTED | ACTUAL | PASS/FAIL |
+|---|---|---|---|
+| Harness runs end-to-end against live DB + Ollama | prints table + aggregate, writes results file, exit 0 | exit 0; `ai/eval/results/eval_*.txt` written | PASS |
+| Headline counts errors as failures | accuracy = passed / ALL runs | 11/33 = 33.3% headline; 45.8% among-scored shown separately | PASS |
+| Error subtype tagging | validator-rejection vs model-SQL vs Ollama separated | breakdown: `validator_rejection` 5 · `model_sql_error` 1 · `other` 2 | PASS |
+| Skip-clean when infra down (failure mode) | clear SKIP, exit 2, no fake 100% | `check_postgres`/`check_ollama` short-circuit to exit 2 | PASS (design-verified) |
+| Flag independent of exec-match | flag can fire on a coincidentally-matching run | `avg_nights_by_segment` flag×2 with a 1/3 match; `top5` flag×3 at 0/3 | PASS |
+| `is_rate_query` doesn't swallow `/1e7` | crore conversion still flagged when filter missing | `top5` (×3) / `revenue_by_star_category` (×2) crore cases flagged | PASS |
+| `cancellation_rate_by_segment` NOT flagged | rate query exempt from the filter flag | 2/3, no flag (rate query correctly exempt) | PASS |
+| Bounded rework gradable | `top10_cities_by_hotel_count` scores, no cap | 3/3, no `n/a (cap)` | PASS |
+| Probe excluded | under-determined L-011 question not scored | `list_5_customers_named_r` → probe, excluded | PASS |
+| Fixture never reaches the prompt (hard boundary) | no code path injects the fixture into the prompt | `ai/prompts/` has zero references to the fixture; `ai/eval/` never opens/imports the prompt file (only docstring prose names it to document the boundary) | PASS |
+| AST parse-check both modules | parse OK | `ast.parse` OK on `run_eval.py` + `eval_questions.py` | PASS |
+
+**Out of scope:** semantic-relevance grading (needs a labeled set — documented follow-on); a lint
+module to consume these flags (this harness ships first and will measure it later). Forward-compat:
+when B-056 lands its `hybrid_aggregation` path, do NOT add review-analytics questions to THIS
+fixture — they belong to a different path; the current `path != 'sql' → misroute` rule is correct
+as-is.
+
+**Bonus observation (out of scope — opened as [B-059](#b-059--_validate_columns-false-positive-on-select-alias-reused-in-order-by--done), since resolved):**
+the harness surfaced a `_validate_columns` (B-003) false-positive — a `SELECT` alias referenced in
+`ORDER BY` on a single-table query (e.g. `... AS customer_count ... ORDER BY customer_count`) is
+rejected as a hallucinated bare column, turning otherwise-valid model SQL into a both-attempts error
+(seen on `customers_per_state` runs 1 & 3). Fix is its own session, not B-058.
+
+---
+
+### B-059 — `_validate_columns` false-positive on SELECT alias reused in ORDER BY · DONE
+
+> **Trace.** Phase(s): [Phase 4](phase-4-ai-layer.md) (AI layer) · datamodel: none · data: none.
+
+**Symptom:** `ai/text_to_sql._validate_columns` rejects valid model SQL when a `SELECT`-list output
+alias is referenced in the `ORDER BY` of a single-table query. Example:
+
+```sql
+SELECT home_state, COUNT(*) AS customer_count
+FROM dim_customer
+GROUP BY home_state
+ORDER BY customer_count DESC;   -- customer_count is a SELECT alias, NOT a column
+```
+
+The validator's single-table bare-reference branch treats `customer_count` (the `ORDER BY` term) as a
+bare column on `dim_customer`, finds no such column, and raises
+`ValueError("Column 'customer_count' does not exist on table 'dim_customer' …")`. Because the same
+hallucination-looking SQL is produced again on the B-001 retry, the query becomes a **both-attempts
+error** — even though Postgres would have run it fine (SQL permits an output alias in `ORDER BY`).
+
+**Repro:** the B-058 baseline eval run — `customers_per_state` runs 1 & 3 both errored this way
+(`... COUNT(*) AS customer_count ... ORDER BY customer_count` and the `num_customers` variant). The
+eval harness tags these as `err:validator_rejection`, separating them from genuine model failures.
+
+**Family:** B-003a-adjacent, but the opposite polarity — B-003a is a known false-NEGATIVE (a bare
+`WHERE` ref slips past); this is a false-POSITIVE (a valid `ORDER BY` alias is wrongly rejected).
+A false-positive is the worse class: it silently breaks queries that would otherwise have run, which
+is exactly the property `_validate_columns` was built to avoid.
+
+**Fix shipped (this session — `ai/text_to_sql.py`, B-059):**
+
+1. New helper `_collect_select_aliases(stmt)` collects the top-level `SELECT`-list output aliases
+   (sqlparse `Identifier.get_alias()` on each projection identifier, lowercased), scoped to the
+   projection only (tokens between the leading `SELECT` and the first `FROM`/`JOIN`) — consistent
+   with the validator's existing conservative top-level-only posture (CTEs/subqueries skipped).
+2. In `_validate_columns`, the single-table bare-reference loop now `continue`s past any bare ref
+   whose name is in that alias set. Qualified refs (`alias.col`) are unaffected — an output alias is
+   never qualified. The alias `customer_count` in `ORDER BY` / `GROUP BY` / `HAVING` is therefore
+   recognised as a valid output reference, not a hallucinated column.
+3. **Provably no new false-negative:** a bare ref matching a `SELECT` alias *is* a valid reference to
+   that alias, never a hallucination; a genuinely hallucinated `ORDER BY` column that is NOT an alias
+   still falls through and is rejected.
+
+**Tests added — `tests/test_validate_columns.py`** (CLAUDE.md rule: undocumented tests get skipped):
+- `test_b059_single_table_alias_in_order_by_not_rejected` — the exact repro (alias in `ORDER BY` on
+  one table) must NOT raise.
+- `test_b059_single_table_hallucinated_order_by_still_rejected` — guard: a genuine hallucination
+  (`SELECT city FROM dim_location ORDER BY made_up_col`) on a single-table query STILL raises.
+- Full suite: 19 passed, B-003a stays `xfail` (this fix does not touch the WHERE/Comparison gap).
+
+**Blast radius:** `_validate_columns` runs on the live generate-then-run path (`run()`), NOT on the
+frozen-SQL refresh path (`run_stored_sql` uses `_validate_sql` only) — so only the Explore live path
+is affected; pinned/refresh widgets are untouched.
+
+**Re-run verification (`python -m ai.eval.run_eval`) — the B-059 case is gone end-to-end:**
+- **`customers_per_state` (the B-059 question):** B-058 baseline `1/3` pass with
+  `err:validator_rejection×2` (the alias false-positive) → AFTER `3/3` pass, **0 validator_rejection**.
+  This is the direct end-to-end proof — the exact query that became a both-attempts error now runs.
+- **Controlled A/B** on the same question (5 runs, fix temporarily disabled vs enabled, all else
+  identical): `validator_rejection` **1 → 0**.
+- **Full-fixture aggregate is a coincidental 5 → 5 — read it carefully, do NOT report it as "no
+  change".** The composition flipped completely: the 2 baseline rejections were the
+  `customers_per_state` alias false-positive (now eliminated); all 5 AFTER-run rejections are
+  **genuine B-003 catches** — hallucinated columns the validator *should* reject: qualified refs
+  `b.booking_date` / `c.segment` / `l.month` / `dcs.customer_segment` (×4 of the 5) plus a bare
+  `customer_name` that genuinely does not exist on `dim_customer` (`SELECT DISTINCT customer_name
+  FROM dim_customer …`, not an alias). None is the B-059 pattern. Their run-to-run count tracks
+  model non-determinism — the date-paradigm-bleed question `revenue_by_month_2025` (a known
+  L-013-adjacent hard case) alone contributed 2 this run. The aggregate count is therefore not the
+  right B-059 metric; the per-question `customers_per_state` result above is. AFTER headline
+  execution accuracy 42.4% (14/33), among-scored 58.3% (14/24).
+
+**Out of scope:** the broader B-003a false-negative (bare `WHERE` ref on single-table — already
+tracked, `xfail` in the suite); any change to the B-001 retry loop.
 
 ---
 

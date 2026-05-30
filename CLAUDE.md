@@ -102,7 +102,7 @@ Current phase: **6** — Phase 7 shipped (monitor redesign done end-to-end). Rea
   - **Logged frozen-file exceptions** (one-line each — file · reason · B-number · date):
     - `scripts/generate_embeddings.py` — IVFFlat `lists` made dynamic so a future re-embed sizes correctly for the grown corpus · B-051 · 2026-05-28.
 - **Under active hardening — edit ONLY per a specific backlog item:**
-  `ai/text_to_sql.py` (B-022 run_stored_sql, B-003 _validate_columns, B-004 next),
+  `ai/text_to_sql.py` (B-022 run_stored_sql, B-003 + B-059 _validate_columns, B-004 next),
   `ai/prompts/text_to_sql_system.txt` (B-003 schema context, B-022 SQL rules; edit whenever schema
   knowledge or SQL generation rules change — keep in sync with `text_to_sql.py`),
   `ai/main.py` (B-004, B-005), `ai/semantic_search.py` (B-006 dedup, B-004),
@@ -181,8 +181,18 @@ travellens/
 │   │                                   + _load_schema / _validate_columns)
 │   ├── semantic_search.py           ← MiniLM embed → pgvector → Ollama summary
 │   │                                  (+ DISTINCT ON dedup)
-│   └── prompts/
-│       └── text_to_sql_system.txt   ← schema DDL + India context (authoritative)
+│   ├── prompts/
+│   │   └── text_to_sql_system.txt   ← schema DDL + India context (authoritative)
+│   └── eval/                        ← B-058: on-demand Text-to-SQL accuracy eval harness
+│       │                              (MEASUREMENT tool — NOT pytest, NOT part of `pytest tests/`).
+│       │                              Runs fixture questions through ai.main.answer(), grades by
+│       │                              EXECUTION MATCH vs an owner-verified reference query, flags
+│       │                              L-011 (missing DISTINCT) + L-013 (missing cancellation filter).
+│       │                              Fixture is TEST DATA — never fed back into the prompt.
+│       ├── __init__.py              ← required
+│       ├── eval_questions.py        ← fixture: QUESTIONS = [{question -> reference_sql}, ...]
+│       ├── run_eval.py              ← runner: `python -m ai.eval.run_eval` (--runs N / --only sql / --id X)
+│       └── results/                 ← written eval logs (gitignored)
 ├── render/
 │   ├── __init__.py                  ← required
 │   ├── server.py                    ← Flask app: pages + API (pin freezes SQL,

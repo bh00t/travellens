@@ -274,6 +274,13 @@ def _validate_columns(sql: str) -> None:
 
     bare_refs, qualified_refs = _collect_column_refs(stmt)
 
+    # B-059: top-level SELECT-list output aliases. Postgres resolves a bare
+    # ORDER BY / GROUP BY / HAVING reference against these output names, not
+    # against the table — so a bare ref matching a SELECT alias is a valid
+    # alias reference, never a hallucinated column. Used below to skip those
+    # bare refs before the single-table column check.
+    select_aliases = _collect_select_aliases(stmt)
+
     # Qualified refs are always safe — we know which table to check
     for prefix, col in qualified_refs:
         table = tables.get(prefix.lower())
@@ -297,6 +304,14 @@ def _validate_columns(sql: str) -> None:
         table = next(iter(unique_tables))
         known = _KNOWN_COLUMNS.get(table, set())
         for col in bare_refs:
+            # B-059: a bare ref that matches a SELECT-list output alias is a
+            # reference to that alias (resolved by Postgres against the select
+            # list), not a column on the table — skip it. This is provably
+            # safe: it adds no false negative, because such a ref is never a
+            # hallucinated column. A genuinely hallucinated bare ORDER BY
+            # column that is NOT an alias still falls through and is rejected.
+            if col.lower() in select_aliases:
+                continue
             if col.lower() not in known:
                 raise ValueError(
                     f"Column '{col}' does not exist on table '{table}'. "
@@ -408,6 +423,48 @@ def _collect_column_refs(stmt) -> tuple[list[str], list[tuple[str, str]]]:
                 _walk_columns(tok)
 
     return bare, qualified
+
+
+def _collect_select_aliases(stmt) -> set[str]:
+    """
+    B-059: return the set of top-level SELECT-list output aliases (the
+    `AS <name>` targets, and the bare-word form `expr alias`), lowercased.
+
+    Postgres resolves a bare ORDER BY / GROUP BY / HAVING reference against
+    the output column names first, so an alias used downstream looks like a
+    bare column ref to the validator but is not a hallucination. We collect
+    the aliases here so `_validate_columns` can skip them.
+
+    Scope: only the projection list — the tokens between the leading SELECT
+    and the first FROM/JOIN. Aliases inside subqueries/CTEs are conservatively
+    ignored, consistent with the validator staying at top-level scope.
+    """
+    aliases: set[str] = set()
+
+    def _add_alias(ident: Identifier) -> None:
+        alias = ident.get_alias()
+        if alias:
+            aliases.add(alias.lower())
+
+    seen_select = False
+    for tok in getattr(stmt, "tokens", []):
+        if tok.ttype is DML and (tok.normalized or "").upper() == "SELECT":
+            seen_select = True
+            continue
+        if not seen_select:
+            continue
+        if tok.ttype is Keyword:
+            kw = (tok.normalized or "").upper()
+            if kw == "FROM" or "JOIN" in kw:
+                break  # end of the projection list
+        if isinstance(tok, IdentifierList):
+            for sub in tok.get_identifiers():
+                if isinstance(sub, Identifier):
+                    _add_alias(sub)
+        elif isinstance(tok, Identifier):
+            _add_alias(tok)
+
+    return aliases
 
 
 # ── Helper functions ──────────────────────────────────────────────────────────

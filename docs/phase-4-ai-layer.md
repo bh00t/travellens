@@ -540,6 +540,71 @@ Two prompt-only edits to `ai/prompts/text_to_sql_system.txt` (no code change):
 
 ---
 
+### B-058 — Text-to-SQL accuracy eval harness (`ai/eval/`)
+
+Added an on-demand accuracy **measurement** tool under `ai/eval/` — a fixture of natural-language
+questions (`eval_questions.py`) and a runner (`run_eval.py`, invoked `python -m ai.eval.run_eval`).
+It runs each question through `ai.main.answer()` against the live DB + Ollama, grades by **execution
+match** against an owner-verified reference query (N runs/question to average out non-determinism),
+and flags L-011 (missing `DISTINCT`) + L-013 (missing cancellation filter) independently of the
+match. It is a measurement tool, **not** a pytest regression suite — it is deliberately outside
+`pytest tests/`.
+
+**Why:** the existing pytest suites (`test_validate_columns.py`, `test_hybrid_queries.py`) guard
+specific fixes against regression but do not answer "how accurate is the generated SQL, end-to-end,
+right now?" L-004 quotes ~85–90% accuracy as a hand-wave; this harness makes that number
+reproducible and attaches it to the two known confident-wrong failure modes.
+
+**Design notes** (full rationale + the hard "fixture is test data, never prompt content" boundary
+live in the backlog entry, not restated here): execution match (not SQL text) so the metric survives
+a dataset regenerate; flags independent of exec-match so a coincidental row match can't hide a
+structurally wrong query; narrow `is_rate_query` so a `/1e7` crore conversion isn't mistaken for a
+rate and L-013 stays catchable; cap-aware + probe-aware honest denominator; skip-clean (exit 2) when
+infra is down.
+
+**Baseline:** 11 questions × 3 runs → 33.3% headline execution accuracy (11/33 of all runs; 45.8%
+among scored runs), `cancellation_filter_missing` ×8, 24.2% error rate (validator_rejection 5 /
+model_sql_error 1 / other 2), 0% misroute. Full table + acceptance matrix:
+[backlog B-058](backlog.md#b-058--text-to-sql-accuracy-eval-harness-aieval--done).
+
+---
+
+### B-059 — `_validate_columns` false-positive on a SELECT alias reused in `ORDER BY`
+
+The B-058 baseline surfaced a false-POSITIVE in the B-003 column validator (the inverse of B-003a's
+false-negative): on a **single-table** query, a `SELECT`-list output alias referenced in
+`ORDER BY` / `GROUP BY` / `HAVING` — e.g. `SELECT state, COUNT(*) AS customer_count FROM dim_customer
+GROUP BY state ORDER BY customer_count DESC` — was harvested as a bare column ref, checked against the
+one in-scope table, not found, and rejected with a `ValueError`. The same alias re-appears on the
+B-001 retry, so a query Postgres would have run fine became a **both-attempts error** (the user got
+nothing). It only bit single-table + aliased sort/group/having: bare refs are validated only when
+exactly one table is in scope, so multi-table queries (`ORDER BY total_revenue_crore` over 3 tables)
+were already skipped.
+
+**Fix** (`ai/text_to_sql.py`): new `_collect_select_aliases(stmt)` gathers the top-level
+projection's output aliases (sqlparse `Identifier.get_alias()`, lowercased, scoped to the tokens
+between `SELECT` and the first `FROM`/`JOIN`); `_validate_columns` skips any bare ref whose name is
+in that set. Provably introduces no false-negative — a bare ref matching a `SELECT` alias *is* a
+valid alias reference; a genuinely hallucinated `ORDER BY` column that is NOT an alias still raises.
+Only the live `run()` path is affected (the frozen-SQL `run_stored_sql` refresh uses `_validate_sql`,
+not `_validate_columns`).
+
+**New tests** (`tests/test_validate_columns.py`):
+`test_b059_single_table_alias_in_order_by_not_rejected` (the repro must NOT raise) +
+`test_b059_single_table_hallucinated_order_by_still_rejected` (a real hallucination in the same
+position STILL raises). Suite: 19 passed, B-003a stays `xfail`.
+
+**Verification:** re-ran `python -m ai.eval.run_eval`. The B-059 question `customers_per_state` went
+from a baseline `1/3` pass with `validator_rejection×2` (the alias false-positive) to `3/3` pass with
+0 rejections; the controlled A/B on that question (5 runs, fix disabled vs enabled) isolates it as
+`validator_rejection` 1 → 0. The full-fixture aggregate `validator_rejection` is a *coincidental*
+5 → 5 — the composition flipped: the after-run's 5 are all genuine B-003 catches (qualified-ref
+hallucinations like `b.booking_date` / `c.segment`, plus a bare `customer_name` that truly doesn't
+exist), NOT the B-059 alias pattern; their count tracks model non-determinism. Full before/after in
+[backlog B-059](backlog.md#b-059--_validate_columns-false-positive-on-select-alias-reused-in-order-by--done).
+
+---
+
 ## NEXT
 
 Phase 5 — HTML Output

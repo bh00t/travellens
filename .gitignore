@@ -52,5 +52,8 @@ flink/
 consumer_*.log
 producer_*.log
 
+# Eval harness results (B-058 — regenerated on every `python -m ai.eval.run_eval`)
+ai/eval/results/
+
 # Quarantine sample dumps (if you mc cat locally)
 *.quarantine.json

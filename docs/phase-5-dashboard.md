@@ -469,6 +469,35 @@ Changes to the Phase 5 dashboard after the original acceptance sign-off. Earlies
 
 ---
 
+### B-061 — Explore pin-time warning for the B-060 cancellation-filter lint
+
+The AI layer's B-060 lint records `result["lint_cancellation_filter"]`
+(`"fired_corrected"` | `"fired_uncorrected"`, absent when it doesn't fire) when a `fact_bookings`
+query likely dropped the cancellation filter — but nothing surfaced it. B-061 shows it in the Explore
+preview so a suspect query is caught at **pin-review time**, complementing B-022 (which makes the SQL
+reviewable at pin) by flagging *when* that review matters.
+
+**Template-only — no `server.py` change.** `/api/query` already returns the full `result` dict
+verbatim (`"result": result`), so the flag already reaches the client as
+`data.result.lint_cancellation_filter`. The change lives entirely in
+`render/templates/explore.html`: a new `buildLintBanner()` returns a non-blocking caution for
+`fired_uncorrected` (amber, *"…may be missing the cancellation filter and couldn't be auto-corrected
+— review the SQL before pinning"*) or a subtle info note for `fired_corrected` (blue), each with a
+collapsed "Show SQL" (`escapeHtml`'d `result.sql`) so the review is actionable; the absent flag
+renders nothing (preview unchanged). `renderPreview()` injects it above the existing readability
+warning, and it persists across chart-type switches (rebuilt from `currentResult` each render).
+
+**WARN, never block** — the pin button stays enabled; the human decides. No schema change; the lint
+logic, `run_stored_sql`, and the system prompt are untouched.
+
+**Verification:** the real `buildLintBanner`/`escapeHtml` were extracted and exercised in node — 14/14
+deterministic checks (fired_uncorrected → amber + Show SQL + pin untouched; fired_corrected → blue
+info; absent/undefined/unknown → empty string; `escapeHtml` escapes `< > &`). `pytest tests/` stayed
+green (60 passed, 1 xfailed — no AI-layer change). Full design + acceptance:
+[backlog B-061](backlog.md#b-061--surface-the-b-060-cancellation-filter-lint-outcome-as-a-pin-time-warning-in-explore--done).
+
+---
+
 ## NEXT
 
 Phase 6 — Airflow DAGs

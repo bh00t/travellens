@@ -109,6 +109,10 @@ Current phase: **6** — Phase 7 shipped (monitor redesign done end-to-end). Rea
   `ai/main.py` (B-004, B-005), `ai/semantic_search.py` (B-006 dedup, B-004),
   `render/server.py` and `render/templates/dashboard.html` (B-022 cache, Show SQL,
   rename),
+  `render/templates/explore.html` (B-061 — Explore preview surfaces the B-060
+  cancellation-filter lint outcome as a non-blocking pin-time warning; the
+  `lint_cancellation_filter` flag already flows through `/api/query`'s `result`,
+  so B-061 is template-only — no `server.py` change),
   `scripts/stream_consumer.py` (B-031 resilience, B-032 heartbeat + per-type counts,
   B-038 bronze sink, B-039 silver sink, B-030 REVIEW accept done; B-031 next),
   `scripts/gold_lifecycle_updater.py` (B-040 done — gold lifecycle reconstruction),

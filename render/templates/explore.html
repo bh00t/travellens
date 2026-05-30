@@ -343,6 +343,73 @@
     }
   }
 
+  // ── escapeHtml ─────────────────────────────────────────────────────────────
+  // Minimal HTML-escape for text injected into innerHTML (e.g. the frozen SQL
+  // shown in the lint banner's "Show SQL" details). Prevents a stray <, >, or &
+  // in the generated SQL from breaking the markup.
+  function escapeHtml(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  // ── buildLintBanner (B-061) ─────────────────────────────────────────────────
+  /**
+   * Surface the B-060 cancellation-filter lint outcome in the Explore preview,
+   * so a likely-wrong fact_bookings query is caught at PIN-REVIEW time
+   * (complements B-022's pin-time SQL freeze). Reads currentResult, which carries
+   * result["lint_cancellation_filter"] from the AI layer:
+   *   "fired_uncorrected" — lint fired, the one corrective retry didn't take →
+   *                         the answer is SUSPECT. Clear amber caution.
+   *   "fired_corrected"   — lint fired, the retry added the filter → subtle info
+   *                         note (the query was auto-fixed; still worth a look).
+   *   absent              — lint didn't fire → no banner, preview unchanged.
+   *
+   * WARN, never block: this returns banner markup only — the pin button stays
+   * enabled. The human decides. Each banner includes a collapsed "Show SQL" so
+   * "review the SQL before pinning" is actually actionable (Explore has no other
+   * SQL view).
+   */
+  function buildLintBanner() {
+    const flag = currentResult && currentResult.lint_cancellation_filter;
+    if (flag !== 'fired_uncorrected' && flag !== 'fired_corrected') return '';
+
+    const sql = currentResult && currentResult.sql;
+    const sqlDetails = sql ? `
+      <details style="margin-top:8px;">
+        <summary style="cursor:pointer;font-size:12px;font-weight:600;">Show SQL</summary>
+        <pre style="margin:6px 0 0;padding:8px;background:var(--white);
+                    border:1px solid currentColor;border-radius:4px;font-size:11.5px;
+                    line-height:1.5;overflow:auto;white-space:pre-wrap;
+                    color:var(--gray-900);">${escapeHtml(sql)}</pre>
+      </details>` : '';
+
+    if (flag === 'fired_uncorrected') {
+      return `
+        <div style="padding:12px 1rem;background:#fffbeb;border-bottom:1px solid #fde68a;
+                    display:flex;gap:10px;align-items:flex-start;color:#92400e;">
+          <span style="font-size:16px;flex-shrink:0;">⚠</span>
+          <div style="font-size:13px;line-height:1.55;">
+            <strong>This query may be missing the cancellation filter and couldn't be
+            auto-corrected.</strong> It may be counting cancelled bookings — review the
+            SQL before pinning.
+            ${sqlDetails}
+          </div>
+        </div>`;
+    }
+    // fired_corrected — subtle info note
+    return `
+      <div style="padding:10px 1rem;background:#eff6ff;border-bottom:1px solid #bfdbfe;
+                  display:flex;gap:10px;align-items:flex-start;color:#1e40af;">
+        <span style="font-size:15px;flex-shrink:0;">ℹ</span>
+        <div style="font-size:12.5px;line-height:1.5;">
+          Auto-corrected a missing cancellation filter — review the SQL.
+          ${sqlDetails}
+        </div>
+      </div>`;
+  }
+
   // ── renderPreview ──────────────────────────────────────────────────────────
   /**
    * Build the preview card HTML (header + body + pin bar) and inject into
@@ -393,6 +460,10 @@
         </div>
       </div>` : '';
 
+    // B-061: cancellation-filter lint banner (correctness caution) leads the
+    // readability warning — a wrong-numbers caution outranks a chart-type hint.
+    const lintBanner = buildLintBanner();
+
     area.innerHTML = `
       <div class="preview-header">
         <div class="preview-title">${prompt.substring(0, 65)}${prompt.length > 65 ? '...' : ''}</div>
@@ -403,6 +474,7 @@
           </select>
         </div>
       </div>
+      ${lintBanner}
       ${warningBanner}
       <div class="preview-body" id="previewBody"></div>
       <div class="pin-bar">

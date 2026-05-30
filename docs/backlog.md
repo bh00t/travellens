@@ -55,6 +55,7 @@ carry context only.
 - B-056 — Router: operation detection + hybrid-aggregation path: `ai/query_router.py` classifies on topic only (no operation primitive), so review-analytics queries route to semantic which has no aggregation ("top 5 hotels with most cleanliness complaints" returns 5★ "high cleanliness standards" reviews). Add pattern-based operation detection + new `ai/hybrid_aggregator.py`; `query_router.py` logged frozen-file exception.
 - ~~B-059 — `_validate_columns` false-positive on SELECT-list alias reused in ORDER BY (single-table query): an alias like `COUNT(*) AS customer_count … ORDER BY customer_count` is rejected as a hallucinated bare column → valid model SQL becomes a both-attempts error. Surfaced by the B-058 eval harness (`customers_per_state` runs 1 & 3). B-003a-adjacent (false-POSITIVE). Fix in `ai/text_to_sql._validate_columns` — treat SELECT-list output aliases as known identifiers when validating ORDER BY on single-table queries~~ ✓ Done
 - ~~B-060 — post-generation cancellation-filter lint + corrective retry (mitigates L-013): `run()`'s retry fires only on an ERROR — clean-but-wrong SQL ships unchallenged. Adds `lint_cancellation_filter_missing(sql, user_query)` (mirrors `run_eval`'s detection) — on a clean first execute, if a `fact_bookings` aggregate dropped `WHERE NOT is_cancelled` (not a rate, no cancellation intent, no `is_cancelled` anywhere — B-048 guard), drive ONE corrective retry naming the general schema rule. Falls back to the original on retry-error/still-firing (never degrades). Lint-only this cut; L-011/DISTINCT lint deferred~~ ✓ Done
+- ~~B-061 — surface the B-060 cancellation-filter lint outcome as a pin-time warning in Explore: the lint records `result["lint_cancellation_filter"]` but nothing shows it. `fired_uncorrected` (lint fired, auto-fix didn't take → answer suspect) now shows a clear, non-blocking caution in the Explore preview BEFORE pinning (complements B-022 pin review); `fired_corrected` shows a subtle info note. WARN, never block — pin stays enabled. Template-only (flag already flows through `/api/query`); no schema change~~ ✓ Done
 - ~~B-058 — Text-to-SQL accuracy eval harness (`ai/eval/`): on-demand measurement tool (NOT pytest) that runs a fixed question fixture through `ai.main.answer()`, grades by EXECUTION MATCH vs an owner-verified reference query (N runs/question, default 3), and flags L-011 (missing DISTINCT) + L-013 (missing cancellation filter) independently of exec-match. Cap-aware + probe-aware honest denominator. Fixture is TEST DATA — never fed back into the prompt~~ ✓ Done
 
 ### OPEN — limitations (L-)
@@ -98,6 +99,7 @@ B-054 (blueprint AI-sell — two namespaced animations + business-first lead par
 B-058 (Text-to-SQL accuracy eval harness `ai/eval/` — on-demand execution-match measurement tool, N runs/question, L-011/L-013 flags independent of exec-match, cap/probe-aware denominator; fixture is test data, never prompt content),
 B-059 (`_validate_columns` false-positive on SELECT alias reused in ORDER BY),
 B-060 (post-generation cancellation-filter lint + corrective retry — meanwhile mitigation for L-013),
+B-061 (surface the B-060 lint outcome as a non-blocking pin-time warning in Explore),
 plus the unnumbered Phase 1–5 foundation items.
 
 ### ABANDONED
@@ -1423,6 +1425,77 @@ corroboration):**
 `tests/test_lint_cancellation_filter.py` (new), `docs/backlog.md` (this entry + L-013 update),
 `docs/phase-4-ai-layer.md` (BUILD HISTORY), `CLAUDE.md` (hardening line). `datamodel.md` untouched;
 `ai/prompts/text_to_sql_system.txt` untouched (general rule, not a few-shot); no frozen file touched.
+
+---
+
+### B-061 — surface the B-060 cancellation-filter lint outcome as a pin-time warning in Explore · DONE
+
+> **Trace.** Phase(s): [Phase 5](phase-5-dashboard.md) (dashboard) · datamodel: none · data: none.
+
+**Problem:** [B-060](#b-060--post-generation-cancellation-filter-lint--corrective-retry-mitigates-l-013--done)'s
+lint flags a `fact_bookings` query that's likely missing the cancellation filter and records the
+outcome on `result["lint_cancellation_filter"]` (`"fired_corrected"` | `"fired_uncorrected"`, absent
+when it doesn't fire) — but nothing showed it to the user. A `fired_uncorrected` query (lint fired,
+the one corrective retry didn't take → the answer is suspect) could be pinned with no signal that the
+numbers may be wrong. This complements [B-022](#completed) (pin-time SQL freeze): B-022 makes the SQL
+reviewable at pin time; B-061 flags WHEN that review matters most.
+
+**What shipped — template-only (`render/templates/explore.html`):**
+
+- **No `server.py` change needed.** `/api/query` already returns the full `result` dict verbatim
+  (`"result": result`), so `lint_cancellation_filter` already reaches the client as
+  `data.result.lint_cancellation_filter`. `answer()` returns `text_to_sql.run()` unchanged for the
+  SQL path, so the flag flows through untouched. The whole change is in the Explore preview render.
+- `buildLintBanner()` (new JS) reads the global `currentResult` and returns banner markup:
+  - `"fired_uncorrected"` → a clear amber caution (`#fffbeb` / `#fde68a` / `#92400e`, matching the
+    existing readability-warning palette): *"This query may be missing the cancellation filter and
+    couldn't be auto-corrected. It may be counting cancelled bookings — review the SQL before
+    pinning."*
+  - `"fired_corrected"` → a subtle blue info note (`#eff6ff` / `#bfdbfe` / `#1e40af`):
+    *"Auto-corrected a missing cancellation filter — review the SQL."*
+  - absent → empty string → **preview behaves exactly as before**.
+  - Each banner carries a collapsed `<details>` "Show SQL" (from `currentResult.sql`, HTML-escaped
+    via a new `escapeHtml` helper) so *"review the SQL"* is actionable — the Explore preview has no
+    other SQL view.
+- `renderPreview()` injects `${lintBanner}` between the preview header and the existing readability
+  `${warningBanner}` — the correctness caution leads the chart-type hint. Because the banner is
+  rebuilt from `currentResult` on every `renderPreview` call, it **persists across chart-type
+  switches** (`switchType` / `dismissWarning` / `overrideType` all re-render) — correct, since the
+  lint is about the SQL/data, not the widget type.
+- **WARN, never block.** The banner emits no controls that touch the pin flow; `#pinBtn` stays
+  enabled. The human decides.
+
+**Out of scope (named):** persisting the flag onto the pinned widget / dashboard (needs a
+`dashboard_widgets` schema column — a separate item). B-061 touches only the Explore preview path.
+The lint logic, `run_stored_sql`, and `ai/prompts/text_to_sql_system.txt` are untouched.
+
+**Acceptance / quality-gate** (the dev cannot take browser screenshots — the owner does; the dev
+verifies the render logic deterministically + reports a repro query):
+
+| TEST | EXPECTED | ACTUAL | PASS/FAIL |
+|---|---|---|---|
+| Lint flag reaches the Explore client end-to-end | `data.result.lint_cancellation_filter` present on a fired query | live `/api/query`: `fired_corrected` (filter dropped → retry added it) + `fired_uncorrected` (both dropped) + `None` (filter present) all observed | PASS |
+| `buildLintBanner` emits the warning ONLY when it should (deterministic, real fns in node) | uncorrected→amber+ShowSQL+pin-untouched; corrected→blue info; absent/undefined/unknown→`''` | 14/14 node assertions pass | PASS |
+| WARN never blocks | banner emits no pin-button / disable markup | asserted: output has no `pinBtn` / `disabled` | PASS |
+| `escapeHtml` keeps SQL from breaking markup | `< > &` escaped | `a<b>&c` → `a&lt;b&gt;&amp;c` | PASS |
+| `pytest tests/ -v` unaffected (template-only) | all green, B-003a xfail | 60 passed, 1 xfailed | PASS |
+| No schema change; `run_stored_sql` + lint logic untouched; no `.py` changed | template-only diff | `git status`: only `explore.html` (+ docs) modified | PASS |
+
+**Repro for the owner's screenshots** (run from the Explore page with the stack + Ollama up):
+- **`fired_uncorrected` (amber warning — the must-have):** `total revenue by tourism zone`. Observed
+  this session — final SQL `SELECT l.tourism_zone, ROUND(SUM(b.revenue_inr)/1e7,2) … GROUP BY
+  l.tourism_zone` with **no `is_cancelled` filter** (genuinely suspect). **Probabilistic** — it is a
+  two-failure event (both the first SQL AND the corrective retry must drop the filter), so it landed
+  ~1 in 2 tries; other tries roll `fired_corrected` or `None`. Re-run a couple of times if the first
+  attempt shows the blue note or no banner.
+- **No-warning (normal):** `top 5 cities by revenue` — the model reliably includes `WHERE NOT
+  b.is_cancelled` first try → flag absent → no banner.
+- **`fired_corrected` (blue info — optional):** `total bookings by customer segment` — landed
+  `fired_corrected` on every attempt this session (the retry reliably adds the filter).
+
+**Files:** `render/templates/explore.html` (banner JS + injection), `docs/backlog.md` (this entry),
+`docs/phase-5-dashboard.md` (BUILD HISTORY), `CLAUDE.md` (render hardening line). `datamodel.md`
+untouched; no schema/migration; no `server.py` change; no frozen file touched.
 
 ---
 

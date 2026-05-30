@@ -50,6 +50,7 @@ Latency expectation:
 """
 
 import os
+import re
 import logging
 import requests
 import sqlparse
@@ -469,26 +470,49 @@ def _collect_select_aliases(stmt) -> set[str]:
 
 # ── Helper functions ──────────────────────────────────────────────────────────
 
-def _call_ollama(user_query: str, error_context: str = None) -> str:
+def _call_ollama(user_query: str, error_context: str = None,
+                 lint_retry_sql: str = None) -> str:
     """
     Send the user query to Ollama and return the raw text response.
 
     Args:
         user_query:     The original natural language question.
-        error_context:  If provided, this is a retry call. The error from the
-                        previous execution attempt is included in the prompt
-                        so Ollama knows exactly what went wrong and can fix it.
+        error_context:  If provided, this is an ERROR retry call (B-001/B-003).
+                        The Postgres/validation error from the previous attempt
+                        is included so Ollama knows exactly what went wrong.
+        lint_retry_sql: If provided, this is a B-060 CANCELLATION-LINT retry. The
+                        previous SQL ran cleanly but omitted the cancellation
+                        filter; this carries that SQL so Ollama can regenerate it
+                        with the exclusion. Mutually exclusive with error_context
+                        in practice (the two retry paths never stack).
 
-    Why error_context changes the prompt on retry:
+    Why a context changes the prompt on retry:
         On first call: Ollama sees just the question and generates SQL.
-        On retry: Ollama sees the question + the SQL it generated + the exact
-        Postgres error. This is much more effective than re-sending the same
-        question — Ollama can see "column occupancy_rate does not exist" and
-        knows to use a different column name.
+        On an error retry: Ollama sees the question + the SQL it generated + the
+        exact Postgres error — much more effective than re-sending the question.
+        On a lint retry: Ollama sees the question + its clean-but-wrong SQL + the
+        general schema rule it violated (NOT a per-query example).
 
     Raises RuntimeError if Ollama is unreachable.
     """
-    if error_context:
+    if lint_retry_sql:
+        # B-060 corrective prompt — the SQL executed fine but is semantically
+        # wrong (dropped the cancellation filter). Name the GENERAL schema rule,
+        # never a per-question example, and phrase the exclusion ALIAS-AGNOSTICALLY
+        # (the model may not have aliased fact_bookings as `b`).
+        prompt = (
+            f"Your previous SQL ran successfully but is INCORRECT — it omitted "
+            f"the cancellation filter.\n\n"
+            f"Previous SQL:\n{lint_retry_sql}\n\n"
+            f"Original question: {user_query}\n\n"
+            f"Schema rule: queries over fact_bookings must EXCLUDE cancelled rows "
+            f"unless the query computes a rate/ratio/percentage or is explicitly "
+            f"about cancellations. This question is neither — exclude the cancelled "
+            f"rows from fact_bookings (filter out the rows where is_cancelled is "
+            f"true, using whatever alias the query gives fact_bookings).\n\n"
+            f"Return only the corrected SQL. No explanation. No markdown. No backticks."
+        )
+    elif error_context:
         # Retry prompt — include the failed SQL and the error so Ollama
         # can self-correct. Be explicit: tell it what failed and what to do.
         prompt = (
@@ -596,6 +620,89 @@ def _execute(sql: str) -> tuple[list[str], list[tuple]]:
         conn.close()
 
 
+# ── B-060: post-execution cancellation-filter lint ────────────────────────────
+# run()'s retry fires only on an ERROR. It does nothing for SQL that runs cleanly
+# but is wrong. The most frequent such case (proven by the B-058 eval baseline):
+# a fact_bookings aggregate that silently drops the cancellation exclusion —
+# valid SQL, wrong numbers, no error (L-013). This lint detects THAT one case and
+# drives ONE corrective retry.
+#
+# Detection mirrors ai/eval/run_eval.py's flag_cancellation_filter_missing so the
+# harness and this runtime lint agree on what "missing filter" means. Pure regex
+# (same as run_eval — these are surface-pattern checks; sqlparse buys nothing).
+#
+# The lint asks the model to REGENERATE with the filter — it never edits the SQL
+# string itself. Injecting a predicate into arbitrary SQL (GROUP BY, subqueries,
+# existing WHERE, aliases) is fragile; regeneration is robust.
+
+def _lint_touches_fact_bookings(sql: str) -> bool:
+    return re.search(r"\bfact_bookings\b", sql, re.IGNORECASE) is not None
+
+
+def _lint_is_rate_query(sql: str) -> bool:
+    """
+    A rate/ratio query legitimately keeps cancelled rows in the denominator, so
+    the cancellation filter must NOT apply. Defined NARROWLY (verbatim from
+    run_eval._is_rate_query) so a `/1e7` crore unit-conversion or a bare division
+    is NOT mistaken for a rate — that would suppress the exact L-013 revenue cases
+    this lint exists to catch.
+
+    Matches only:
+      - FILTER (WHERE ... is_cancelled)   — the canonical rate-numerator form
+      - "100.0 *" / "100 *"               — percentage scaling
+      - "/ NULLIF(COUNT("                 — ratio over a row count
+      - a SELECT alias named rate|ratio|share|percent|pct
+    """
+    if re.search(r"FILTER\s*\(\s*WHERE[^)]*is_cancelled", sql, re.IGNORECASE):
+        return True
+    if re.search(r"\b100(?:\.0)?\s*\*", sql):
+        return True
+    if re.search(r"/\s*NULLIF\s*\(\s*COUNT", sql, re.IGNORECASE):
+        return True
+    if re.search(r"\bAS\s+\w*(?:rate|ratio|share|percent|pct)\w*", sql, re.IGNORECASE):
+        return True
+    return False
+
+
+def lint_cancellation_filter_missing(sql: str, user_query: str) -> bool:
+    """
+    B-060: fire (True) iff a fact_bookings query silently drops the cancellation
+    exclusion and a corrective retry is warranted. Fires only when ALL hold:
+
+      1. fact_bookings appears in FROM/JOIN.
+      2. NOT a rate/ratio query (cancelled rows belong in a rate's denominator).
+      3. `is_cancelled` does NOT appear ANYWHERE in the SQL.
+      4. The user's question is NOT about cancellations — if they asked about
+         cancellations, excluding cancelled rows would be WRONG, so don't fire.
+
+    Why condition 3 is a bare presence check (not "has an exclusion predicate"):
+        The corrective retry injects `WHERE NOT <alias>.is_cancelled`. If the SQL
+        already references is_cancelled in ANY form the rate check (cond. 2) might
+        miss — e.g. `SUM(CASE WHEN b.is_cancelled THEN 1 ELSE 0 END)` with no
+        rate-style alias and no "cancel" in the question — firing would STACK a
+        second predicate and zero the count out. That is exactly the B-048 bug.
+        A bare presence check is a strict SAFETY SUPERSET: every genuine L-013
+        case has NO is_cancelled at all (the filter was dropped entirely), so no
+        real fire is lost; any query already touching the flag is left alone.
+
+    Accepted scope trade-off: a query that wrote the filter in the WRONG direction
+    (e.g. `WHERE b.is_cancelled` for a "total revenue" question) is also left
+    alone. That is a different, rarer error than "dropped the filter entirely",
+    which is what this lint targets — out of scope by design.
+    """
+    if not _lint_touches_fact_bookings(sql):
+        return False
+    if _lint_is_rate_query(sql):
+        return False
+    # Condition 3 — any reference to is_cancelled suppresses the lint (B-048 guard).
+    if re.search(r"is_cancelled", sql, re.IGNORECASE):
+        return False
+    # Condition 4 — "cancel" is the common substring of cancel/cancelled/cancellation.
+    if re.search(r"cancel", user_query or "", re.IGNORECASE):
+        return False
+    return True
+
+
 # ── Main entry point ──────────────────────────────────────────────────────────
 
 def run(user_query: str) -> dict:
@@ -625,6 +732,15 @@ def run(user_query: str) -> dict:
 
     The "retried" flag is useful for debugging and for the dashboard to show
     a subtle indicator when a query needed self-correction.
+
+    B-060: when the post-execution cancellation-filter lint fires on a clean
+    first execute, the result also carries:
+        "lint_cancellation_filter": "fired_corrected" | "fired_uncorrected"
+    "fired_corrected"   — the corrective retry produced clean SQL that no longer
+                          drops the filter; result reflects the retry.
+    "fired_uncorrected" — the retry errored or still dropped the filter; result
+                          falls back to the original successful query (never
+                          degraded). The key is ABSENT when the lint does not fire.
     """
     result = {
         "path":    "sql",
@@ -670,6 +786,43 @@ def run(user_query: str) -> dict:
         result["columns"] = columns
         result["rows"]    = rows
         log.info("Query returned %d rows", len(rows))
+
+        # ── B-060: post-execution cancellation-filter lint + one retry ────────
+        # Runs ONLY on a CLEAN first execute (the L-013 surface: valid SQL, wrong
+        # numbers, no error). Bounded — at most one error-retry OR one lint-retry,
+        # never both stacked. Never degrades a working query: the original
+        # successful result is retained unless the retry is strictly clean AND no
+        # longer fires the lint.
+        if lint_cancellation_filter_missing(sql, user_query):
+            log.info("B-060: cancellation-filter lint fired — attempting one "
+                     "corrective retry. Original SQL: %s", sql)
+            result["retried"] = True
+            result["lint_cancellation_filter"] = "fired_uncorrected"  # until proven corrected
+            try:
+                retry_raw = _call_ollama(user_query, lint_retry_sql=sql)
+                log.info("B-060 lint-retry Ollama output: %s", retry_raw)
+
+                retry_sql = _validate_sql(retry_raw)
+                _validate_columns(retry_sql)
+                retry_columns, retry_rows = _execute(retry_sql)
+
+                if not lint_cancellation_filter_missing(retry_sql, user_query):
+                    # Retry is clean AND the lint no longer fires — adopt it.
+                    result["sql"]     = retry_sql
+                    result["columns"] = retry_columns
+                    result["rows"]    = retry_rows
+                    result["lint_cancellation_filter"] = "fired_corrected"
+                    log.info("B-060: lint-retry corrected the query (%d rows)",
+                             len(retry_rows))
+                else:
+                    # Retry STILL drops the filter — keep the original result.
+                    log.warning("B-060: lint-retry still missing the filter — "
+                                "keeping the original successful result.")
+            except Exception as lint_retry_error:
+                # Retry errored — keep the original successful result; never
+                # degrade a query that already ran.
+                log.warning("B-060: lint-retry failed (%s) — keeping the "
+                            "original successful result.", lint_retry_error)
 
     except Exception as first_error:
         # First attempt failed (either column validation or execution) — log

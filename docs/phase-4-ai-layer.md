@@ -605,6 +605,47 @@ exist), NOT the B-059 alias pattern; their count tracks model non-determinism. F
 
 ---
 
+### B-060 — post-generation cancellation-filter lint + corrective retry (mitigates L-013)
+
+`run()`'s retry (B-001/B-003) fires only on an **exception** — it does nothing for SQL that executes
+cleanly but is wrong. The B-058 eval baseline proved the most frequent such case: a bare grouped
+aggregate over `fact_bookings` that silently drops `WHERE NOT is_cancelled` (`cancellation_filter_
+missing` fired repeatedly) — valid SQL, wrong numbers, no error. That is **L-013**, and the live
+Explore path (which runs unverified model SQL on every question) has no safeguard for it — B-022's
+pin-time freeze only protects the dashboard read path.
+
+**What it does** (`ai/text_to_sql.py`, no prompt-file edit, no per-query example): a deterministic
+post-execution lint `lint_cancellation_filter_missing(sql, user_query)` that **mirrors the eval
+harness's `flag_cancellation_filter_missing`** so the two agree on what "missing filter" means. On a
+**clean first execute**, if a `fact_bookings` aggregate dropped the cancellation exclusion — not a
+rate query (a `/1e7` crore conversion is a unit scale, NOT a rate, so it still catches), no
+`is_cancelled` anywhere in the SQL, and the question isn't about cancellations — `run()` drives **one
+corrective retry** that names the *general* schema rule alias-agnostically (regenerate excluding
+cancelled rows from `fact_bookings`). The retry is adopted only if it is clean AND the lint no longer
+fires; otherwise it **falls back to the original successful result — never degrading a working
+query**. Outcome is recorded on `result["lint_cancellation_filter"]`. Bounded: at most one
+error-retry OR one lint-retry, never stacked; `run_stored_sql` is untouched.
+
+**Why condition 3 is a bare `is_cancelled`-presence check (B-048 guard):** the corrective retry
+injects an exclusion predicate. If the SQL already expressed a cancellation measure in a form the
+rate check misses — e.g. `SUM(CASE WHEN b.is_cancelled THEN 1 ELSE 0 END)` with no rate alias and no
+"cancel" in the question — firing would **stack** a second predicate and zero the count out (the
+B-048 bug). The bare-presence check is a strict safety superset: every genuine L-013 case has NO
+`is_cancelled` at all, so no real fire is lost.
+
+**Scope:** L-013 / cancellation-filter only — the L-011/`DISTINCT` lint is a deferred fast-follow
+(the harness hasn't shown `distinct_missing` firing, and "should this be DISTINCT?" is
+false-positive-prone).
+
+**New tests** (`tests/test_lint_cancellation_filter.py` — direct-call, no Ollama, no DB): 3 fire
+cases (bare grouped COUNT; the `/1e7` crore trap; single-join AVG), 4 don't-fire cases (rate;
+already-has-filter; cancellation-intent; non-`fact_bookings`), and the B-048-guard
+`test_no_fire_case_when_is_cancelled_no_rate_alias`. 8/8 pass; full suite 60 passed, 1 xfailed
+(B-003a stays `xfail`). Full body + eval re-run:
+[backlog B-060](backlog.md#b-060--post-generation-cancellation-filter-lint--corrective-retry-mitigates-l-013--done).
+
+---
+
 ## NEXT
 
 Phase 5 — HTML Output

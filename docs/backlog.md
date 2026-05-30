@@ -54,6 +54,7 @@ carry context only.
 - B-055 — Realistic customer distribution in bookings: fact_bookings samples customer_id uniformly from a 100K dim_customer pool → ≈10 bookings/customer avg → every customer is structurally a "repeat" (widget id=13 reads ~40%+ vs real-hospitality 20-25%). Regenerate with weighted long-tail sampler; same distribution wired into the live producer.
 - B-056 — Router: operation detection + hybrid-aggregation path: `ai/query_router.py` classifies on topic only (no operation primitive), so review-analytics queries route to semantic which has no aggregation ("top 5 hotels with most cleanliness complaints" returns 5★ "high cleanliness standards" reviews). Add pattern-based operation detection + new `ai/hybrid_aggregator.py`; `query_router.py` logged frozen-file exception.
 - ~~B-059 — `_validate_columns` false-positive on SELECT-list alias reused in ORDER BY (single-table query): an alias like `COUNT(*) AS customer_count … ORDER BY customer_count` is rejected as a hallucinated bare column → valid model SQL becomes a both-attempts error. Surfaced by the B-058 eval harness (`customers_per_state` runs 1 & 3). B-003a-adjacent (false-POSITIVE). Fix in `ai/text_to_sql._validate_columns` — treat SELECT-list output aliases as known identifiers when validating ORDER BY on single-table queries~~ ✓ Done
+- ~~B-060 — post-generation cancellation-filter lint + corrective retry (mitigates L-013): `run()`'s retry fires only on an ERROR — clean-but-wrong SQL ships unchallenged. Adds `lint_cancellation_filter_missing(sql, user_query)` (mirrors `run_eval`'s detection) — on a clean first execute, if a `fact_bookings` aggregate dropped `WHERE NOT is_cancelled` (not a rate, no cancellation intent, no `is_cancelled` anywhere — B-048 guard), drive ONE corrective retry naming the general schema rule. Falls back to the original on retry-error/still-firing (never degrades). Lint-only this cut; L-011/DISTINCT lint deferred~~ ✓ Done
 - ~~B-058 — Text-to-SQL accuracy eval harness (`ai/eval/`): on-demand measurement tool (NOT pytest) that runs a fixed question fixture through `ai.main.answer()`, grades by EXECUTION MATCH vs an owner-verified reference query (N runs/question, default 3), and flags L-011 (missing DISTINCT) + L-013 (missing cancellation filter) independently of exec-match. Cap-aware + probe-aware honest denominator. Fixture is TEST DATA — never fed back into the prompt~~ ✓ Done
 
 ### OPEN — limitations (L-)
@@ -95,6 +96,8 @@ B-052 (README portfolio polish — animated dual-theme SVG hero replaces ASCII; 
 B-053 (dashboard curation — 11 portfolio widgets pinned across simple / grouped / complex / live / hybrid tiers; prior 13 exploratory widgets cleared first; 1 of 12 widgets skipped on date-paradigm bleed),
 B-054 (blueprint AI-sell — two namespaced animations + business-first lead paragraphs for §07/§08; metric strip reconciled to live DB; "Life before vs. after TravelLens" comparison block removed from §01; README's "14 tables" mention flagged for follow-up),
 B-058 (Text-to-SQL accuracy eval harness `ai/eval/` — on-demand execution-match measurement tool, N runs/question, L-011/L-013 flags independent of exec-match, cap/probe-aware denominator; fixture is test data, never prompt content),
+B-059 (`_validate_columns` false-positive on SELECT alias reused in ORDER BY),
+B-060 (post-generation cancellation-filter lint + corrective retry — meanwhile mitigation for L-013),
 plus the unnumbered Phase 1–5 foundation items.
 
 ### ABANDONED
@@ -1309,6 +1312,120 @@ tracked, `xfail` in the suite); any change to the B-001 retry loop.
 
 ---
 
+### B-060 — post-generation cancellation-filter lint + corrective retry (mitigates L-013) · DONE
+
+> **Trace.** Phase(s): [Phase 4](phase-4-ai-layer.md) (AI layer) · datamodel: none · data: none.
+
+**Problem:** `run()`'s retry (B-001/B-003) fires **only on an exception** — it does nothing for SQL
+that executes cleanly but is wrong. The B-058 eval baseline proved the most frequent such case: a
+bare grouped aggregate over `fact_bookings` that silently drops `WHERE NOT is_cancelled`
+(`cancellation_filter_missing` fired repeatedly) — valid SQL, wrong numbers, no error. This is
+**L-013**, and the read-path safeguard (B-022 pin-time freeze) doesn't help the live Explore path,
+which runs unverified model SQL on every question.
+
+**What shipped (`ai/text_to_sql.py` only — no prompt-file edit, no per-query few-shot):**
+
+- `lint_cancellation_filter_missing(sql, user_query) -> bool` — a deterministic post-execution lint
+  that **mirrors `ai/eval/run_eval.py`'s `flag_cancellation_filter_missing`** so the harness and the
+  runtime lint agree on what "missing filter" means. Pure regex (same as `run_eval`). Fires only when
+  ALL hold: (1) `fact_bookings` in FROM/JOIN; (2) NOT a rate/ratio query (`_lint_is_rate_query`,
+  verbatim from `run_eval` — `FILTER(WHERE…is_cancelled)`, `100.0 *`, `/ NULLIF(COUNT`, or a
+  rate/ratio/share/percent/pct alias; a `/1e7` crore conversion is a unit scale, NOT a rate);
+  (3) `is_cancelled` appears NOWHERE in the SQL; (4) the user's question is NOT about cancellations
+  (no `cancel`).
+- **Condition 3 is a bare-presence check (B-048 guard — owner must-fix on top of STEP A).** The
+  corrective retry injects an exclusion predicate; if the SQL already references `is_cancelled` in a
+  form the rate check misses — e.g. `SUM(CASE WHEN b.is_cancelled THEN 1 ELSE 0 END)` with no
+  rate-style alias and no "cancel" in the question — firing would **stack** a second predicate and
+  zero the count out (the B-048 bug). A bare presence check is a strict safety superset: every
+  genuine L-013 case has NO `is_cancelled` at all (the filter was dropped entirely), so no real fire
+  is lost; any query already touching the flag is left alone. Accepted trade-off: a query that wrote
+  the filter in the WRONG direction is also left alone — rarer, different error, out of scope.
+- `run()` hook — runs the lint **only on a CLEAN first execute** (the L-013 surface). On fire: ONE
+  corrective retry via `_call_ollama(user_query, lint_retry_sql=sql)` (new mode — an alias-agnostic
+  prompt naming the *general* schema rule, never a per-question example), then re-run
+  `_validate_sql` + `_validate_columns` + `_execute`. Adopt the retry only if it is clean AND the
+  lint no longer fires; otherwise **fall back to the original successful result — never degrade a
+  working query**. Outcome recorded on `result["lint_cancellation_filter"]` =
+  `"fired_corrected" | "fired_uncorrected"` (key absent when the lint doesn't fire).
+- **Bounded:** at most one error-retry OR one lint-retry, never stacked. The lint never runs on the
+  error-retry branch. `run_stored_sql` (frozen-SQL refresh) is **untouched** — the lint lives only in
+  the live `run()` path.
+
+**Scope (this cut):** L-013 / cancellation-filter only. The L-011/`DISTINCT` lint is deferred —
+the eval has not shown `distinct_missing` firing and "should this be DISTINCT?" is false-positive-
+prone; it's a fast-follow once the harness's `distinct_missing` flag shows it's real and frequent.
+
+**Unit tests (`tests/test_lint_cancellation_filter.py` — direct-call, NO Ollama, NO DB):** 3 fire
+cases (bare grouped COUNT; the `/1e7` crore trap; single-join AVG), 4 don't-fire cases (rate query;
+already-has-filter; cancellation-intent question; non-`fact_bookings`), and the **B-048-guard test**
+`test_no_fire_case_when_is_cancelled_no_rate_alias` (`SUM(CASE WHEN b.is_cancelled …)` with no rate
+alias / no "cancel" → must NOT fire). 8/8 pass.
+
+**Quality gate:**
+
+| TEST | EXPECTED | ACTUAL | PASS/FAIL |
+|---|---|---|---|
+| Lint unit tests (fire/don't-fire/B-048-guard) | 8/8 pass | 8 passed in 0.34s | PASS |
+| Full `pytest tests/` unaffected | all green, B-003a still xfail | 60 passed, 1 xfailed | PASS |
+| `ast.parse` on edited module | parse OK | OK | PASS |
+| `run_stored_sql` untouched (blast radius) | frozen path has no lint | lint only in `run()`; `run_stored_sql` unchanged | PASS |
+| Bounded retry | ≤1 error-retry OR ≤1 lint-retry | lint runs only on clean first execute; error branch has no lint | PASS |
+| Never degrades a working query | original kept unless retry clean-and-corrected | fallback on retry-error/still-firing | PASS (code-verified) |
+| Eval `cancellation_filter_missing` (direction) | documented baseline 7–8 → lower | **3** this run | PASS (corroboration; see caveat) |
+
+**Eval re-run (`python -m ai.eval.run_eval`, single clean run, `eval_20260530T061139Z.txt`):**
+
+```
+TEST                               PATH  RUNS PASS/TOTAL  EXEC-MATCH  FLAGS
+top5_cities_by_revenue             sql      3        2/3       66.7%  cancellation_filter_missingx1
+cancellation_rate_by_segment       sql      3        2/3       66.7%  -
+adr_5star_goa                      sql      3        0/3        0.0%  -
+revenue_by_month_2025              sql      3        0/3         n/a  err:otherx1, err:validator_rejectionx2
+top10_cities_by_hotel_count        sql      3        3/3      100.0%  -
+customers_per_state                sql      3        3/3      100.0%  -
+hotels_opened_per_year             sql      3        3/3      100.0%  -
+list_5_customers_named_r           sql      3        0/3       probe  err:validator_rejectionx1
+bookings_by_segment                sql      3        0/3        0.0%  cancellation_filter_missingx1
+revenue_by_star_category           sql      3        3/3      100.0%  -
+avg_nights_by_segment              sql      3        0/3        0.0%  cancellation_filter_missingx1, err:validator_rejectionx2
+```
+
+| Metric | Documented baseline (B-058 re-run) | This run |
+|---|---|---|
+| `cancellation_filter_missing` (L-013) fired | 8 (brief cites 7) | **3** |
+| headline execution accuracy | 33.3% (11/33) | 48.5% (16/33) |
+| among scored runs | 45.8% (11/24) | 64.0% (16/25) |
+| `distinct_missing` (L-011) | 0 | 0 |
+| error rate | 24.2% (8/33) | 18.2% (6/33) — `validator_rejection` 5 · `other` 1 |
+
+**Honest reading (the aggregate is NOISY — the 8 unit tests are the proof, the harness is
+corroboration):**
+
+- The L-013 flag count dropped **8 → 3**, consistent with the lint working: the eval flags the
+  FINAL (post-lint-retry) SQL, so a query the corrective retry fixes no longer carries the flag.
+  Direction is right, but a single Ollama run is non-deterministic — I do NOT claim the full drop is
+  attributable to B-060 alone, and the residual 3 are real (cases where the retry errored or
+  re-dropped the filter → `fired_uncorrected` → fell back to the original, which still lacks it; a
+  bounded-one-retry mitigation, not a cure).
+- Several previously-failing questions improved exec-match this run (`top5_cities_by_revenue`
+  0/3→2/3; `revenue_by_star_category` 1/3→3/3) — improvement is real but partly run-to-run variance,
+  not solely B-060.
+- **B-060 introduced no new error class.** The 5 `validator_rejection` + 1 `other` are pre-existing
+  model failures on the hard questions: `revenue_by_month_2025` date-paradigm bleed (×2) and
+  `avg_nights_by_segment` first-attempt column hallucinations (`home_segment`) that go through the
+  existing B-001/B-003 **error-retry** path (the lint never runs when the first execute fails). The
+  B-060 lint-retry catches its own exceptions and falls back to the original successful result, so it
+  cannot surface as a harness error — confirmed by the logic and consistent with the error subtypes
+  here all matching known pre-B-060 failure modes.
+
+**Files:** `ai/text_to_sql.py` (lint fns + `_call_ollama` lint mode + `run()` hook + docstring),
+`tests/test_lint_cancellation_filter.py` (new), `docs/backlog.md` (this entry + L-013 update),
+`docs/phase-4-ai-layer.md` (BUILD HISTORY), `CLAUDE.md` (hardening line). `datamodel.md` untouched;
+`ai/prompts/text_to_sql_system.txt` untouched (general rule, not a few-shot); no frozen file touched.
+
+---
+
 ### B-031 — Consumer resilience fix (resolves L-016)
 **Priority:** High — fixes the pipeline's core "nothing ever flushes" failure.
 **Changes (all in `scripts/stream_consumer.py`, heavily commented, defaults unchanged):**
@@ -2030,7 +2147,7 @@ The old design weights stay documented in `docs/phase-2-streaming.md` as histori
 | L-010 | ~~7B model miscounts dimension entities — joins fact_bookings and counts booking rows instead of querying the dimension table directly~~ — **RESOLVED.** Migration 006 added `hotel_master.opened_year` and the system prompt gained the ENTITY COUNT RULE plus the COLUMN LOCATION block scoping `is_cancelled` to fact_bookings. Verified stable across the protected suite: "list hotels count created per year" uses `hotel_master.opened_year` (sums to ~2000); "how many hotels per city" / "how many customers per state" / "list 5 customers" all query their dimension tables directly with NO `is_cancelled` filter (Tests 1, 2, 3, 10 each pass on the reverted single-bullet prompt). The fact-aggregation cancellation portion — bare `<aggregate> by <dimension>` queries occasionally dropping `WHERE NOT b.is_cancelled` — is split out as **L-013**. | Phase 4 | RESOLVED (migration 006 + prompt updates) |
 | L-011 | 7B model omits DISTINCT on plain entity-list queries — "5 customers named R" returns the same person repeated (one row per booking). Adding "unique" to the query fixes it. Capability limit, not a prompt bug; further prompt tuning regresses other query types. | Phase 4 | B-017 (bigger model) |
 | L-012 | Sentiment-topic conflation in semantic review search. Embeddings match TOPIC not POLARITY — "cleanliness complaints" returns cleanliness praise and complaints alike, since both are about cleanliness. A `reviews_raw.rating` filter is NOT a reliable proxy: confirmed via testing that complaints (e.g. "foul smell", "cobwebs") appear in mixed-sentiment 3★ reviews with positive openers, and identical review texts exist across 1–5★. Proper fix requires sentiment scoring at embed time (store a sentiment score per review, filter on it) — a feature, not a filter. Current behaviour: semantic search surfaces topically-relevant reviews; summary should describe results as "reviews mentioning X" not "X complaints". Discovered during B-004 manual testing. | Phase 4 | Planned: **B-026** (sentiment-at-embed-time). Copy fix on the summary line is a smaller separate item still open. |
-| L-013 | Bare grouped aggregations over `fact_bookings` (shapes like "total revenue by city", "bookings by month", "revenue by customer segment", "average nights stayed by season") intermittently drop the `WHERE NOT b.is_cancelled` filter on Qwen-7B. Stronger cues — `LIMIT`, explicit `WHERE` filters on star_category / city / etc. — usually keep the filter (Tests 6 and 7 in the verification suite). Bare grouped shapes do not. **Confirmed not promptable** at this model size: two prompt rewrites attempted — a single-bullet "applies ONLY when fact_bookings is in FROM/JOIN" version (the current text) and a two-bullet universal-rule-plus-illustrations version. Neither resolves the bare-grouped cases. The two-bullet version improved "by month" and "by segment" to 3/3 but degraded an unnamed-shape generalisation ("average nights stayed by season") and added marginal noise on the LIMIT-bearing cases. Root cause: Qwen 7B underweights universal/conditional rules in the system prompt relative to attention pull from concrete examples in the same prompt — a small-model attention budget limit, not a prompt-wording bug. Same family as L-010 and L-011 (capability ceiling, not prompt tuning). **Safeguard:** B-022 freezes generated SQL at pin time, so a missing cancellation filter is a one-time review failure at pin, not a per-refresh data integrity bug — the read path never runs unverified SQL. **Fix path:** B-017 (model tiering — Gemma 12B or similar holds rule discipline better in early testing) is the real remediation. | Phase 4 | B-017 (larger model for SQL) — B-022 pin-time review is the meanwhile safeguard |
+| L-013 | Bare grouped aggregations over `fact_bookings` (shapes like "total revenue by city", "bookings by month", "revenue by customer segment", "average nights stayed by season") intermittently drop the `WHERE NOT b.is_cancelled` filter on Qwen-7B. Stronger cues — `LIMIT`, explicit `WHERE` filters on star_category / city / etc. — usually keep the filter (Tests 6 and 7 in the verification suite). Bare grouped shapes do not. **Confirmed not promptable** at this model size: two prompt rewrites attempted — a single-bullet "applies ONLY when fact_bookings is in FROM/JOIN" version (the current text) and a two-bullet universal-rule-plus-illustrations version. Neither resolves the bare-grouped cases. The two-bullet version improved "by month" and "by segment" to 3/3 but degraded an unnamed-shape generalisation ("average nights stayed by season") and added marginal noise on the LIMIT-bearing cases. Root cause: Qwen 7B underweights universal/conditional rules in the system prompt relative to attention pull from concrete examples in the same prompt — a small-model attention budget limit, not a prompt-wording bug. Same family as L-010 and L-011 (capability ceiling, not prompt tuning). **Safeguards:** (1) **B-060** post-generation lint — on a clean first execute, `run()` detects a bare `fact_bookings` aggregate that dropped `WHERE NOT is_cancelled` (not a rate, no cancellation intent, no `is_cancelled` anywhere) and drives ONE corrective retry naming the general schema rule; falls back to the original on retry-error/still-firing so it never degrades a working query. Catches the live-Explore case the pin-time review can't (mitigation, not a cure — bounded to one retry, leaves the underlying model ceiling). (2) **B-022** freezes generated SQL at pin time, so a missing cancellation filter is a one-time review failure at pin, not a per-refresh data integrity bug — the read path never runs unverified SQL. **Fix path:** B-017 (model tiering — Gemma 12B or similar holds rule discipline better in early testing) is the real remediation. | Phase 4 | B-017 (larger model for SQL) — B-060 post-gen lint + B-022 pin-time review are the meanwhile mitigations |
 | L-014 | ~~CHECKIN / CHECKOUT (and PRICE_CHANGE) events are silently filtered at the consumer's Gate 3 — not aggregated, not counted, not stored.~~ — **RESOLVED (B-032 Chunks 2 + 3).** `PROCESSED_EVENT_TYPES` now spans `BOOKING, CANCELLATION, CHECKIN, CHECKOUT`; the consumer counts each per window and writes `total_checkins / total_checkouts / total_cancellations` to `agg_hourly_city_stats` (migration 007 columns). The producer (Chunk 3) now actually emits both CHECKIN and CHECKOUT at design weights (0.18 / 0.12), so both columns read non-zero on every recent window — verified end-to-end. PRICE_CHANGE is still silently filtered at Gate 3 (valid event type, just not in `PROCESSED_EVENT_TYPES`) — out of scope for this item. **Note:** these counts live ONLY in the stream aggregate (`agg_hourly_city_stats`); they are NOT in `fact_bookings` or any revenue path. Anything that wants a checkin-aware booking model (e.g. tying CHECKIN/CHECKOUT events to specific bookings) still has to be designed separately. | Phase 7 | RESOLVED by B-032 Chunks 2 + 3. |
 | L-015 | ~~No live "events received / sec" throughput metric. The consumer's `run_metrics` counters live in memory and print only at shutdown — not written to a queryable table mid-run.~~ — **RESOLVED in full (B-032 Chunks 1+2+4).** Consumer writes a `pipeline_metrics` heartbeat row every `FLUSH_CHECK_SECONDS` (~10s) with cumulative `events_consumed / bookings / cancellations / malformed / late / active_windows / max_event_ts` (plus reserved-NULL `consumer_lag`). The `/monitor` header pulse reads the latest two heartbeat rows and surfaces events/sec as the delta divided by interval, with `alive = age < 15s` driving a green/grey dot. Verified end-to-end against a 50 evt/s producer: computed rate 49.6–50.2 evt/s mid-run; dot goes grey within one tick when the consumer stops. | Phase 7 | RESOLVED by B-032 (all 4 chunks). |
 | L-016 | Consumer never flushes under sustained load → monitor stays Stale / agg table frozen. TWO compounding root causes, both confirmed by reading `scripts/stream_consumer.py`: **(A) flush-check starvation** — the main loop was `while running: for msg in consumer:`, and the flush check + max-runtime check live OUTSIDE the inner `for`. The inner loop only exits after `consumer_timeout_ms` (1s) of SILENCE; under a continuous stream (esp. `--chaos`, where every bad event does a blocking `S3.put_object`) the topic never goes quiet for a full second, so the inner loop never ended and neither check ever ran. `--max-runtime` therefore also never fired. **(B) broker eviction** — `session_timeout_ms` / `heartbeat_interval_ms` / `max_poll_interval_ms` were UNSET (kafka-python defaults 10s / 3s / 5min); slow chaos batches between polls exceeded the interval, so the broker evicted the consumer ("no active members"), lag ballooned, and because the loop never exited cleanly the graceful-shutdown flush never fired either. NOTE: the earlier cp1252-crash hypothesis was a RED HERRING — `stream_consumer.py` already had `sys.stdout.reconfigure(encoding="utf-8")` (line 111); the consumer's own logging was never the cause. **Why the 44 existing windows exist anyway:** earlier runs were low/no-chaos (inner loop idled → flushed) and/or Ctrl-C'd (graceful force-flush). | Phase 2 / Phase 7 | **Fix SHIPPED via scoped frozen-file exception** (see "Phase 2 hardening" note below) — pending live verification (Tests A no-chaos flush / B chaos no-eviction). Until verified, B-027 Test 2's live stream-increment stays open. |

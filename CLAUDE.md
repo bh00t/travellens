@@ -102,7 +102,8 @@ Current phase: **6** — Phase 7 shipped (monitor redesign done end-to-end). Rea
   - **Logged frozen-file exceptions** (one-line each — file · reason · B-number · date):
     - `scripts/generate_embeddings.py` — IVFFlat `lists` made dynamic so a future re-embed sizes correctly for the grown corpus · B-051 · 2026-05-28.
 - **Under active hardening — edit ONLY per a specific backlog item:**
-  `ai/text_to_sql.py` (B-022 run_stored_sql, B-003 + B-059 _validate_columns, B-004 next),
+  `ai/text_to_sql.py` (B-022 run_stored_sql, B-003 + B-059 _validate_columns,
+  B-060 lint_cancellation_filter_missing + run() lint-retry hook, B-004 next),
   `ai/prompts/text_to_sql_system.txt` (B-003 schema context, B-022 SQL rules; edit whenever schema
   knowledge or SQL generation rules change — keep in sync with `text_to_sql.py`),
   `ai/main.py` (B-004, B-005), `ai/semantic_search.py` (B-006 dedup, B-004),

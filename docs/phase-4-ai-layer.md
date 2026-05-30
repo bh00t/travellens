@@ -675,6 +675,39 @@ Full body + acceptance table:
 
 ---
 
+### B-026 Stage 2 — semantic retrieval swap to model sentiment (substantially resolves L-012)
+
+B-062 (above) filtered the polarity path on the star rating as a coarse proxy. That proxy was blind to
+the 3★ band — genuine complaints buried in mixed-sentiment 3★ reviews were excluded by the `rating <= 2`
+bound, which is exactly where L-012 lives. **B-026 Stage 1** had already scored every review with a
+dedicated CardiffNLP model into `reviews_raw.sentiment_label` (migration 017, 133,543 rows). **Stage 2**
+swaps the retrieval predicate from the rating proxy to that label.
+
+**What changed** (`ai/semantic_search.py`; SQL path / `text_to_sql.py` / system prompt UNTOUCHED, no
+schema change): in `_search_reviews`, the `rating_max` / `rating_min` params were REPLACED by a single
+`sentiment_label` param emitting `r.sentiment_label = %s` into the same inner WHERE seam (negative
+intent → `'negative'`, positive → `'positive'`). The B-062 query-intent detector `_detect_polarity` is
+reused UNCHANGED — only the SQL bound it drives changed. The relax-and-note fallback below
+`MIN_POLARITY_RESULTS` is preserved (now drops the sentiment predicate, sets `polarity_relaxed`).
+`filters.polarity_threshold` now reads `sentiment='negative'`. The returned review dict gains an
+additive `sentiment_label` key for transparency. Label-only v1 — `sentiment_score` is stored but not
+yet gated. Rows with `sentiment_label` NULL (new stream reviews, not scored until Stage 3) are correctly
+excluded from polarity results.
+
+**Deterministic A/B proof** (model out of the loop): over the live corpus, "cleanliness complaints"
+surfaces 19 and "rude staff" 8 genuine 3★ NEGATIVE reviews that B-062's ≤2★ filter rendered invisible;
+the positive control returns all-`positive`, the neutral control stays unfiltered.
+
+**Adapted tests** (`tests/test_polarity_filter.py`): the predicate-construction band's rating-bound
+assertions became `sentiment_label` assertions; the live-proof band now asserts on the returned
+`sentiment_label` (negative → all `'negative'`, positive → all `'positive'`, neutral → labels span);
+the `_detect_polarity` detector tests are unchanged. Full suite 76 passed, 1 xfailed (= baseline).
+L-012 marked substantially resolved; the whole-review aspect-level residual is logged as **L-017**.
+Full body + verification tables:
+[backlog B-026](backlog.md#b-026--sentiment-classification-for-reviews).
+
+---
+
 ## NEXT
 
 Phase 5 — HTML Output

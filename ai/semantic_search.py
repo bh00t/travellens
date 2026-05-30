@@ -80,31 +80,38 @@ TOP_K = 20
 # the top-K, loose enough not to merge unrelated reviews.
 DEDUP_PREFIX_LEN = 200
 
-# ── Polarity filter (B-062 — mitigates L-012) ──────────────────────────────────
+# ── Polarity filter (B-062 → B-026 Stage 2 — fixes L-012) ──────────────────────
 #
 # Semantic search matches a query's TOPIC but ignores its SENTIMENT: "cleanliness
 # complaints" returns 4-5★ reviews PRAISING cleanliness, because both praise and
 # complaints are *about* cleanliness and so embed close together. On the live
-# corpus that's 19,661 high-rated cleanliness reviews drowning out 2,928 genuine
-# ≤2★ complaints. This filter uses the rating already on each review (numeric(3,1)
-# on reviews_raw) as a COARSE sentiment proxy: when the query implies negative
-# intent we hard-filter to ≤2★, when positive to ≥4★, otherwise leave the search
-# unchanged.
+# corpus that's ~19.6K high-rated cleanliness reviews drowning out the genuine
+# complaints. We detect the query's sentiment intent and HARD-filter the
+# retrieval to reviews carrying the matching sentiment.
 #
-# This is a MITIGATION, not the fix. Rating is unreliable at the margins — real
-# complaints live in mixed-sentiment 3★ reviews, and identical texts exist across
-# stars (see L-012). The deeper fix is sentiment-at-embed-time (B-026). We trade
-# recall for precision deliberately: flipping the dominant polarity is worth
-# missing the minority of complaints buried in 3★ reviews.
+# B-062 (the prior version) used the star rating as a COARSE sentiment proxy:
+# negative intent → ≤2★, positive → ≥4★. That worked but had a known hole — real
+# complaints frequently live in mixed-sentiment 3★ reviews, which a ≤2★ rating
+# filter excludes (L-012). B-026 replaced the proxy: every review now carries a
+# model-scored `sentiment_label` ('positive'|'negative'|'neutral', migration 017,
+# CardiffNLP twitter-roberta) on reviews_raw. Stage 2 (this version) swaps the
+# retrieval predicate from the star rating to that label, so a negative query
+# filters on `sentiment_label = 'negative'` — catching the 3★ complaints the ≤2★
+# rating filter missed. The query-intent detector (_detect_polarity) is unchanged
+# and orthogonal; only the SQL predicate it drives changed.
 #
-# Why HARD filter, not a soft re-rank bias: high-rated topical matches vastly
-# outnumber low-rated ones (cleanliness: 19.6K vs 2.9K), so a soft bias that
-# retrieves more and re-ranks would still come out majority-praise after the
-# TOP_K cut — it would not flip the polarity. A hard rating predicate does. The
-# only downside (too few results in a narrow city scope) is handled by the
-# relax-and-note fallback in run().
-NEGATIVE_MAX_RATING  = 2.0   # negative-intent query → rating <= this
-POSITIVE_MIN_RATING  = 4.0   # positive-intent query → rating >= this
+# Why HARD filter, not a soft re-rank bias: high-sentiment topical matches vastly
+# outnumber the opposite-sentiment ones, so a soft bias that retrieves more and
+# re-ranks would still come out majority-praise after the TOP_K cut — it would not
+# flip the polarity. A hard label predicate does. The only downside (too few
+# results in a narrow city scope) is handled by the relax-and-note fallback in
+# run().
+#
+# LABEL-ONLY v1: filters on sentiment_label alone. sentiment_score (also on the
+# row) is stored for a later confidence gate but NOT consulted yet. Reviews with
+# sentiment_label NULL (e.g. new stream reviews not yet scored — Stage 3 wires the
+# live scorer) are correctly excluded from polarity results: they are not
+# KNOWN-negative/positive, so they don't belong in a polarity-filtered set.
 MIN_POLARITY_RESULTS = 5     # below this, relax the polarity filter (and flag it)
 
 # General keyword lexicons — NOT per-query patterns. The detector counts how many
@@ -295,8 +302,7 @@ def _search_reviews(
     query_vec: list,
     city: str | None,
     hotel_ids: list[str] | None = None,
-    rating_max: float | None = None,
-    rating_min: float | None = None,
+    sentiment_label: str | None = None,
 ) -> list[dict]:
     """
     Run pgvector cosine similarity search against reviews_raw.embedding.
@@ -345,16 +351,20 @@ def _search_reviews(
         encodes any geographic scope. When `hotel_ids` is None the existing
         global / city-scoped behaviour is preserved byte-for-byte.
 
-    Polarity filter (B-062):
-        `rating_max` / `rating_min`, when given, add `r.rating <= %s` /
-        `r.rating >= %s` to the SAME inner WHERE as the city and hotel_ids
-        filters — so the rating bound, geographic scope, and dedup all stay
-        in one execution plan. The caller (run()) sets at most one of them
-        from the detected query polarity (negative → rating_max=2.0,
-        positive → rating_min=4.0). Both None → unchanged behaviour. This
-        rides on the review-grain `reviews_raw.rating`; it is independent of
-        and composes with B-004's hotel-grain `hotel_master.avg_rating`
-        filter (different column, different grain).
+    Polarity filter (B-062 → B-026 Stage 2):
+        `sentiment_label`, when given, adds `r.sentiment_label = %s` to the
+        SAME inner WHERE as the city and hotel_ids filters — so the sentiment
+        predicate, geographic scope, and dedup all stay in one execution plan.
+        The caller (run()) sets it from the detected query polarity (negative →
+        'negative', positive → 'positive'); None → unchanged behaviour.
+
+        This REPLACES B-062's star-rating proxy (`r.rating <= 2` / `>= 4`).
+        Filtering on the model-scored label (migration 017) catches the 3★
+        mixed-sentiment complaints that the ≤2★ rating filter excluded (L-012).
+        Rows with sentiment_label NULL are excluded by the equality predicate —
+        correct, they are not KNOWN-sentiment. It rides on the review-grain
+        `reviews_raw.sentiment_label`; independent of and composing with B-004's
+        hotel-grain `hotel_master.avg_rating` filter (different column, grain).
 
     Returns a list of dicts, one per review.
     """
@@ -374,8 +384,9 @@ def _search_reviews(
     #   2. query_vec  (the <=> distance expression)
     #   3. (optional) city
     #   4. (optional) hotel_ids
-    #   5. LEFT() length for inner ORDER BY (same value, second binding)
-    #   6. TOP_K
+    #   5. (optional) sentiment_label
+    #   6. LEFT() length for inner ORDER BY (same value, second binding)
+    #   7. TOP_K
     inner_params: list = [DEDUP_PREFIX_LEN, query_vec]
 
     if city:
@@ -392,26 +403,26 @@ def _search_reviews(
         inner_where.append("r.hotel_id = ANY(%s)")
         inner_params.append(list(hotel_ids))
 
-    # Polarity rating bound (B-062). Predicate + param appended together so
-    # positional %s ordering stays in lockstep with the rest of inner_where,
-    # ahead of the final DEDUP_PREFIX_LEN + TOP_K bindings below.
-    if rating_max is not None:
-        inner_where.append("r.rating <= %s")
-        inner_params.append(rating_max)
-    if rating_min is not None:
-        inner_where.append("r.rating >= %s")
-        inner_params.append(rating_min)
+    # Polarity sentiment predicate (B-062 → B-026 Stage 2). Predicate + param
+    # appended together so positional %s ordering stays in lockstep with the
+    # rest of inner_where, ahead of the final DEDUP_PREFIX_LEN + TOP_K bindings
+    # below. Filters on the model-scored label, not the star rating.
+    if sentiment_label is not None:
+        inner_where.append("r.sentiment_label = %s")
+        inner_params.append(sentiment_label)
 
     sql = f"""
         SELECT hotel_id,
                rating,
                ROUND((1 - distance)::numeric, 4) AS similarity,
-               review_text
+               review_text,
+               sentiment_label
         FROM (
             SELECT DISTINCT ON (LEFT(r.review_text, %s))
                    r.hotel_id,
                    r.rating,
                    r.review_text,
+                   r.sentiment_label,
                    r.embedding <=> %s::vector AS distance
             FROM reviews_raw r
             {' '.join(inner_joins)}
@@ -432,10 +443,14 @@ def _search_reviews(
 
     return [
         {
-            "hotel_id":    r[0],
-            "rating":      float(r[1]),
-            "similarity":  float(r[2]),
-            "review_text": r[3],
+            "hotel_id":        r[0],
+            "rating":          float(r[1]),
+            "similarity":      float(r[2]),
+            "review_text":     r[3],
+            # B-026 Stage 2: surface the model-scored label that drove the
+            # polarity filter (None for not-yet-scored stream rows). Additive —
+            # existing consumers read keys by name and are unaffected.
+            "sentiment_label": r[4],
         }
         for r in rows
     ]
@@ -515,10 +530,11 @@ def run(user_query: str, hotel_ids: list[str] | None = None) -> dict:
         "city":     <detected city string, or None>,
         "reviews":  [
             {
-                "hotel_id":    <str>,
-                "rating":      <float>,
-                "similarity":  <float 0-1>,
-                "review_text": <str>
+                "hotel_id":        <str>,
+                "rating":          <float>,
+                "similarity":      <float 0-1>,
+                "review_text":     <str>,
+                "sentiment_label": <str 'positive'|'negative'|'neutral', or None>
             },
             ...  (up to TOP_K items)
         ],
@@ -526,14 +542,14 @@ def run(user_query: str, hotel_ids: list[str] | None = None) -> dict:
         "error":    None  — or error message string if anything failed
     }
 
-    When the query carries a sentiment intent (B-062), a "filters" key is
-    added recording the applied polarity:
+    When the query carries a sentiment intent (B-062 → B-026 Stage 2), a
+    "filters" key is added recording the applied polarity:
         "filters": {
             "polarity":           "negative" | "positive",
             "polarity_terms":     [<matched keywords>],
-            "polarity_threshold": "<=2" | ">=4",
-            "polarity_relaxed":   <bool — True if the bound was dropped because
-                                   it left fewer than MIN_POLARITY_RESULTS>,
+            "polarity_threshold": "sentiment='negative'" | "sentiment='positive'",
+            "polarity_relaxed":   <bool — True if the predicate was dropped
+                                   because it left fewer than MIN_POLARITY_RESULTS>,
         }
     Neutral queries add no "filters" key (result shape unchanged). On the
     hybrid path, main.py merges its own B-004 filter keys into this same dict.
@@ -590,27 +606,28 @@ def run(user_query: str, hotel_ids: list[str] | None = None) -> dict:
         # the same geometric space, so cosine similarity is meaningful.
         query_vec = _model.encode(user_query).tolist()
 
-        # Step 4.5 — Detect sentiment polarity (B-062, mitigates L-012)
-        # General keyword rules → negative / positive / neutral. Negative
-        # biases retrieval to ≤2★ reviews (actual complaints), positive to
-        # ≥4★, neutral leaves the search unchanged.
+        # Step 4.5 — Detect sentiment polarity (B-062 → B-026 Stage 2, fixes L-012)
+        # General keyword rules → negative / positive / neutral. Negative filters
+        # retrieval to sentiment_label='negative' reviews (actual complaints),
+        # positive to 'positive', neutral leaves the search unchanged. The intent
+        # value maps 1:1 to the sentiment_label vocabulary (migration 017).
         polarity, polarity_terms = _detect_polarity(user_query)
-        rating_max = NEGATIVE_MAX_RATING if polarity == "negative" else None
-        rating_min = POSITIVE_MIN_RATING if polarity == "positive" else None
+        sentiment_label = polarity if polarity != "neutral" else None
         if polarity != "neutral":
-            log.info("Polarity '%s' detected (terms=%s) — biasing by rating",
+            log.info("Polarity '%s' detected (terms=%s) — filtering by sentiment_label",
                      polarity, polarity_terms)
 
         # Step 5 — pgvector cosine similarity search
         reviews = _search_reviews(
             conn, query_vec, city, hotel_ids=hotel_ids,
-            rating_max=rating_max, rating_min=rating_min,
+            sentiment_label=sentiment_label,
         )
 
-        # Relax-and-note fallback (B-062): a hard polarity filter can starve a
-        # narrow city/hotel scope of results. When it returns too few, re-run
-        # WITHOUT the rating bound and flag it, rather than show an empty or
-        # misleadingly thin result. Neutral queries never enter this branch.
+        # Relax-and-note fallback (B-062 → B-026 Stage 2): a hard polarity filter
+        # can starve a narrow city/hotel scope of results. When it returns too
+        # few, re-run WITHOUT the sentiment predicate and flag it, rather than
+        # show an empty or misleadingly thin result. Neutral queries never enter
+        # this branch.
         polarity_relaxed = False
         if polarity != "neutral" and len(reviews) < MIN_POLARITY_RESULTS:
             log.info(
@@ -630,10 +647,7 @@ def run(user_query: str, hotel_ids: list[str] | None = None) -> dict:
             result.setdefault("filters", {})
             result["filters"]["polarity"]           = polarity
             result["filters"]["polarity_terms"]     = polarity_terms
-            result["filters"]["polarity_threshold"] = (
-                f"<={NEGATIVE_MAX_RATING:g}" if polarity == "negative"
-                else f">={POSITIVE_MIN_RATING:g}"
-            )
+            result["filters"]["polarity_threshold"] = f"sentiment='{polarity}'"
             result["filters"]["polarity_relaxed"]   = polarity_relaxed
 
         log.info(

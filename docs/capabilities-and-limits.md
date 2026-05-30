@@ -85,13 +85,19 @@ hotels with `avg_rating >= 4`, not the global review corpus.
 intersected with the pgvector search) and deterministic.
 
 **Limits:**
-- **Semantic search matches TOPIC, not POLARITY.** "Cleanliness
-  complaints" returns reviews that mention cleanliness, positive *and*
-  negative — embeddings cluster by topic. See [**L-012**](./backlog.md).
-  The `reviews_raw.rating` column is **not** a reliable sentiment proxy
-  either: positive 5★ reviews mention specific complaints, and
-  identical review texts exist across 1–5★. Proper fix is sentiment
-  scoring at embed time (a feature, not a filter).
+- **Topic-vs-polarity conflation — substantially fixed (B-026).** Semantic
+  embeddings cluster by TOPIC, so "cleanliness complaints" used to return
+  cleanliness praise *and* complaints alike ([**L-012**](./backlog.md)).
+  B-026 scored every review with a dedicated sentiment model into
+  `reviews_raw.sentiment_label`, and retrieval now hard-filters a
+  negative-intent query to `sentiment_label = 'negative'` (positive →
+  `'positive'`). This replaced the earlier B-062 star-rating proxy — which
+  was unreliable (5★ reviews carry specific complaints; identical texts
+  exist across 1–5★) and blind to the 3★ band where mixed-sentiment
+  complaints live. **Residual ([**L-017**](./backlog.md)):** sentiment is
+  scored per *whole review*, so a mixed review with a positive opener can
+  still label positive and hide a complaint inside it — true aspect-level
+  (per-clause) sentiment is the deeper, out-of-scope fix.
 
 ---
 
@@ -120,8 +126,22 @@ is concise and grounded in the retrieved reviews.
   Worst-case residual: a few reviews sharing their first 200 chars can
   still co-survive in the top-K. Tightening the prefix further starts
   collapsing genuinely-different reviews — empirically chosen tradeoff.
-- The sentiment-vs-topic limit above (L-012) applies here too — these
-  results are *topically* matched, not polarity-matched.
+- Polarity filtering (B-026) now applies here: a sentiment-laden query
+  ("cleanliness complaints", "what guests love") hard-filters retrieval by
+  `sentiment_label`, so results are polarity-matched, not just topical. A
+  query with no clear sentiment intent stays topic-only (the detector
+  classifies it neutral → no filter). Whole-review labeling residual:
+  [**L-017**](./backlog.md).
+- **Implicit-complaint queries get no polarity filter ([L-018](./backlog.md)).**
+  The query-intent detector `_detect_polarity` is keyword/lexicon-based, so a
+  query that implies a complaint *without* a sentiment word ("noisy AC",
+  "thin walls", "slow check-in") is classed `neutral` and runs unfiltered —
+  it falls back to topic-only matching and doesn't benefit from B-026's
+  `sentiment_label = 'negative'` filter. This is distinct from **L-017**: L-018
+  is about *query-intent* detection (does the query express negative intent at
+  all), upstream of L-017's *per-review model labeling* (whole-review vs
+  aspect-level). The fix is a classifier/LLM intent pass on the query rather
+  than an explicit-keyword match.
 
 ---
 
@@ -206,14 +226,19 @@ renders even when MinIO or Airflow is down.
   rounding error. If the rate column is absent (schema variance), the
   card shows `—`. The route introspects `information_schema` to decide,
   so it is correct either way.
-- **Review / Embedded / Sentiment tiles are placeholders.** They render
-  a dashed "SOON" empty-state with `—` because the upstream data
-  doesn't exist yet. The Review and Embedded tiles unblock when
-  REVIEW becomes a stream event (**B-030**); the Sentiment tile
-  unblocks when sentiment classification ships at embed time
-  (**B-026**). Rating is NOT used as a polarity proxy — it's a
-  proven-bad signal (L-012). Never showing a fake number is the design
-  rule; the badge plus the backlog ID makes the gap legible.
+- **Review / Embedded tiles are placeholders; Sentiment data has
+  shipped.** The Review and Embedded tiles still render a dashed "SOON"
+  empty-state with `—` because their upstream data doesn't exist yet —
+  they unblock when REVIEW becomes a stream event (**B-030**). The
+  **Sentiment** data dependency is now satisfied: **B-026** scored every
+  review into `reviews_raw.sentiment_label` (133,543 rows; 67% positive /
+  29% negative / 4% neutral), and the AI layer already consumes it to
+  polarity-filter semantic search (§3). Wiring the monitor's Sentiment
+  tile to surface those counts is the remaining display step. Rating was
+  never used as a polarity proxy — it's a proven-bad signal (the L-012
+  finding); B-026's model sentiment is the real signal. Never showing a
+  fake number is the design rule; the badge plus the backlog ID makes the
+  gap legible.
 - **Revenue is not on this page by design.** The Chunk 4 redesign
   removed the revenue card because revenue is a business KPI, not a
   pipeline-health signal. Business answers live in the

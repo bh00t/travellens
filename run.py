@@ -57,15 +57,16 @@ WHAT THIS SCRIPT MANAGES
     - Docker stack via `docker compose up -d`. Airflow's scheduler runs its DAGs
       on its own inside its container — this script does NOT schedule or trigger
       Airflow jobs. It only brings the containers up.
-    - Six host Python processes that are NOT containerised:
+    - Seven host Python processes that are NOT containerised:
         consumer    — drains the Kafka topic
         simulator   — produces booking events
         dashboard   — the Flask render server
         gold        — gold_lifecycle_updater micro-batch (pg_try_advisory_lock 7400040)
         embedder    — review_embedder micro-batch (pg_try_advisory_lock 7400050)
         quarantine  — quarantine_hourly_rollup 5-min loop (pg_try_advisory_lock 7400060)
+        scorer      — review_sentiment_scorer micro-batch (pg_try_advisory_lock 7400070)
       Advisory locks mean a stray manual copy exits immediately rather than racing
-      — safe to have run.py always start all three maintenance procs.
+      — safe to have run.py always start all four maintenance procs.
 
 DESIGN DECISIONS (so future-you knows why)
     - Idempotent: `docker compose up -d` is safe to run whether containers are up
@@ -221,6 +222,17 @@ QUARANTINE_ROLLUP = {
     "cmd":  [PY, "-m", "scripts.quarantine_hourly_rollup"],
 }
 
+# Review sentiment scorer — continuous micro-batch, pg_try_advisory_lock(7400070).
+# Launched WITHOUT --once so run.py owns its lifecycle (continuous loop mode).
+# Same idempotency guarantee as the embedder: a second instance exits on the
+# lock, never races. The scorer's own GPU model is the CardiffNLP RoBERTa
+# classifier (resident alongside the embedder's MiniLM and Ollama — see the
+# OPERATIONAL NOTE on run.py's VRAM profile in docs/phase-3-embeddings.md).
+SENTIMENT_SCORER = {
+    "name": "scorer",
+    "cmd":  [PY, "-m", "scripts.review_sentiment_scorer"],
+}
+
 # Services whose health we wait on before starting the Python processes.
 # These are the docker compose SERVICE names — adjust to match your compose file.
 HEALTH_WAIT_SERVICES = ["postgres", "kafka"]
@@ -242,6 +254,7 @@ COLORS = {
     "gold":       "\033[34m",   # blue
     "embedder":   "\033[94m",   # bright blue
     "quarantine": "\033[93m",   # bright yellow
+    "scorer":     "\033[96m",   # bright cyan
     "system":     "\033[32m",   # green
     "error":     "\033[31m",   # red
 }
@@ -369,6 +382,7 @@ _TRAVELLENS_CMD_PATTERNS = [
     "scripts.gold_lifecycle_updater",
     "scripts.review_embedder",
     "scripts.quarantine_hourly_rollup",
+    "scripts.review_sentiment_scorer",
     "render.server",
 ]
 
@@ -378,6 +392,7 @@ _TRAVELLENS_PROC_LABELS = {
     "scripts.gold_lifecycle_updater":   "gold updater",
     "scripts.review_embedder":          "embedder",
     "scripts.quarantine_hourly_rollup": "quarantine rollup",
+    "scripts.review_sentiment_scorer":  "sentiment scorer",
     "render.server":                    f"dashboard on :{DASHBOARD_PORT}",
 }
 
@@ -450,8 +465,8 @@ def _kill_pid_windows(pid, label):
 
 def _wait_advisory_locks_released(timeout=30):
     """
-    Poll pg_locks until advisory locks 7400030/40/50/60 are all freed, then return.
-    Falls back to a 3-second sleep if Postgres is not reachable.
+    Poll pg_locks until advisory locks 7400030/40/50/60/70 are all freed, then
+    return. Falls back to a 3-second sleep if Postgres is not reachable.
 
     Session-level advisory locks release when Postgres detects the broken TCP
     connection of a killed process — normally within 1–2 seconds.
@@ -459,7 +474,7 @@ def _wait_advisory_locks_released(timeout=30):
     query = (
         "SELECT COUNT(*) FROM pg_locks "
         "WHERE locktype='advisory' AND granted=true AND classid=0 "
-        "AND objid IN (7400030, 7400040, 7400050, 7400060);"
+        "AND objid IN (7400030, 7400040, 7400050, 7400060, 7400070);"
     )
     deadline = time.time() + timeout
     ever_reachable = False
@@ -487,7 +502,7 @@ def _wait_advisory_locks_released(timeout=30):
         time.sleep(0.5)
 
     log("system",
-        "advisory locks 7400030/40/50/60 released "
+        "advisory locks 7400030/40/50/60/70 released "
         "(Postgres sessions closed on process kill).")
 
 
@@ -495,8 +510,8 @@ def _startup_cleanup():
     """
     TAKEOVER — runs BEFORE port 47219 is acquired.  Kills the live run.py
     supervisor (identified by who holds port 47219) and all travellens child
-    processes, then waits until Postgres advisory locks 7400030/40/50/60 are
-    released.  After this returns, port 47219 is free and all four locks are
+    processes, then waits until Postgres advisory locks 7400030/40/50/60/70 are
+    released.  After this returns, port 47219 is free and all five locks are
     available for the fresh procs.
 
     Safety: if :5000 is held by a non-travellens PID, print a clear error and exit
@@ -722,13 +737,14 @@ class Launcher:
         # --------------------------------------------------------------------
         # Background maintenance procs — started in every mode that includes
         # the consumer (i.e. everything except --server-only).  Advisory
-        # locks prevent duplicates: if either is already running manually,
+        # locks prevent duplicates: if any one is already running manually,
         # the new instance acquires no lock and exits with code 1 immediately
         # — the existing instance keeps running unaffected.
         # --------------------------------------------------------------------
         self.start_process(GOLD_UPDATER)
         self.start_process(EMBEDDER)
         self.start_process(QUARANTINE_ROLLUP)
+        self.start_process(SENTIMENT_SCORER)
 
     # -- Shutdown -----------------------------------------------------------------
     def _do_cleanup(self):
@@ -855,7 +871,7 @@ def main():
     # ── Takeover: kill any prior run.py + children, wait for locks ───────
     # _startup_cleanup() runs FIRST — before we hold port 47219.  It kills
     # the live supervisor (port 47219 holder) + all travellens children, then
-    # polls pg_locks until advisory locks 7400030/40/50/60 are free.
+    # polls pg_locks until advisory locks 7400030/40/50/60/70 are free.
     _startup_cleanup()
 
     # ── Acquire singleton after takeover ──────────────────────────────────

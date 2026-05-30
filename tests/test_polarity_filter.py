@@ -1,22 +1,29 @@
 """
-B-062 rating-based polarity filter — pytest regression suite
-=============================================================
-Mitigates L-012 (sentiment-topic conflation): semantic search matches a
-query's TOPIC but not its SENTIMENT, so "cleanliness complaints" returns
-4-5★ praise. B-062 detects sentiment intent from general keyword rules and
-hard-filters the retrieval by the rating already stored on each review
-(negative → ≤2★, positive → ≥4★, neutral → unchanged).
+B-062 → B-026 Stage 2 sentiment polarity filter — pytest regression suite
+=========================================================================
+Fixes L-012 (sentiment-topic conflation): semantic search matches a query's
+TOPIC but not its SENTIMENT, so "cleanliness complaints" returns 4-5★ praise.
+The query-intent detector (_detect_polarity) classifies sentiment intent from
+general keyword rules; B-026 Stage 2 then hard-filters the retrieval by the
+model-scored `sentiment_label` column (migration 017) — REPLACING B-062's
+star-rating proxy (negative → ≤2★). Filtering on the label catches the 3★
+mixed-sentiment complaints the ≤2★ rating filter excluded.
+
+  negative intent → sentiment_label = 'negative'
+  positive intent → sentiment_label = 'positive'
+  neutral intent  → no filter (unchanged)
 
 Three bands, increasing cost:
 
   1. Detector — pure keyword classification, no DB / no model. negative /
-     positive / neutral + the matched terms. (fast)
+     positive / neutral + the matched terms. (fast) — UNCHANGED by Stage 2.
   2. Predicate construction — _search_reviews builds the correct
-     `r.rating <= / >= %s` SQL for a given bound, via a fake cursor that
+     `r.sentiment_label = %s` SQL for a given intent, via a fake cursor that
      captures the SQL + params. No DB, no model. (fast)
   3. Live proof — run() end-to-end against the warehouse with Ollama stubbed
-     out (deterministic): a negative query returns provably ≤2★ reviews, a
-     positive query ≥4★, a neutral query is unconstrained. (slow)
+     out (deterministic): a negative query returns provably 'negative'-labelled
+     reviews, a positive query 'positive', a neutral query is unconstrained.
+     (slow)
 
 Run only the fast logic:
     pytest tests/test_polarity_filter.py -v -m "not slow"
@@ -30,8 +37,6 @@ import ai.semantic_search as ss
 from ai.semantic_search import (
     _detect_polarity,
     _search_reviews,
-    NEGATIVE_MAX_RATING,
-    POSITIVE_MIN_RATING,
     MIN_POLARITY_RESULTS,
 )
 
@@ -104,7 +109,7 @@ def test_matched_terms_are_deduped_and_lowercased():
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# 2. PREDICATE CONSTRUCTION — the rating bound becomes the right SQL
+# 2. PREDICATE CONSTRUCTION — the intent becomes the right sentiment_label SQL
 #    (fast: fake cursor captures SQL + params, no DB hit)
 # ══════════════════════════════════════════════════════════════════════════
 
@@ -138,50 +143,55 @@ class _FakeConn:
 _DUMMY_VEC = [0.0] * 384
 
 
-def test_negative_bound_builds_lte_predicate():
+def test_negative_builds_sentiment_predicate():
     conn = _FakeConn()
-    _search_reviews(conn, _DUMMY_VEC, None, rating_max=NEGATIVE_MAX_RATING)
-    assert "r.rating <= %s" in conn.captured["sql"]
-    assert "r.rating >= %s" not in conn.captured["sql"]
-    assert NEGATIVE_MAX_RATING in conn.captured["params"]
-
-
-def test_positive_bound_builds_gte_predicate():
-    conn = _FakeConn()
-    _search_reviews(conn, _DUMMY_VEC, None, rating_min=POSITIVE_MIN_RATING)
-    assert "r.rating >= %s" in conn.captured["sql"]
+    _search_reviews(conn, _DUMMY_VEC, None, sentiment_label="negative")
+    assert "r.sentiment_label = %s" in conn.captured["sql"]
+    # B-026 Stage 2 REPLACED the star-rating proxy — no rating predicate remains.
     assert "r.rating <= %s" not in conn.captured["sql"]
-    assert POSITIVE_MIN_RATING in conn.captured["params"]
+    assert "r.rating >= %s" not in conn.captured["sql"]
+    assert "negative" in conn.captured["params"]
 
 
-def test_no_bound_builds_no_rating_predicate():
-    """Neutral path: SQL must carry NO rating predicate (pre-B-062 shape)."""
+def test_positive_builds_sentiment_predicate():
+    conn = _FakeConn()
+    _search_reviews(conn, _DUMMY_VEC, None, sentiment_label="positive")
+    assert "r.sentiment_label = %s" in conn.captured["sql"]
+    assert "r.rating >= %s" not in conn.captured["sql"]
+    assert "r.rating <= %s" not in conn.captured["sql"]
+    assert "positive" in conn.captured["params"]
+
+
+def test_no_intent_builds_no_sentiment_predicate():
+    """Neutral path: SQL must carry NO sentiment predicate (unchanged shape)."""
     conn = _FakeConn()
     _search_reviews(conn, _DUMMY_VEC, None)
+    assert "r.sentiment_label = %s" not in conn.captured["sql"]
+    # And no leftover rating proxy either.
     assert "r.rating <= %s" not in conn.captured["sql"]
     assert "r.rating >= %s" not in conn.captured["sql"]
 
 
-def test_bound_composes_with_city_and_hotel_ids():
-    """Polarity predicate ANDs into the same inner WHERE as city + hotel_ids."""
+def test_predicate_composes_with_city_and_hotel_ids():
+    """Sentiment predicate ANDs into the same inner WHERE as city + hotel_ids."""
     conn = _FakeConn()
     _search_reviews(
         conn, _DUMMY_VEC, "goa",
-        hotel_ids=["HTL-000001"], rating_max=NEGATIVE_MAX_RATING,
+        hotel_ids=["HTL-000001"], sentiment_label="negative",
     )
     sql = conn.captured["sql"]
     assert "LOWER(l.city) = %s" in sql
     assert "r.hotel_id = ANY(%s)" in sql
-    assert "r.rating <= %s" in sql
-    # params carry city, the hotel_ids list, and the rating bound
+    assert "r.sentiment_label = %s" in sql
+    # params carry city, the hotel_ids list, and the sentiment label
     assert "goa" in conn.captured["params"]
     assert ["HTL-000001"] in conn.captured["params"]
-    assert NEGATIVE_MAX_RATING in conn.captured["params"]
+    assert "negative" in conn.captured["params"]
 
 
 # ══════════════════════════════════════════════════════════════════════════
 # 3. LIVE PROOF — run() end-to-end vs warehouse, Ollama stubbed (slow)
-#    Proves the returned reviews actually obey the polarity, by ratings.
+#    Proves the returned reviews actually obey the polarity, by sentiment_label.
 # ══════════════════════════════════════════════════════════════════════════
 
 # DB-reachability probe — a direct lightweight connect (NOT run(), which would
@@ -206,25 +216,29 @@ def _no_ollama(monkeypatch):
 
 
 @pytest.mark.slow
-def test_live_negative_returns_low_rated(_no_ollama):
-    res = ss.run("top 5 hotels with cleanliness complaints")
+def test_live_negative_returns_negative_labels(_no_ollama):
+    res = ss.run("cleanliness complaints")
     assert res["error"] is None
-    assert res["reviews"], "expected some low-rated complaint reviews"
+    assert res["reviews"], "expected some negative-sentiment complaint reviews"
     assert res["filters"]["polarity"] == "negative"
     if not res["filters"]["polarity_relaxed"]:
-        ratings = [r["rating"] for r in res["reviews"]]
-        assert max(ratings) <= NEGATIVE_MAX_RATING, ratings
+        labels = [r["sentiment_label"] for r in res["reviews"]]
+        assert all(lbl == "negative" for lbl in labels), labels
+        # The whole point of Stage 2: 3★ complaints (which B-062's ≤2★ rating
+        # filter excluded) are now eligible. The retrieved set must NOT be
+        # rating-constrained to ≤2★ — i.e. at least one 3★+ negative review can
+        # appear. (Soft expectation — assert only the label contract above.)
 
 
 @pytest.mark.slow
-def test_live_positive_returns_high_rated(_no_ollama):
+def test_live_positive_returns_positive_labels(_no_ollama):
     res = ss.run("what do guests love most about beach resorts")
     assert res["error"] is None
     assert res["reviews"]
     assert res["filters"]["polarity"] == "positive"
     if not res["filters"]["polarity_relaxed"]:
-        ratings = [r["rating"] for r in res["reviews"]]
-        assert min(ratings) >= POSITIVE_MIN_RATING, ratings
+        labels = [r["sentiment_label"] for r in res["reviews"]]
+        assert all(lbl == "positive" for lbl in labels), labels
 
 
 @pytest.mark.slow
@@ -234,7 +248,7 @@ def test_live_neutral_is_unconstrained(_no_ollama):
     assert res["reviews"]
     # Neutral adds NO filters key → result shape unchanged from pre-B-062.
     assert "filters" not in res or "polarity" not in res.get("filters", {})
-    # And with no rating bound the retrieval spans the full star range — over a
-    # broad topic the top-K should NOT be confined to a single polarity band.
-    ratings = {r["rating"] for r in res["reviews"]}
-    assert len(ratings) >= 2, f"neutral search looks rating-constrained: {ratings}"
+    # With no sentiment predicate the retrieval spans labels — over a broad
+    # topic the top-K should NOT be confined to a single sentiment band.
+    labels = {r["sentiment_label"] for r in res["reviews"]}
+    assert len(labels) >= 2, f"neutral search looks sentiment-constrained: {labels}"

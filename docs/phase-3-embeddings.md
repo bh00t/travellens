@@ -500,6 +500,34 @@ New `scripts/review_sentiment_scorer.py`: a micro-batch process mirroring `revie
 
 ---
 
+### B-026 (Stage 3) — Live scorer wired into run.py (7th managed proc) — B-026 FULLY CLOSED
+
+`scripts/review_sentiment_scorer.py` is now run.py's **7th managed process**, launched in continuous loop mode (`python -m scripts.review_sentiment_scorer`, no `--once`) so run.py owns its full lifecycle — exactly as it owns the embedder's (B-030b). Wiring only: no change to the scorer's logic, schema, retrieval path, scoring, or batch sizes (`_ENCODE_BATCH=64`, `SENTIMENT_BATCH_SIZE=2000` unchanged). The scorer's own `pg_try_advisory_lock(7400070)` is the singleton guard; the B-045 startup-takeover lock-poll was extended from `7400030/40/50/60` to also wait on `7400070` so a fresh `run.py` cleanly reclaims the lock after killing a prior supervisor + children. The roster is now: consumer · simulator · dashboard · gold · embedder · quarantine · **scorer** (bright-cyan colour tag). With this, a stream review now flows end-to-end while live: consumer → `reviews_raw` (NULL sentiment) → scorer fills `sentiment_label`/`sentiment_score` → semantic retrieval's B-026 Stage 2 polarity filter can see it.
+
+**Verification (2026-05-30):**
+
+| TEST | EXPECTED | ACTUAL | PASS/FAIL |
+|---|---|---|---|
+| All 7 host procs come up | consumer/simulator/dashboard/gold/embedder/quarantine/scorer | all 7 started; banner "stack is up" | PASS |
+| Scorer acquires its lock | logs "Advisory lock acquired (key=7400070)" | logged at startup; model `CardiffNLP` rev `d616e2bd`, device CUDA, mode loop | PASS |
+| Other 6 procs unaffected | gold 7400040 / embedder 7400050 / quarantine 7400060 held; dashboard on :5000; consumer+simulator live | all 5 advisory locks held; embedder embedded new rows, gold processed batches mid-run | PASS |
+| New review scored within ~15s | NULL-sentiment stream row gets a non-NULL label fast | controlled probe row scored `negative` (0.961) inside the poll window; probe then deleted, corpus restored (stream 12,563) | PASS |
+| Takeover/lock-poll | mirrors embedder behaviour | startup-takeover poll now waits on 7400070 too; verified by clean re-acquire | PASS |
+| Clean shutdown (Ctrl-C) | all 7 stop, no orphan holding 7400070 | task stopped → 0 of the 5 advisory locks held, 0 orphan travellens child processes | PASS |
+| `pytest tests/` | green | 76 passed, 1 xfailed (B-003a) — = baseline | PASS |
+
+> **OPERATIONAL NOTE — run.py runtime resource profile (8 GB RTX 3070).** A read-only
+> resource audit confirmed all 7 host processes + Ollama coexist without OOM, so Stage 3
+> was wiring only (no batch-size or scoring change). The three resident GPU models —
+> embedder MiniLM + dashboard query-embedding MiniLM + scorer RoBERTa — plus Ollama
+> Qwen-7B peak at **~91 % VRAM (7.4 / 8.2 GB)** with no OOM. Because that leaves Ollama
+> less than its full model size, Ollama **auto-offloads ~14 % of its layers to CPU under
+> load**, so dashboard queries run **~6–20 s** — graceful degradation, never a crash;
+> system RAM peaks at **~75 %**. Lever for later if query latency matters: move the
+> dashboard's query-embedding MiniLM to CPU to free a GPU context for Ollama.
+
+---
+
 ## NEXT
 
 **Phase 4 — Text-to-SQL + Semantic Query Router**

@@ -59,6 +59,7 @@ carry context only.
 - ~~B-058 — Text-to-SQL accuracy eval harness (`ai/eval/`): on-demand measurement tool (NOT pytest) that runs a fixed question fixture through `ai.main.answer()`, grades by EXECUTION MATCH vs an owner-verified reference query (N runs/question, default 3), and flags L-011 (missing DISTINCT) + L-013 (missing cancellation filter) independently of exec-match. Cap-aware + probe-aware honest denominator. Fixture is TEST DATA — never fed back into the prompt~~ ✓ Done
 - ~~B-062 — rating-based polarity filter for semantic search (meanwhile mitigation for L-012): `_detect_polarity` reads general negative/positive/neutral keyword rules off the query; negative → hard-filter retrieval to ≤2★, positive → ≥4★, neutral → unchanged, with a relax-and-note fallback below `MIN_POLARITY_RESULTS`. Flips the dominant polarity ("cleanliness complaints" now returns ≤2★ complaints, not 4-5★ praise). Rating is a coarse proxy — the deeper fix is B-026. `ai/semantic_search.py` + a one-line `filters`-merge in `ai/main.py`; no schema change~~ ✓ Done
 - B-063 — `.claude/settings.json` allowlist hardening: narrow/remove destructive wildcards so they prompt (`docker volume *` → `ls` + `inspect` only; drop `docker rm *` / `docker cp *` / `pip install *` / broad `Stop-Process` + `taskkill`), declutter ~80 stale one-offs (specific PIDs, `c:\tmp\…` log paths, dated `monitor/data?from=…` URLs, dead B-047 `--rate`/`--duration` runs) down to the durable grouped subset the file's own `_comment` describes. Config-only; one-offs belong in the gitignored `.claude/settings.local.json` (built — pending owner review + commit).
+- B-064 — accurate topic/aspect ranking (top-N hotels by complaint type) — PARKED, approach TBD: aspect-based sentiment tagging (each review → (topic, aspect_sentiment) PAIRS) ranked with deterministic SQL; new `review_aspects` table (PROPOSED, not built) + `aspect_rank` routing label. Blocked on tagging-engine choice (local qwen2.5:7b-instruct ~85% vs DeepInfra gemma-3-12B vs generator-hybrid). Supersedes the semantic path for complaint-ranking queries; related L-018, B-056.
 
 ### OPEN — limitations (L-)
 
@@ -1244,6 +1245,37 @@ Once shipped, the blocked widget "Top 5 hotels by cleanliness complaint count" c
 - LLM-based routing (a separate alternative, more complex; keep on the table as B-057 if pattern-based detection proves insufficient).
 - B-026 sentiment-classification per review (orthogonal — would improve PRECISION of the semantic match but doesn't solve the aggregation gap).
 - Per-domain query expansion (food / amenity / location verticals).
+
+---
+
+### B-064 — Accurate topic/aspect ranking (top-N hotels by complaint type)  ·  PARKED (approach TBD)
+
+> **Trace.** Phase(s): [Phase 4](phase-4-ai-layer.md) — query-routing / text-to-SQL · datamodel: new `review_aspects` table (PROPOSED, not built) · data-gen: `scripts/review_generator.py` / `scripts/kafka_event_producer.py` (only if the generator-hybrid engine is chosen).
+
+Accurate topic/aspect ranking (top-N hotels by complaint type) — PARKED, approach TBD.
+
+**PROBLEM:** Queries like "top 5 hotels with most cleanliness complaints" route to the semantic path and return themes + sample reviews (wrong shape). They can't GROUP BY hotel + COUNT + rank by a specific (topic, sentiment). Observed repeatedly in the dashboard.
+
+**CHOSEN DIRECTION (locked):** Aspect-based sentiment — tag each review with (topic, aspect_sentiment) PAIRS (multi-label; per-aspect sentiment so "lift fine, room dirty" doesn't pollute counts), then rank with deterministic SQL — NOT the LLM-SQL path.
+
+**DESIGN ALREADY SETTLED (ready to build once an engine is chosen):**
+
+- Taxonomy: cleanliness, staff_service, location, room_comfort, value_price, food_breakfast, facilities, noise, maintenance, booking_checkin, + other. Boundary rules: dirty/stained/smelly→cleanliness; AC/hot-water/kettle/plumbing/power→maintenance; cancellation/refund/checkout-charges→booking_checkin; lack-of-facility→facilities:negative; wifi/pool/parking/lift presence→facilities.
+- Routing seams: (a) third label "aspect_rank" in query_router.route(), detected BEFORE the semantic keyword match wins; (b) dispatch branch in main.py to a new ai/aspect_ranking.py emitting deterministic ranking SQL (filter topic+sentiment, GROUP BY hotel, COUNT, ORDER, LIMIT).
+- Proposed schema (migration when built): review_aspects(review_id uuid FK, topic varchar(20) CHECK in taxonomy, aspect_sentiment varchar(8), hotel_id varchar(20) FK [denormalized for ranking join], confidence numeric(4,3), model_version varchar(40), tagged_at timestamptz), PK(review_id, topic), partial index on (topic, aspect_sentiment, hotel_id) WHERE aspect_sentiment <> 'neutral'. Neutrals stored but dropped before counting. model_version enables non-destructive re-tagging.
+
+**WHAT'S BLOCKING (why parked):** no tagging-engine / processing-load story is clearly good enough yet. Engines evaluated (read-only experiments; frozen v4 prompt + strict-JSON validator; temp 0; ~50-review samples; owner-eyeballed):
+
+- gemma3:12b — ~90% (best accuracy) but ~10GB overflows 8GB VRAM, ~9.3s/review, not batchable, ~14-day local backfill.
+- qwen2.5:7b-instruct — ~85% (borderline), fits GPU (~4.9GB), batchable (~3-day local backfill); a deterministic normalizer (drop neutrals / force kettle→maintenance / block facilities:negative+positive-adjective) pushes effective >85%. Local sweet-spot.
+- qwen2.5-coder:7b (the resident SQL model) — ~76%; rules out reusing the resident model.
+- gemma3:4b ~67%, llama3.2:3b ~76% — below bar.
+- Cloud: DeepInfra hosts gemma-3-12B at ~$0.04/M → backfill ~$7 in hours, stream pennies, zero local VRAM. Security reviewed safe (outbound API only, public data, key in .env).
+- Generator-hybrid: review_generator.py composes ~35% of reviews from a known REASON_BANK (taggable for free, ground-truth) but ~40% is organic Kaggle text + ~25% blended (both need the LLM) → cuts LLM load ~35%, not elimination; adds generator-coupling complexity (must annotate ~56 snippets with topics + keep them in sync).
+
+**OPEN DECISION before implementing:** which engine/architecture (local qwen-instruct vs DeepInfra gemma-12B vs generator-hybrid + LLM), and whether ~85–90% tag accuracy is acceptable for ranking. Implementation stages once decided: review_aspects migration + tagger (sample-gated) → backfill → routing fix + ranking SQL handler → live stream tagging.
+
+**RELATED:** L-018 (keyword polarity detector misses implicit complaints) — this feature would supersede the semantic path for complaint-ranking queries.
 
 ---
 
